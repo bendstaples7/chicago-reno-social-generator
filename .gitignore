@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment files (contain API keys, tokens, passwords)
+.env
+.env.local
+.env.*.local
+server/.env
+
+# Build output
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo

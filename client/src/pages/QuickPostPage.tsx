@@ -1,0 +1,517 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import type {
+  ContentTypeTemplate, ContentSuggestion, MediaItem,
+  ChannelConnection, ErrorResponse, ContentType,
+  GeneratedImage, ImageStyle, ContentIdea,
+} from 'shared';
+import {
+  quickStart, fetchContentTypes, fetchChannels,
+  createPost, generateContent, approvePost, publishPost,
+  generateImages, saveGeneratedImage, updatePost,
+  fetchContentIdeas, generateContentIdeas, useContentIdea, dismissContentIdea,
+} from '../api';
+import type { QuickStartResponse } from '../api';
+
+type Step = 'loading' | 'content-type' | 'ideas' | 'generating' | 'image' | 'preview' | 'done';
+
+const MAX_CAPTION = 2200;
+const MAX_HASHTAGS = 30;
+
+export default function QuickPostPage() {
+  const navigate = useNavigate();
+
+  const [quickData, setQuickData] = useState<QuickStartResponse | null>(null);
+  const [templates, setTemplates] = useState<ContentTypeTemplate[]>([]);
+  const [channels, setChannels] = useState<ChannelConnection[]>([]);
+
+  const [step, setStep] = useState<Step>('loading');
+  const [selectedContentType, setSelectedContentType] = useState<ContentType | ''>('');
+  const [suggestion, setSuggestion] = useState<ContentSuggestion | null>(null);
+  const [caption, setCaption] = useState('');
+  const [hashtags, setHashtags] = useState<string[]>([]);
+  const [savedPostId, setSavedPostId] = useState<string | null>(null);
+
+  // Ideas state
+  const [ideas, setIdeas] = useState<ContentIdea[]>([]);
+  const [selectedIdea, setSelectedIdea] = useState<ContentIdea | null>(null);
+  const [ideasLoading, setIdeasLoading] = useState(false);
+
+  // AI image state
+  const [aiStyle, setAiStyle] = useState<ImageStyle>('photorealistic');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [selectedImage, setSelectedImage] = useState<MediaItem | null>(null);
+
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [genProgress, setGenProgress] = useState(0);
+  const [startTime] = useState(Date.now());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (step === 'done') return;
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [startTime, step]);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [qs, typesRes, channelsRes] = await Promise.all([
+        quickStart(), fetchContentTypes(), fetchChannels(),
+      ]);
+      setQuickData(qs);
+      setTemplates(typesRes.contentTypes);
+      setChannels(channelsRes.channels);
+      setSuggestion(qs.suggestion);
+      if (qs.defaults.contentType) setSelectedContentType(qs.defaults.contentType);
+      setStep('content-type');
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to initialize.');
+      setStep('content-type');
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const channel = channels.length > 0 ? channels[0] : null;
+
+  // Load ideas for selected content type
+  const loadIdeas = async (ct: ContentType) => {
+    try {
+      setIdeasLoading(true);
+      setError(null);
+      const result = await fetchContentIdeas(ct);
+      if (result.ideas.length > 0) {
+        setIdeas(result.ideas);
+      } else {
+        // Auto-generate first batch
+        const genResult = await generateContentIdeas(ct);
+        setIdeas(genResult.ideas);
+      }
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to load ideas.');
+    } finally {
+      setIdeasLoading(false);
+    }
+  };
+
+  // Generate more ideas
+  const handleGenerateMoreIdeas = async () => {
+    if (!selectedContentType) return;
+    try {
+      setIdeasLoading(true);
+      setError(null);
+      const result = await generateContentIdeas(selectedContentType as ContentType);
+      setIdeas((prev) => [...result.ideas, ...prev]);
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to generate ideas.');
+    } finally {
+      setIdeasLoading(false);
+    }
+  };
+
+  // Pick an idea and move to content generation
+  const handlePickIdea = async (idea: ContentIdea) => {
+    setSelectedIdea(idea);
+    try {
+      await useContentIdea(idea.id);
+      setIdeas((prev) => prev.filter((i) => i.id !== idea.id));
+    } catch { /* non-critical */ }
+    handleGenerateContent(idea.idea);
+  };
+
+  // Dismiss an idea
+  const handleDismissIdea = async (e: React.MouseEvent, idea: ContentIdea) => {
+    e.stopPropagation();
+    setIdeas((prev) => prev.filter((i) => i.id !== idea.id));
+    try {
+      await dismissContentIdea(idea.id);
+    } catch { /* non-critical */ }
+  };
+
+  // Generate content using the idea as context
+  const handleGenerateContent = async (ideaText: string) => {
+    if (!selectedContentType) return;
+    try {
+      setStep('generating');
+      setError(null);
+      setGenProgress(10);
+
+      const post = await createPost({
+        channelConnectionId: channel?.id ?? '',
+        contentType: selectedContentType as ContentType,
+        caption: '',
+        hashtags: [],
+      });
+      setSavedPostId(post.id);
+      setGenProgress(40);
+
+      const result = await generateContent(post.id, { context: ideaText });
+      setCaption(result.caption);
+      setHashtags(result.hashtags);
+      setGenProgress(100);
+      setStep('image');
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Content generation failed.');
+      setStep('ideas');
+    }
+  };
+
+  const handleAiGenerate = async () => {
+    try {
+      setAiGenerating(true);
+      setError(null);
+      // Send the original content idea as the topic — the server will
+      // convert it to a visual scene description via GPT before generating
+      const topic = selectedIdea ? selectedIdea.idea : caption.substring(0, 150);
+      const result = await generateImages('', aiStyle, 1, topic);
+      setGeneratedImages(result.images);
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Image generation failed.');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const handleSaveGenerated = async (image: GeneratedImage) => {
+    try {
+      setActionLoading(true);
+      setError(null);
+      const saved = await saveGeneratedImage(image);
+      // Keep the DALL-E URL for preview since thumbnailUrl may not be servable
+      saved.thumbnailUrl = image.url;
+      setSelectedImage(saved);
+      setGeneratedImages([]);
+      if (savedPostId) await updatePost(savedPostId, { mediaItemIds: [saved.id] });
+      // Auto-advance to preview
+      setStep('preview');
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to save image.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleApproveAndPublish = async () => {
+    if (!savedPostId) return;
+    try {
+      setActionLoading(true);
+      setError(null);
+      await approvePost(savedPostId);
+      const result = await publishPost(savedPostId);
+      if (result.success) {
+        setStep('done');
+      } else {
+        setError(result.error ?? 'Publishing failed.');
+        navigate('/posts/' + savedPostId);
+      }
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to publish.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── Render ──
+
+  if (step === 'loading') {
+    return (
+      <div style={containerStyle}>
+        <h1 style={titleStyle}>Quick Post</h1>
+        <div style={{ textAlign: 'center', padding: '3rem 0' }}>
+          <div style={spinnerStyle} />
+          <p>Loading your workspace…</p>
+        </div>
+      </div>
+    );
+  }
+
+  const stepLabels = ['Content Type', 'Pick Idea', 'Generate', 'Image', 'Preview'];
+  const stepKeys: Step[] = ['content-type', 'ideas', 'generating', 'image', 'preview'];
+
+  return (
+    <div style={containerStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h1 style={titleStyle}>Quick Post</h1>
+        <span style={timerStyle}>{elapsed}s elapsed</span>
+      </div>
+
+      <div style={stepBarStyle}>
+        {stepLabels.map((label, i) => {
+          const currentIdx = stepKeys.indexOf(step === 'done' ? 'preview' : step);
+          const isActive = i <= currentIdx;
+          return (
+            <div key={label} style={{ flex: 1, textAlign: 'center' }}>
+              <div style={{ ...stepDotStyle, background: isActive ? '#1976d2' : '#e0e0e0', color: isActive ? '#fff' : '#888' }}>{i + 1}</div>
+              <div style={{ fontSize: '0.75rem', color: isActive ? '#1976d2' : '#888', marginTop: 4 }}>{label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {error && <div role="alert" style={alertStyle}>{error}</div>}
+
+      {/* Step 1: Content Type */}
+      {step === 'content-type' && (
+        <div>
+          {suggestion && (
+            <div style={suggestionBannerStyle}>
+              <div style={{ flex: 1 }}>
+                <strong>Suggested:</strong>{' '}
+                {suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                <span style={{ color: '#666', marginLeft: '0.5rem' }}>— {suggestion.reason}</span>
+              </div>
+              <button onClick={() => { setSelectedContentType(suggestion.contentType); loadIdeas(suggestion.contentType); setStep('ideas'); }} style={btnStyle}>
+                Accept &amp; Continue
+              </button>
+            </div>
+          )}
+          <p style={{ margin: '0 0 0.75rem', fontWeight: 500 }}>Select a content type:</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+            {templates.map((t) => {
+              const isSelected = selectedContentType === t.contentType;
+              return (
+                <div key={t.contentType} onClick={() => setSelectedContentType(t.contentType)} role="button" tabIndex={0} aria-pressed={isSelected}
+                  aria-label={'Select ' + t.displayName}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedContentType(t.contentType); } }}
+                  style={{ ...cardStyle, border: isSelected ? '2px solid #1976d2' : '1px solid #e0e0e0', cursor: 'pointer' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.displayName}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666' }}>{t.description}</div>
+                </div>
+              );
+            })}
+          </div>
+          <button onClick={() => { if (selectedContentType) { loadIdeas(selectedContentType as ContentType); setStep('ideas'); } }}
+            disabled={!selectedContentType} style={{ ...btnStyle, opacity: selectedContentType ? 1 : 0.5 }}>
+            Next: Pick an Idea →
+          </button>
+          <button onClick={() => navigate('/posts/new')} style={{ ...btnOutlineStyle, marginLeft: '0.75rem' }}>Full Editor</button>
+        </div>
+      )}
+
+      {/* Step 2: Pick an Idea */}
+      {step === 'ideas' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <p style={{ margin: 0, fontWeight: 500 }}>Pick a content idea:</p>
+            <button onClick={() => setStep('content-type')} style={linkBtnStyle}>← Back</button>
+          </div>
+
+          {ideasLoading && ideas.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+              <div style={spinnerStyle} />
+              <p style={{ color: '#888', marginTop: '0.75rem' }}>Generating ideas...</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+                {ideas.map((idea) => (
+                  <div key={idea.id} onClick={() => handlePickIdea(idea)} role="button" tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handlePickIdea(idea); } }}
+                    style={ideaCardStyle}>
+                    <span style={{ flex: 1 }}>{idea.idea}</span>
+                    <button onClick={(e) => handleDismissIdea(e, idea)} title="Dismiss idea"
+                      style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem', lineHeight: 1 }}
+                      aria-label="Dismiss idea">✕</button>
+                    <span style={{ color: '#1976d2', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>Use this →</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={handleGenerateMoreIdeas} disabled={ideasLoading}
+                style={{ ...btnOutlineStyle, opacity: ideasLoading ? 0.5 : 1 }}>
+                {ideasLoading ? 'Generating...' : '🔄 Generate More Ideas'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Step 3: Generating content */}
+      {step === 'generating' && (
+        <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+          <div style={spinnerStyle} />
+          <p style={{ fontWeight: 500, marginTop: '1rem' }}>Generating content…</p>
+          <div style={progressBarContainerStyle}>
+            <div style={{ ...progressBarFillStyle, width: genProgress + '%' }} />
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#888' }}>
+            {genProgress < 40 ? 'Creating post…' : 'Generating caption and hashtags…'}
+          </p>
+          {selectedIdea && (
+            <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>
+              Based on: {selectedIdea.idea}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Step 4: Image generation */}
+      {step === 'image' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <p style={{ margin: 0, fontWeight: 500 }}>Generate an image for your post</p>
+            <button onClick={() => setStep('ideas')} style={linkBtnStyle}>← Back</button>
+          </div>
+          <div style={{ background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem', marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '0.25rem' }}>Generated caption:</div>
+            <div style={{ fontSize: '0.85rem', color: '#333' }}>{caption.substring(0, 200)}{caption.length > 200 ? '...' : ''}</div>
+          </div>
+          <div style={aiGenSectionStyle}>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Style:</span>
+              <select value={aiStyle} onChange={(e) => setAiStyle(e.target.value as ImageStyle)}
+                style={{ ...inputStyle, width: 'auto', marginTop: 0 }} aria-label="Image style">
+                <option value="photorealistic">Photo</option>
+                <option value="modern">Modern</option>
+                <option value="illustrative">Illustration</option>
+              </select>
+              <button onClick={handleAiGenerate} disabled={aiGenerating}
+                style={{ ...btnStyle, opacity: aiGenerating ? 0.5 : 1 }}>
+                {aiGenerating ? 'Generating...' : '✨ Generate Image from Caption'}
+              </button>
+            </div>
+            {aiGenerating && <p style={{ fontSize: '0.8rem', color: '#888', margin: '0.25rem 0' }}>Image generation can take up to 2 minutes...</p>}
+            {generatedImages.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                {generatedImages.map((img, i) => (
+                  <div key={i} style={{ width: 200, borderRadius: 8, overflow: 'hidden', border: '2px solid #a5d6a7' }}>
+                    <img src={img.url} alt={img.description} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
+                    <button onClick={() => handleSaveGenerated(img)} disabled={actionLoading}
+                      style={{ width: '100%', padding: '0.5rem', border: 'none', background: '#2e7d32', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}>
+                      {actionLoading ? 'Saving...' : 'Use This Image'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {selectedImage && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <img src={selectedImage.thumbnailUrl} alt="Selected" style={{ width: 60, height: 60, borderRadius: 6, objectFit: 'cover' }} />
+              <span style={{ fontSize: '0.85rem', color: '#2e7d32', fontWeight: 500 }}>Image attached to post</span>
+            </div>
+          )}
+          <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
+            <button onClick={() => setStep('preview')} style={btnStyle}>
+              {selectedImage ? 'Next: Preview →' : 'Skip Image → Preview'}
+            </button>
+            <button onClick={() => setStep('ideas')} style={btnOutlineStyle}>← Back</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5: Preview + Approve */}
+      {step === 'preview' && (
+        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <p style={{ margin: 0, fontWeight: 500 }}>Review &amp; Approve</p>
+              <button onClick={() => setStep('image')} style={linkBtnStyle}>← Back to Image</button>
+            </div>
+            <label style={labelStyle}>
+              <span style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Caption</span>
+                <span style={{ fontSize: '0.8rem', color: caption.length > MAX_CAPTION ? '#d32f2f' : '#888' }}>{caption.length}/{MAX_CAPTION}</span>
+              </span>
+              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={6}
+                style={{ ...inputStyle, borderColor: caption.length > MAX_CAPTION ? '#d32f2f' : '#ccc' }} />
+            </label>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Hashtags</span>
+                <span style={{ fontSize: '0.8rem', color: hashtags.length > MAX_HASHTAGS ? '#d32f2f' : '#888' }}>{hashtags.length}/{MAX_HASHTAGS}</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {hashtags.map((tag) => (<span key={tag} style={hashtagChipStyle}>#{tag}</span>))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {!channel && (
+                <div style={{ width: '100%', background: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: 4, padding: '0.5rem 0.75rem', marginBottom: '0.5rem', fontSize: '0.85rem', color: '#e65100' }}>
+                  No Instagram channel connected. Connect one in Settings to publish.
+                </div>
+              )}
+              <button onClick={handleApproveAndPublish}
+                disabled={actionLoading || !channel || caption.length > MAX_CAPTION || hashtags.length > MAX_HASHTAGS}
+                style={{ ...publishBtnStyle, opacity: (actionLoading || !channel) ? 0.5 : 1 }}>
+                {actionLoading ? 'Publishing…' : 'Approve & Publish'}
+              </button>
+              <button onClick={() => savedPostId && navigate('/posts/' + savedPostId)} style={btnOutlineStyle}>Edit in Full Editor</button>
+            </div>
+          </div>
+          <div style={{ width: 320, flexShrink: 0 }}>
+            <div style={previewPanelStyle}>
+              <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>Instagram Preview</h3>
+              <div style={previewCardStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem', gap: '0.5rem' }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1a1a2e' }} />
+                  <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>chicago_reno</span>
+                </div>
+                <div style={{ background: '#e0e0e0', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                  {selectedImage ? (
+                    <img src={selectedImage.thumbnailUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (<span style={{ color: '#999', fontSize: '0.85rem' }}>No image</span>)}
+                </div>
+                <div style={{ padding: '0.5rem', fontSize: '0.8rem' }}>
+                  <span style={{ fontWeight: 600 }}>chicago_reno </span>
+                  <span>{caption || 'Caption…'}</span>
+                </div>
+                {hashtags.length > 0 && (
+                  <div style={{ padding: '0 0.5rem 0.5rem', fontSize: '0.8rem', color: '#00376b' }}>
+                    {hashtags.map((t) => '#' + t).join(' ')}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 'done' && (
+        <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✅</div>
+          <h2 style={{ margin: '0 0 0.5rem' }}>Published!</h2>
+          <p style={{ color: '#666', marginBottom: '1rem' }}>Your post was created and published in {elapsed} seconds.</p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+            <button onClick={() => navigate('/dashboard')} style={btnStyle}>Go to Dashboard</button>
+            <button onClick={() => window.location.reload()} style={btnOutlineStyle}>Create Another</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Styles ──
+
+const containerStyle: React.CSSProperties = { maxWidth: 900, margin: '0 auto' };
+const titleStyle: React.CSSProperties = { margin: 0, fontSize: '1.5rem' };
+const timerStyle: React.CSSProperties = { fontSize: '0.85rem', color: '#888', fontFamily: 'monospace' };
+const stepBarStyle: React.CSSProperties = { display: 'flex', marginBottom: '1.5rem', padding: '0.75rem 0', borderBottom: '1px solid #e0e0e0' };
+const stepDotStyle: React.CSSProperties = { width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, margin: '0 auto' };
+
+const btnStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: '#1976d2', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const btnOutlineStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: 'transparent', color: '#1976d2', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border: '1px solid #2e7d32', background: '#2e7d32', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500 };
+const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', fontSize: '0.85rem' };
+
+const alertStyle: React.CSSProperties = { background: '#fdecea', color: '#611a15', padding: '0.75rem 1rem', borderRadius: 4, marginBottom: '1rem' };
+const suggestionBannerStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '1rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, padding: '0.75rem 1rem', marginBottom: '1rem' };
+const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 8, padding: '1rem' };
+const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', fontWeight: 500 };
+const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem', boxSizing: 'border-box' };
+const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e3f2fd', color: '#1565c0', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
+
+const ideaCardStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', padding: '0.75rem 1rem', background: '#fff',
+  border: '1px solid #e0e0e0', borderRadius: 8, cursor: 'pointer', fontSize: '0.9rem',
+  transition: 'border-color 0.15s',
+};
+
+const aiGenSectionStyle: React.CSSProperties = { background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem', marginBottom: '0.5rem' };
+const previewPanelStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', position: 'sticky', top: '1.5rem' };
+const previewCardStyle: React.CSSProperties = { border: '1px solid #dbdbdb', borderRadius: 6, overflow: 'hidden', background: '#fff' };
+const spinnerStyle: React.CSSProperties = { width: 40, height: 40, border: '4px solid #e0e0e0', borderTopColor: '#1976d2', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' };
+const progressBarContainerStyle: React.CSSProperties = { width: '60%', margin: '1rem auto', height: 6, background: '#e0e0e0', borderRadius: 3, overflow: 'hidden' };
+const progressBarFillStyle: React.CSSProperties = { height: '100%', background: '#1976d2', borderRadius: 3, transition: 'width 0.3s ease' };

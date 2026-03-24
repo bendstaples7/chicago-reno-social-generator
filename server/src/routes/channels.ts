@@ -140,6 +140,15 @@ router.get('/instagram/callback', async (req, res, next) => {
  */
 router.delete('/:id', async (req, res, next) => {
   try {
+    // Verify the channel belongs to the authenticated user before disconnecting
+    const check = await query(
+      'SELECT id FROM channel_connections WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user!.id],
+    );
+    if (check.rows.length === 0) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
     await instagramChannel.disconnect(req.params.id);
     res.json({ success: true });
   } catch (err) {

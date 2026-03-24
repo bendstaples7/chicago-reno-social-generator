@@ -12,9 +12,7 @@ export class UserSettingsService {
    */
   async getSettings(userId: string): Promise<UserSettings> {
     const result = await query(
-      `SELECT id, user_id, advisor_mode, approval_mode, updated_at
-       FROM user_settings
-       WHERE user_id = $1`,
+      'SELECT id, user_id, advisor_mode, approval_mode, updated_at FROM user_settings WHERE user_id = $1',
       [userId],
     );
 
@@ -61,7 +59,7 @@ export class UserSettingsService {
         severity: 'error',
         component: 'UserSettingsService',
         operation: 'updateSettings',
-        description: `Invalid advisor mode: "${updates.advisorMode}". Valid modes are: ${VALID_ADVISOR_MODES.join(', ')}.`,
+        description: 'Invalid advisor mode: "' + updates.advisorMode + '". Valid modes are: ' + VALID_ADVISOR_MODES.join(', ') + '.',
         recommendedActions: ['Select a valid advisor mode: smart, random, or manual'],
       });
     }
@@ -71,12 +69,12 @@ export class UserSettingsService {
     let paramIndex = 1;
 
     if (updates.advisorMode !== undefined) {
-      setClauses.push(`advisor_mode = $${paramIndex++}`);
+      setClauses.push('advisor_mode = $' + paramIndex++);
       params.push(updates.advisorMode);
     }
 
     if (updates.approvalMode !== undefined) {
-      setClauses.push(`approval_mode = $${paramIndex++}`);
+      setClauses.push('approval_mode = $' + paramIndex++);
       params.push(updates.approvalMode);
     }
 
@@ -84,16 +82,11 @@ export class UserSettingsService {
       return this.getSettings(userId);
     }
 
-    setClauses.push(`updated_at = NOW()`);
+    setClauses.push('updated_at = NOW()');
     params.push(userId);
 
-    const result = await query(
-      `UPDATE user_settings
-       SET ${setClauses.join(', ')}
-       WHERE user_id = $${paramIndex}
-       RETURNING id, user_id, advisor_mode, approval_mode, updated_at`,
-      params,
-    );
+    const updateSql = 'UPDATE user_settings SET ' + setClauses.join(', ') + ' WHERE user_id = $' + paramIndex + ' RETURNING id, user_id, advisor_mode, approval_mode, updated_at';
+    const result = await query(updateSql, params);
 
     if (result.rows.length === 0) {
       throw new PlatformError({

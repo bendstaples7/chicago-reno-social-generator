@@ -30,6 +30,8 @@ export interface UpdatePostParams {
   mediaItemIds?: string[];
 }
 
+const POST_COLUMNS = 'id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at';
+
 export class PostService {
   /**
    * Create a new post with optional media attachments.
@@ -43,12 +45,11 @@ export class PostService {
       const hashtagsJson = params.hashtags ? JSON.stringify(params.hashtags) : null;
       const templateFields = params.templateFields ? JSON.stringify(params.templateFields) : null;
 
-      const result = await client.query(
-        `INSERT INTO posts (user_id, channel_connection_id, content_type, caption, hashtags_json, status, template_fields)
-         VALUES ($1, $2, $3, $4, $5, 'draft', $6)
-         RETURNING id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at`,
-        [params.userId, params.channelConnectionId, params.contentType, params.caption ?? null, hashtagsJson, templateFields],
-      );
+      const insertSql = 'INSERT INTO posts (user_id, channel_connection_id, content_type, caption, hashtags_json, status, template_fields) VALUES ($1, $2, $3, $4, $5, \'draft\', $6) RETURNING ' + POST_COLUMNS;
+      const result = await client.query(insertSql, [
+        params.userId, params.channelConnectionId, params.contentType,
+        params.caption ?? null, hashtagsJson, templateFields,
+      ]);
 
       const post = this.mapRow(result.rows[0]);
 
@@ -70,12 +71,8 @@ export class PostService {
    * Get a single post by ID, scoped to the user.
    */
   async getById(postId: string, userId: string): Promise<Post> {
-    const result = await query(
-      `SELECT id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at
-       FROM posts
-       WHERE id = $1 AND user_id = $2`,
-      [postId, userId],
-    );
+    const sql = 'SELECT ' + POST_COLUMNS + ' FROM posts WHERE id = $1 AND user_id = $2';
+    const result = await query(sql, [postId, userId]);
 
     if (result.rows.length === 0) {
       throw new PlatformError({
@@ -96,18 +93,16 @@ export class PostService {
   async list(userId: string, pagination: PaginationParams, statusFilter?: PostStatus): Promise<Post[]> {
     const offset = (pagination.page - 1) * pagination.limit;
 
-    let sql = `SELECT id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at
-       FROM posts
-       WHERE user_id = $1`;
+    let sql = 'SELECT ' + POST_COLUMNS + ' FROM posts WHERE user_id = $1';
     const params: unknown[] = [userId];
 
     if (statusFilter) {
       params.push(statusFilter);
-      sql += ` AND status = $${params.length}`;
+      sql += ' AND status = $' + params.length;
     }
 
     params.push(pagination.limit, offset);
-    sql += ` ORDER BY updated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    sql += ' ORDER BY updated_at DESC LIMIT $' + (params.length - 1) + ' OFFSET $' + params.length;
 
     const result = await query(sql, params);
     return result.rows.map((row: Record<string, unknown>) => this.mapRow(row));
@@ -138,35 +133,32 @@ export class PostService {
       let paramIndex = 1;
 
       if (updates.caption !== undefined) {
-        setClauses.push(`caption = $${paramIndex++}`);
+        setClauses.push('caption = $' + paramIndex++);
         values.push(updates.caption);
       }
       if (updates.hashtags !== undefined) {
-        setClauses.push(`hashtags_json = $${paramIndex++}`);
+        setClauses.push('hashtags_json = $' + paramIndex++);
         values.push(JSON.stringify(updates.hashtags));
       }
       if (updates.contentType !== undefined) {
-        setClauses.push(`content_type = $${paramIndex++}`);
+        setClauses.push('content_type = $' + paramIndex++);
         values.push(updates.contentType);
       }
       if (updates.channelConnectionId !== undefined) {
-        setClauses.push(`channel_connection_id = $${paramIndex++}`);
+        setClauses.push('channel_connection_id = $' + paramIndex++);
         values.push(updates.channelConnectionId);
       }
       if (updates.templateFields !== undefined) {
-        setClauses.push(`template_fields = $${paramIndex++}`);
+        setClauses.push('template_fields = $' + paramIndex++);
         values.push(JSON.stringify(updates.templateFields));
       }
 
       values.push(postId, userId);
-      const result = await client.query(
-        `UPDATE posts SET ${setClauses.join(', ')} WHERE id = $${paramIndex++} AND user_id = $${paramIndex}
-         RETURNING id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at`,
-        values,
-      );
+      const updateSql = 'UPDATE posts SET ' + setClauses.join(', ') + ' WHERE id = $' + paramIndex++ + ' AND user_id = $' + paramIndex + ' RETURNING ' + POST_COLUMNS;
+      const result = await client.query(updateSql, values);
 
       if (updates.mediaItemIds !== undefined) {
-        await client.query(`DELETE FROM post_media WHERE post_id = $1`, [postId]);
+        await client.query('DELETE FROM post_media WHERE post_id = $1', [postId]);
         if (updates.mediaItemIds.length > 0) {
           await this.attachMedia(client, postId, updates.mediaItemIds);
         }
@@ -195,21 +187,16 @@ export class PostService {
         severity: 'error',
         component: 'PostService',
         operation: 'transitionStatus',
-        description: `Cannot transition post from '${post.status}' to '${newStatus}'. This status change is not allowed.`,
+        description: 'Cannot transition post from \'' + post.status + '\' to \'' + newStatus + '\'. This status change is not allowed.',
         recommendedActions: [
-          `Valid transitions from '${post.status}': ${allowed ? allowed.join(', ') : 'none'}`,
+          'Valid transitions from \'' + post.status + '\': ' + (allowed ? allowed.join(', ') : 'none'),
         ],
       });
     }
 
     const publishedClause = newStatus === 'published' ? ', published_at = NOW()' : '';
-
-    const result = await query(
-      `UPDATE posts SET status = $1, updated_at = NOW()${publishedClause}
-       WHERE id = $2 AND user_id = $3
-       RETURNING id, user_id, channel_connection_id, content_type, caption, hashtags_json, status, external_post_id, template_fields, created_at, updated_at, published_at`,
-      [newStatus, postId, userId],
-    );
+    const transitionSql = 'UPDATE posts SET status = $1, updated_at = NOW()' + publishedClause + ' WHERE id = $2 AND user_id = $3 RETURNING ' + POST_COLUMNS;
+    const result = await query(transitionSql, [newStatus, postId, userId]);
 
     return this.mapRow(result.rows[0]);
   }
@@ -219,10 +206,7 @@ export class PostService {
    */
   async getPostMedia(postId: string): Promise<PostMedia[]> {
     const result = await query(
-      `SELECT id, post_id, media_item_id, display_order
-       FROM post_media
-       WHERE post_id = $1
-       ORDER BY display_order ASC`,
+      'SELECT id, post_id, media_item_id, display_order FROM post_media WHERE post_id = $1 ORDER BY display_order ASC',
       [postId],
     );
 
@@ -243,7 +227,7 @@ export class PostService {
   ): Promise<void> {
     for (let i = 0; i < mediaItemIds.length; i++) {
       await client.query(
-        `INSERT INTO post_media (post_id, media_item_id, display_order) VALUES ($1, $2, $3)`,
+        'INSERT INTO post_media (post_id, media_item_id, display_order) VALUES ($1, $2, $3)',
         [postId, mediaItemIds[i], i],
       );
     }

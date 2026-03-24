@@ -7,6 +7,10 @@ import type {
 
 const TOKEN_KEY = 'session_token';
 
+const API_BASE = import.meta.env.PROD
+  ? (import.meta.env.VITE_API_URL || '')
+  : '';
+
 // Global error listener for toast notifications
 type ErrorListener = (error: ErrorResponse) => void;
 let globalErrorListener: ErrorListener | null = null;
@@ -29,7 +33,7 @@ export function clearToken(): void {
 
 function authHeaders(): Record<string, string> {
   const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return token ? { Authorization: 'Bearer ' + token } : {};
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -39,7 +43,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (body && 'severity' in body) {
       error = body as ErrorResponse;
     } else {
-      error = { severity: 'error', component: 'API', operation: '', message: `Request failed (${res.status})`, actions: [] } satisfies ErrorResponse;
+      error = { severity: 'error', component: 'API', operation: '', message: 'Request failed (' + res.status + ')', actions: [] } satisfies ErrorResponse;
     }
     globalErrorListener?.(error);
     throw error;
@@ -48,7 +52,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function login(email: string): Promise<{ user: User; token: string }> {
-  const res = await fetch('/api/auth/login', {
+  const res = await fetch(API_BASE + '/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
@@ -57,7 +61,7 @@ export async function login(email: string): Promise<{ user: User; token: string 
 }
 
 export async function verifySession(): Promise<{ valid: boolean; user?: User }> {
-  const res = await fetch('/api/auth/verify', {
+  const res = await fetch(API_BASE + '/api/auth/verify', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -65,7 +69,7 @@ export async function verifySession(): Promise<{ valid: boolean; user?: User }> 
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/api/auth/logout', {
+  await fetch(API_BASE + '/api/auth/logout', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -75,14 +79,14 @@ export async function logout(): Promise<void> {
 // ── Media Library ──
 
 export async function listMedia(page = 1, limit = 20): Promise<{ items: MediaItem[]; page: number; limit: number }> {
-  const res = await fetch(`/api/media?page=${page}&limit=${limit}`, {
+  const res = await fetch(API_BASE + '/api/media?page=' + page + '&limit=' + limit, {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
 }
 
 export async function uploadMedia(file: File): Promise<MediaItem> {
-  const res = await fetch('/api/media/upload', {
+  const res = await fetch(API_BASE + '/api/media/upload', {
     method: 'POST',
     headers: {
       ...authHeaders(),
@@ -94,17 +98,69 @@ export async function uploadMedia(file: File): Promise<MediaItem> {
   return handleResponse(res);
 }
 
-export async function generateImages(description: string, style?: ImageStyle, count?: number, topic?: string): Promise<{ images: GeneratedImage[] }> {
-  const res = await fetch('/api/media/generate', {
+export async function generateImages(description: string, style?: ImageStyle, count?: number, topic?: string): Promise<{ images: GeneratedImage[]; mediaItems?: MediaItem[] }> {
+  // Enqueue the generation job
+  const enqueueRes = await fetch(API_BASE + '/api/media/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ description, style, count, topic }),
   });
-  return handleResponse(res);
+  const { jobId } = await handleResponse<{ jobId: string }>(enqueueRes);
+
+  // Poll for completion
+  const POLL_INTERVAL = 2000;
+  const MAX_POLLS = 90; // 3 minutes max
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    const statusRes = await fetch(API_BASE + '/api/media/generate-status/' + jobId, {
+      headers: { ...authHeaders() },
+    });
+    const status = await handleResponse<{
+      jobId: string;
+      status: string;
+      error?: string;
+      mediaItem?: MediaItem;
+    }>(statusRes);
+
+    if (status.status === 'completed' && status.mediaItem) {
+      // Build a GeneratedImage for backward compat, but also return the saved MediaItem
+      const img: GeneratedImage = {
+        url: status.mediaItem.thumbnailUrl || status.mediaItem.storageKey,
+        format: status.mediaItem.mimeType === 'image/png' ? 'png' : 'jpeg',
+        width: status.mediaItem.width ?? 1024,
+        height: status.mediaItem.height ?? 1024,
+        description: status.mediaItem.aiDescription || description || topic || '',
+      };
+      return { images: [img], mediaItems: [status.mediaItem] };
+    }
+
+    if (status.status === 'failed') {
+      const error: ErrorResponse = {
+        severity: 'error',
+        component: 'ImageGenerator',
+        operation: 'generate',
+        message: status.error || 'Image generation failed.',
+        actions: ['Try again'],
+      };
+      globalErrorListener?.(error);
+      throw error;
+    }
+  }
+
+  // Timed out
+  const error: ErrorResponse = {
+    severity: 'error',
+    component: 'ImageGenerator',
+    operation: 'generate',
+    message: 'Image generation timed out. Please try again.',
+    actions: ['Try again'],
+  };
+  globalErrorListener?.(error);
+  throw error;
 }
 
 export async function saveGeneratedImage(image: GeneratedImage): Promise<MediaItem> {
-  const res = await fetch(`/api/media/temp/save-generated`, {
+  const res = await fetch(API_BASE + '/api/media/temp/save-generated', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(image),
@@ -113,7 +169,7 @@ export async function saveGeneratedImage(image: GeneratedImage): Promise<MediaIt
 }
 
 export async function deleteMedia(id: string): Promise<void> {
-  const res = await fetch(`/api/media/${id}`, {
+  const res = await fetch(API_BASE + '/api/media/' + id, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
@@ -123,14 +179,14 @@ export async function deleteMedia(id: string): Promise<void> {
 // ── Content Types & Advisor ──
 
 export async function fetchContentTypes(): Promise<{ contentTypes: ContentTypeTemplate[] }> {
-  const res = await fetch('/api/content-types', {
+  const res = await fetch(API_BASE + '/api/content-types', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
 }
 
 export async function fetchContentAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
-  const res = await fetch('/api/content-advisor/suggest', {
+  const res = await fetch(API_BASE + '/api/content-advisor/suggest', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -139,7 +195,7 @@ export async function fetchContentAdvisorSuggestion(): Promise<{ suggestion: Con
 // ── Channels ──
 
 export async function fetchChannels(): Promise<{ channels: ChannelConnection[] }> {
-  const res = await fetch('/api/channels', {
+  const res = await fetch(API_BASE + '/api/channels', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -148,14 +204,14 @@ export async function fetchChannels(): Promise<{ channels: ChannelConnection[] }
 // ── Posts ──
 
 export async function fetchPost(id: string): Promise<Post> {
-  const res = await fetch(`/api/posts/${id}`, {
+  const res = await fetch(API_BASE + '/api/posts/' + id, {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
 }
 
 export async function fetchPosts(): Promise<{ posts: Post[]; page: number; limit: number }> {
-  const res = await fetch('/api/posts', {
+  const res = await fetch(API_BASE + '/api/posts', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -169,7 +225,7 @@ export async function createPost(data: {
   templateFields?: Record<string, string>;
   mediaItemIds?: string[];
 }): Promise<Post> {
-  const res = await fetch('/api/posts', {
+  const res = await fetch(API_BASE + '/api/posts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
@@ -185,7 +241,7 @@ export async function updatePost(id: string, data: {
   templateFields?: Record<string, string>;
   mediaItemIds?: string[];
 }): Promise<Post> {
-  const res = await fetch(`/api/posts/${id}`, {
+  const res = await fetch(API_BASE + '/api/posts/' + id, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
@@ -197,7 +253,7 @@ export async function generateContent(postId: string, data?: {
   context?: string;
   templateFields?: Record<string, string>;
 }): Promise<GeneratedContent> {
-  const res = await fetch(`/api/posts/${postId}/generate-content`, {
+  const res = await fetch(API_BASE + '/api/posts/' + postId + '/generate-content', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data ?? {}),
@@ -206,7 +262,7 @@ export async function generateContent(postId: string, data?: {
 }
 
 export async function approvePost(id: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/posts/${id}/approve`, {
+  const res = await fetch(API_BASE + '/api/posts/' + id + '/approve', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -214,7 +270,7 @@ export async function approvePost(id: string): Promise<{ success: boolean }> {
 }
 
 export async function publishPost(id: string): Promise<PublishResult> {
-  const res = await fetch(`/api/posts/${id}/publish`, {
+  const res = await fetch(API_BASE + '/api/posts/' + id + '/publish', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -244,7 +300,7 @@ export interface QuickStartResponse {
 }
 
 export async function quickStart(): Promise<QuickStartResponse> {
-  const res = await fetch('/api/posts/quick-start', {
+  const res = await fetch(API_BASE + '/api/posts/quick-start', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -254,7 +310,7 @@ export async function quickStart(): Promise<QuickStartResponse> {
 // ── Settings ──
 
 export async function fetchSettings(): Promise<{ settings: UserSettings }> {
-  const res = await fetch('/api/settings', {
+  const res = await fetch(API_BASE + '/api/settings', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -263,7 +319,7 @@ export async function fetchSettings(): Promise<{ settings: UserSettings }> {
 export async function updateSettings(data: {
   advisorMode?: AdvisorMode;
 }): Promise<{ settings: UserSettings }> {
-  const res = await fetch('/api/settings', {
+  const res = await fetch(API_BASE + '/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
@@ -274,7 +330,7 @@ export async function updateSettings(data: {
 // ── Channels (connect/disconnect) ──
 
 export async function connectInstagram(): Promise<{ authorizationUrl: string; state: string }> {
-  const res = await fetch('/api/channels/instagram/connect', {
+  const res = await fetch(API_BASE + '/api/channels/instagram/connect', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -282,7 +338,7 @@ export async function connectInstagram(): Promise<{ authorizationUrl: string; st
 }
 
 export async function disconnectChannel(id: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/channels/${id}`, {
+  const res = await fetch(API_BASE + '/api/channels/' + id, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
@@ -292,7 +348,7 @@ export async function disconnectChannel(id: string): Promise<{ success: boolean 
 // ── Activity Log ──
 
 export async function fetchActivityLog(page = 1, limit = 20): Promise<{ entries: ActivityLogEntry[]; page: number; limit: number }> {
-  const res = await fetch(`/api/activity-log?page=${page}&limit=${limit}`, {
+  const res = await fetch(API_BASE + '/api/activity-log?page=' + page + '&limit=' + limit, {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -301,14 +357,14 @@ export async function fetchActivityLog(page = 1, limit = 20): Promise<{ entries:
 // ── Content Ideas ──
 
 export async function fetchContentIdeas(contentType: ContentType): Promise<{ ideas: ContentIdea[] }> {
-  const res = await fetch(`/api/content-ideas?contentType=${contentType}`, {
+  const res = await fetch(API_BASE + '/api/content-ideas?contentType=' + contentType, {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
 }
 
 export async function generateContentIdeas(contentType: ContentType): Promise<{ ideas: ContentIdea[] }> {
-  const res = await fetch('/api/content-ideas/generate', {
+  const res = await fetch(API_BASE + '/api/content-ideas/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ contentType }),
@@ -317,7 +373,7 @@ export async function generateContentIdeas(contentType: ContentType): Promise<{ 
 }
 
 export async function useContentIdea(ideaId: string): Promise<{ idea: ContentIdea }> {
-  const res = await fetch(`/api/content-ideas/${ideaId}/use`, {
+  const res = await fetch(API_BASE + '/api/content-ideas/' + ideaId + '/use', {
     method: 'POST',
     headers: { ...authHeaders() },
   });
@@ -325,7 +381,7 @@ export async function useContentIdea(ideaId: string): Promise<{ idea: ContentIde
 }
 
 export async function dismissContentIdea(ideaId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/content-ideas/${ideaId}`, {
+  const res = await fetch(API_BASE + '/api/content-ideas/' + ideaId, {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });

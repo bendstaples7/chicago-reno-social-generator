@@ -1,21 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-}));
-
-import { PublishApprovalService } from '../../server/src/services/publish-approval-service.js';
-import { query } from '../../server/src/config/database.js';
-import { PlatformError } from '../../server/src/errors/platform-error.js';
-
-const mockedQuery = vi.mocked(query);
+import { createMockD1, configurePrepareResults } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import { PublishApprovalService } from '../../worker/src/services/publish-approval-service.js';
+import { PlatformError } from '../../worker/src/errors/platform-error.js';
 
 describe('PublishApprovalService', () => {
+  let db: MockD1Database;
   let service: PublishApprovalService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new PublishApprovalService();
+    db = createMockD1();
+    service = new PublishApprovalService(db as unknown as D1Database);
   });
 
   describe('getMode()', () => {
@@ -34,24 +30,24 @@ describe('PublishApprovalService', () => {
 
   describe('approve()', () => {
     it('approves a post in awaiting_approval status', async () => {
-      mockedQuery
-        .mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'awaiting_approval' }] } as never)
-        .mockResolvedValueOnce({ rows: [] } as never);
+      // Atomic UPDATE returns 1 change when post is in awaiting_approval
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 1 } } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).resolves.toBeUndefined();
 
-      expect(mockedQuery).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT id, status FROM posts'),
-        ['post-1', 'user-1'],
-      );
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining("SET status = 'approved'"),
-        ['post-1', 'user-1'],
       );
     });
 
     it('throws PlatformError when post is not found', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      // Atomic UPDATE returns 0 changes, then SELECT returns null
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: null },
+      ]);
 
       try {
         await service.approve('missing', 'user-1');
@@ -63,31 +59,46 @@ describe('PublishApprovalService', () => {
     });
 
     it('throws PlatformError when post is in draft status', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'draft' }] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'draft' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is already approved', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'approved' }] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'approved' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is in published status', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'published' }] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'published' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is in failed status', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'failed' }] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'failed' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('includes descriptive error message for wrong status', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ id: 'post-1', status: 'draft' }] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'draft' } },
+      ]);
 
       try {
         await service.approve('post-1', 'user-1');
@@ -104,45 +115,90 @@ describe('PublishApprovalService', () => {
 
   describe('isApproved()', () => {
     it('returns true when post status is approved', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ status: 'approved' }] } as never);
+      configurePrepareResults(db, [{ first: { status: 'approved' } }]);
 
       const result = await service.isApproved('post-1');
       expect(result).toBe(true);
     });
 
     it('returns false when post status is draft', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ status: 'draft' }] } as never);
+      configurePrepareResults(db, [{ first: { status: 'draft' } }]);
 
       const result = await service.isApproved('post-1');
       expect(result).toBe(false);
     });
 
     it('returns false when post status is awaiting_approval', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ status: 'awaiting_approval' }] } as never);
+      configurePrepareResults(db, [{ first: { status: 'awaiting_approval' } }]);
 
       const result = await service.isApproved('post-1');
       expect(result).toBe(false);
     });
 
     it('returns false when post status is published', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ status: 'published' }] } as never);
+      configurePrepareResults(db, [{ first: { status: 'published' } }]);
 
       const result = await service.isApproved('post-1');
       expect(result).toBe(false);
     });
 
     it('returns false when post status is failed', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [{ status: 'failed' }] } as never);
+      configurePrepareResults(db, [{ first: { status: 'failed' } }]);
 
       const result = await service.isApproved('post-1');
       expect(result).toBe(false);
     });
 
     it('returns false when post does not exist', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ first: null }]);
 
       const result = await service.isApproved('missing');
       expect(result).toBe(false);
+    });
+  });
+
+  describe('markPublishingIfApproved()', () => {
+    it('returns true when post is approved and transitions to publishing', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 1 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('post-1', 'user-1');
+      expect(result).toBe(true);
+
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("SET status = 'publishing'"),
+      );
+    });
+
+    it('returns false when post is not in approved status', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('post-1', 'user-1');
+      expect(result).toBe(false);
+    });
+
+    it('returns false when post does not exist', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('nonexistent', 'user-1');
+      expect(result).toBe(false);
+    });
+
+    it('scopes the update to the correct user', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      await service.markPublishingIfApproved('post-1', 'user-2');
+
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('user_id'),
+      );
     });
   });
 });

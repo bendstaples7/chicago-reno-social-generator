@@ -4,25 +4,19 @@ import type { ContentSuggestion } from '../../shared/src/types/content.js';
 import type { UserSettings } from '../../shared/src/types/user.js';
 import type { MediaItem } from '../../shared/src/types/media.js';
 import type { ChannelConstraints } from '../../shared/src/types/channel.js';
+import { createMockD1 } from './helpers/mock-d1.js';
+import { createMockR2 } from './helpers/mock-r2.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import type { MockR2Bucket } from './helpers/mock-r2.js';
 
-// ── Mocks ──────────────────────────────────────────────────────
+import { ContentAdvisor } from '../../worker/src/services/content-advisor.js';
+import { MediaService } from '../../worker/src/services/media-service.js';
+import { UserSettingsService } from '../../worker/src/services/user-settings-service.js';
+import { InstagramChannel } from '../../worker/src/services/instagram-channel.js';
 
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-  getClient: vi.fn(),
-}));
+// Test fixtures
 
-vi.mock('../../server/src/config/storage.js', () => ({
-  default: {},
-  MEDIA_BUCKET: 'test-bucket',
-}));
-
-import { ContentAdvisor } from '../../server/src/services/content-advisor.js';
-import { MediaService } from '../../server/src/services/media-service.js';
-import { UserSettingsService } from '../../server/src/services/user-settings-service.js';
-import { InstagramChannel } from '../../server/src/services/instagram-channel.js';
-
-// ── Test fixtures ──────────────────────────────────────────────
+const ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 const CONSTRAINTS: ChannelConstraints = {
   maxCaptionLength: 2200,
@@ -52,7 +46,7 @@ const MANUAL_SETTINGS: UserSettings = {
 
 const SUGGESTION: ContentSuggestion = {
   contentType: ContentType.Testimonial,
-  reason: "You haven't posted a Testimonial in 5 days — time to mix it up!",
+  reason: "You haven't posted a Testimonial in 5 days -- time to mix it up!",
 };
 
 const MEDIA_ITEMS: MediaItem[] = [
@@ -74,7 +68,6 @@ const MEDIA_ITEMS: MediaItem[] = [
 /**
  * Simulates the quick-start endpoint logic: fetches user settings,
  * runs advisor suggestion + media list in parallel, returns smart defaults.
- * This mirrors the POST /posts/quick-start handler.
  */
 async function quickStart(
   userId: string,
@@ -112,9 +105,11 @@ async function quickStart(
   };
 }
 
-// ── Tests ──────────────────────────────────────────────────────
+// Tests
 
 describe('POST /posts/quick-start logic', () => {
+  let db: MockD1Database;
+  let r2: MockR2Bucket;
   let contentAdvisor: ContentAdvisor;
   let mediaService: MediaService;
   let userSettingsService: UserSettingsService;
@@ -122,10 +117,16 @@ describe('POST /posts/quick-start logic', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    contentAdvisor = new ContentAdvisor();
-    mediaService = new MediaService();
-    userSettingsService = new UserSettingsService();
-    instagramChannel = new InstagramChannel();
+    db = createMockD1();
+    r2 = createMockR2();
+    contentAdvisor = new ContentAdvisor(db as unknown as D1Database);
+    mediaService = new MediaService(db as unknown as D1Database, r2 as unknown as R2Bucket);
+    userSettingsService = new UserSettingsService(db as unknown as D1Database);
+    instagramChannel = new InstagramChannel({
+      db: db as unknown as D1Database,
+      encryptionKey: ENCRYPTION_KEY,
+      publicUrl: '',
+    });
 
     vi.spyOn(instagramChannel, 'getConstraints').mockReturnValue(CONSTRAINTS);
   });

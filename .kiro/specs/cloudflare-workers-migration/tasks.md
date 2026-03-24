@@ -1,0 +1,343 @@
+# Implementation Plan: Cloudflare Workers Migration
+
+## Overview
+
+Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/client-s3 to Cloudflare Workers (Hono) + D1 + R2 native bindings + Cloudflare Pages + Cloudflare Queues. Tasks are ordered to build foundational infrastructure first (project scaffold, bindings, D1 schema), then migrate services layer-by-layer, then routes, then tests, then frontend. All code uses string concatenation (no backtick template literals). The shared/ types package remains unchanged.
+
+## Tasks
+
+- [x] 1. Scaffold worker/ project structure and configuration
+  - [x] 1.1 Create worker/package.json with hono, @cloudflare/workers-types, and wrangler dependencies
+    - Include scripts for dev (wrangler dev) and deploy (wrangler deploy)
+    - _Requirements: 1.1, 1.2, 7.1_
+  - [x] 1.2 Create worker/tsconfig.json targeting ES2022 with Cloudflare Workers types
+    - Extend from tsconfig.base.json, reference shared/ package
+    - _Requirements: 1.6, 9.2_
+  - [x] 1.3 Create worker/wrangler.toml with all bindings declared
+    - Declare D1 binding (DB), R2 binding (R2_BUCKET), Queue producer (IMAGE_QUEUE), Queue consumer
+    - Declare vars: AI_TEXT_API_URL, S3_PUBLIC_URL
+    - Comment secrets: AI_TEXT_API_KEY, FB_PAGE_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID, CHANNEL_ENCRYPTION_KEY
+    - Set compatibility_date, main entry point, migrations_dir
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x] 1.4 Create worker/src/bindings.ts with the Bindings interface
+    - Declare DB: D1Database, R2_BUCKET: R2Bucket, IMAGE_QUEUE: Queue, and all env var strings
+    - _Requirements: 1.3_
+
+- [x] 2. Create D1 migration script and error utilities
+  - [x] 2.1 Create worker/src/migrations/0001_initial_schema.sql with SQLite-compatible schema
+    - Convert all 9 existing tables + new image_generation_jobs table (10 total)
+    - TEXT PRIMARY KEY instead of UUID with default, datetime('now') instead of NOW()
+    - TEXT instead of VARCHAR/JSONB, INTEGER instead of BOOLEAN, no CREATE EXTENSION
+    - Include all indexes from the original schema
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.8, 10.1, 10.2, 10.3, 10.4, 10.5_
+  - [x] 2.2 Copy worker/src/errors/platform-error.ts and worker/src/errors/format-error.ts from server/src/errors/
+    - These files are unchanged; copy them and create worker/src/errors/index.ts barrel
+    - _Requirements: 13.1, 13.2_
+
+- [x] 3. Implement core middleware (session + error handler)
+  - [x] 3.1 Create worker/src/middleware/error-handler.ts as a Hono onError handler
+    - Catch PlatformError and return formatted JSON with 400 (warning) or 500 (error)
+    - Wrap non-PlatformError in PlatformError with component 'Server', operation 'unknown'
+    - Best-effort log to activity_log_entries via D1 (do not throw if logging fails)
+    - _Requirements: 13.1, 13.2, 13.3_
+  - [x] 3.2 Create worker/src/middleware/session.ts as Hono middleware using createMiddleware
+    - Extract Bearer token from Authorization header
+    - Create AuthService with c.env.DB, call verifySession
+    - Set user on Hono context via c.set('user', user)
+    - Throw PlatformError if no token or expired session
+    - _Requirements: 4.2, 4.3_
+
+- [ ] 4. Checkpoint - Verify project scaffolding
+  - Ensure worker/ directory compiles with tsc, ask the user if questions arise.
+
+- [x] 5. Migrate database-only services (no R2 dependency)
+  - [x] 5.1 Create worker/src/services/auth-service.ts
+    - Constructor receives D1Database binding
+    - Replace query($1,$2) with db.prepare().bind().run/first/all
+    - Replace crypto.randomUUID() (already Web Crypto compatible)
+    - Replace NOW() with datetime('now') in SQL
+    - Replace INSERT...RETURNING with INSERT then SELECT by id
+    - Replace ON CONFLICT (email) DO UPDATE with SQLite-compatible upsert
+    - Use db.batch() for atomic initiateAuth (user upsert + settings insert + session insert)
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 8.1, 8.3, 8.4, 8.5_
+  - [x] 5.2 Create worker/src/services/activity-log-service.ts
+    - Constructor receives D1Database binding
+    - Replace $1-$6 params with ? placeholders
+    - Generate id with crypto.randomUUID() before INSERT
+    - _Requirements: 8.1, 8.3_
+  - [x] 5.3 Create worker/src/services/post-service.ts
+    - Constructor receives D1Database binding
+    - Replace getClient()/BEGIN/COMMIT/ROLLBACK with db.batch() for create() and update()
+    - Generate post id and post_media ids with crypto.randomUUID() before INSERT
+    - Replace RETURNING with separate SELECT after batch
+    - Replace NOW() with datetime('now'), $N with ?
+    - Preserve the VALID_TRANSITIONS state machine exactly
+    - _Requirements: 8.1, 8.3, 8.4_
+  - [x] 5.4 Create worker/src/services/publish-approval-service.ts
+    - Constructor receives D1Database binding
+    - Replace $1/$2 with ?, query() with db.prepare().bind()
+    - _Requirements: 8.1, 8.3_
+  - [x] 5.5 Create worker/src/services/user-settings-service.ts
+    - Constructor receives D1Database binding
+    - Replace $N params with ?, query() with db.prepare().bind()
+    - Replace NOW() with datetime('now')
+    - Replace RETURNING with separate SELECT
+    - _Requirements: 8.1, 8.3_
+  - [x] 5.6 Create worker/src/services/content-advisor.ts
+    - Constructor receives D1Database binding
+    - Replace $1 with ?, INTERVAL '30 days' with datetime('now', '-30 days')
+    - Replace COUNT(*)::int with COUNT(*)
+    - _Requirements: 8.1, 8.3_
+  - [x] 5.7 Create worker/src/services/content-ideas-service.ts
+    - Constructor receives D1Database binding and AI_TEXT_API_KEY env var
+    - Replace $1-$3 with ?, query() with db.prepare().bind()
+    - Replace RETURNING with separate SELECT after INSERT
+    - Replace process.env.AI_TEXT_API_KEY with constructor-injected key
+    - _Requirements: 8.1, 8.3_
+  - [x] 5.8 Copy worker/src/services/content-templates.ts unchanged from server/
+    - Pure data file with no runtime dependencies
+    - _Requirements: 9.1_
+  - [x] 5.9 Create worker/src/services/content-generator.ts
+    - Constructor receives AI_TEXT_API_KEY and AI_TEXT_API_URL env vars
+    - Replace process.env references with constructor-injected values
+    - Business logic and prompt building unchanged
+    - _Requirements: 8.1_
+
+- [x] 6. Checkpoint - Verify service compilation
+  - Ensure all services in worker/src/services/ compile without errors, ask the user if questions arise.
+
+- [x] 7. Migrate R2-dependent services and encryption
+  - [x] 7.1 Create worker/src/services/media-service.ts
+    - Constructor receives D1Database and R2Bucket bindings
+    - Replace PutObjectCommand with r2.put(key, body, { httpMetadata: { contentType } })
+    - Replace DeleteObjectCommand with r2.delete(key)
+    - Replace GetObjectCommand with r2.get(key)
+    - Replace Buffer.from(base64) with Uint8Array via atob() for AI-generated images
+    - Generate id with crypto.randomUUID() before INSERT
+    - Replace RETURNING with separate SELECT
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 8.1, 8.2, 8.6_
+  - [x] 7.2 Create worker/src/services/instagram-channel.ts with Web Crypto encryption
+    - Constructor receives D1Database and CHANNEL_ENCRYPTION_KEY env var
+    - Implement encrypt() using crypto.subtle.encrypt with AES-GCM
+    - Implement decrypt() using crypto.subtle.decrypt with AES-GCM
+    - Add hexToBytes() and bytesToHex() helper functions
+    - Replace Node.js crypto.createCipheriv/createDecipheriv with Web Crypto
+    - Replace Node.js Buffer with Uint8Array/TextEncoder/TextDecoder
+    - Replace $1-$N with ?, query() with db.prepare().bind()
+    - Replace RETURNING with separate SELECT
+    - Make encrypt/decrypt async (Web Crypto is async)
+    - _Requirements: 8.1, 8.2, 8.5, 8.6, 11.1, 11.2, 11.3, 11.4_
+  - [x] 7.3 Create worker/src/services/cross-poster.ts
+    - Constructor receives D1Database plus service dependencies (PostService, PublishApprovalService, channel, ActivityLogService)
+    - Replace direct query() call for external_post_id update with db.prepare().bind()
+    - Replace NOW() with datetime('now')
+    - _Requirements: 8.1, 8.3_
+  - [x] 7.4 Create worker/src/services/image-generator.ts
+    - Constructor receives AI_TEXT_API_KEY env var
+    - Replace process.env.AI_TEXT_API_KEY with constructor-injected key
+    - Business logic unchanged (fetch calls to OpenAI)
+    - _Requirements: 5.2, 8.1_
+  - [x] 7.5 Create worker/src/services/index.ts barrel export for all services
+    - Export all 13 services from the worker/src/services/ directory
+    - _Requirements: 8.1_
+
+- [x] 8. Implement Queue consumer for image generation
+  - [x] 8.1 Create worker/src/queue/image-consumer.ts
+    - Export handleImageQueue(batch, env) function
+    - For each message: update job status to 'processing', call ImageGenerator.generate(), store image in R2 via MediaService.storeGenerated(), update job to 'completed' with result_media_id
+    - On failure: update job to 'failed' with error message, ack the message
+    - _Requirements: 5.2, 5.3, 5.4, 5.5_
+
+- [x] 9. Create all Hono route files
+  - [x] 9.1 Create worker/src/routes/auth.ts
+    - POST /login: create AuthService(c.env.DB), call initiateAuth, return { user, token }
+    - POST /verify: create AuthService(c.env.DB), call verifySession, return { valid, user }
+    - POST /logout: create AuthService(c.env.DB), call logout
+    - _Requirements: 1.1, 4.1, 4.5_
+  - [x] 9.2 Create worker/src/routes/media.ts
+    - GET /: list media with pagination (sessionMiddleware)
+    - POST /upload: parse raw body, create MediaService(c.env.DB, c.env.R2_BUCKET), call upload
+    - POST /generate: enqueue image generation job to c.env.IMAGE_QUEUE, return { jobId }
+    - GET /generate-status/:jobId: query image_generation_jobs table, return status and result
+    - POST /temp/save-generated: save a generated image from data URI to R2
+    - DELETE /:id: delete media item
+    - _Requirements: 1.1, 3.1, 3.2, 5.1, 5.3_
+  - [x] 9.3 Create worker/src/routes/posts.ts
+    - GET /: list posts with pagination (sessionMiddleware)
+    - POST /: create post
+    - GET /:id: get post by id
+    - PUT /:id: update post
+    - POST /:id/approve: approve post via PublishApprovalService
+    - POST /:id/publish: publish post via CrossPoster
+    - POST /:id/generate-content: generate content via ContentGenerator
+    - POST /quick-start: quick-start workflow endpoint
+    - _Requirements: 1.1_
+  - [x] 9.4 Create worker/src/routes/channels.ts
+    - GET /: list channel connections (sessionMiddleware)
+    - POST /instagram/connect: get Instagram authorization URL
+    - GET /instagram/callback: handle OAuth callback
+    - DELETE /:id: disconnect channel
+    - _Requirements: 1.1_
+  - [x] 9.5 Create worker/src/routes/content.ts
+    - GET /content-types: return content type templates
+    - GET /holidays: return holiday data
+    - _Requirements: 1.1_
+  - [x] 9.6 Create worker/src/routes/settings.ts
+    - GET /settings: get user settings (sessionMiddleware)
+    - PUT /settings: update user settings
+    - GET /content-advisor/suggest: get content suggestion
+    - _Requirements: 1.1_
+  - [x] 9.7 Create worker/src/routes/activity-log.ts
+    - GET /: list activity log entries with pagination (sessionMiddleware)
+    - _Requirements: 1.1_
+  - [x] 9.8 Create worker/src/routes/content-ideas.ts
+    - GET /: get unused ideas by content type (sessionMiddleware)
+    - POST /generate: generate new batch of ideas
+    - POST /:id/use: mark idea as used
+    - DELETE /:id: dismiss idea
+    - _Requirements: 1.1_
+
+- [x] 10. Create Hono app entry point and wire everything together
+  - [x] 10.1 Create worker/src/index.ts
+    - Create Hono app with Bindings type
+    - Register /health route
+    - Register all route groups with app.route()
+    - Register onError handler
+    - Export default object with fetch handler and queue consumer
+    - Apply 10MB JSON body size limit
+    - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6_
+
+- [x] 11. Checkpoint - Verify worker compiles and routes are wired
+  - Ensure worker/ compiles with tsc, all routes registered, ask the user if questions arise.
+
+- [x] 12. Update frontend for Cloudflare Pages deployment
+  - [x] 12.1 Update client/vite.config.ts to proxy to Wrangler dev server
+    - Change proxy target from http://localhost:3001 to http://localhost:8787
+    - _Requirements: 6.5_
+  - [x] 12.2 Update client/src/api.ts to support production Worker URL
+    - Add API_BASE using import.meta.env.PROD and VITE_API_URL
+    - Prefix all fetch calls with API_BASE using string concatenation
+    - _Requirements: 6.3, 6.4_
+
+- [x] 13. Migrate unit tests to mock D1/R2 instead of pg/S3
+  - [x] 13.1 Create tests/unit/helpers/mock-d1.ts with createMockD1() factory
+    - Return object implementing D1Database interface with vi.fn() for prepare, batch, exec, dump
+    - prepare() returns chainable bind/first/all/run methods
+    - Support configuring return values per test
+    - _Requirements: 12.1_
+  - [x] 13.2 Create tests/unit/helpers/mock-r2.ts with createMockR2() factory
+    - Return object implementing R2Bucket interface with in-memory Map storage
+    - put() stores ArrayBuffer, get() returns R2ObjectBody, delete() removes entry
+    - _Requirements: 12.2_
+  - [x] 13.3 Create tests/unit/helpers/mock-queue.ts with createMockQueue() factory
+    - Return object implementing Queue interface with send() and sendBatch()
+    - _Requirements: 12.2_
+  - [x] 13.4 Migrate tests/unit/post-service.test.ts
+    - Replace vi.mock('../../server/src/config/database.js') with createMockD1()
+    - Import PostService from worker/src/services/post-service.ts
+    - Update create() tests to expect db.batch() instead of BEGIN/COMMIT/ROLLBACK
+    - Update all query assertions to use db.prepare().bind() patterns
+    - Preserve all existing test cases and assertions
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.5 Migrate tests/unit/auth-service.test.ts
+    - Replace pg mock with createMockD1()
+    - Import AuthService from worker/src/services/
+    - Update query assertions for D1 prepared statement patterns
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.6 Migrate tests/unit/cross-poster.test.ts
+    - Replace pg mock with createMockD1()
+    - Import CrossPoster from worker/src/services/
+    - Update direct query() mock to db.prepare().bind() pattern
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.7 Migrate tests/unit/instagram-channel.test.ts
+    - Replace pg mock with createMockD1()
+    - Import InstagramChannel from worker/src/services/
+    - Mock Web Crypto API (crypto.subtle) instead of Node.js crypto
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.8 Migrate tests/unit/activity-log-service.test.ts
+    - Replace pg mock with createMockD1()
+    - Import ActivityLogService from worker/src/services/
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.9 Migrate tests/unit/publish-approval-service.test.ts
+    - Replace pg mock with createMockD1()
+    - Import PublishApprovalService from worker/src/services/
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.10 Migrate tests/unit/user-settings-service.test.ts
+    - Replace pg mock with createMockD1()
+    - Import UserSettingsService from worker/src/services/
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.11 Migrate tests/unit/quick-start.test.ts
+    - Replace pg mock with createMockD1()
+    - Update imports to worker/src/services/
+    - _Requirements: 12.1, 12.3_
+  - [x] 13.12 Verify tests/unit/error-formatting.test.ts needs no changes
+    - This test covers PlatformError and formatErrorResponse which are unchanged
+    - Confirm imports still resolve correctly
+    - _Requirements: 12.3_
+
+- [x] 14. Checkpoint - Ensure all unit tests pass
+  - Ensure all tests pass via npm test, ask the user if questions arise.
+
+- [ ] 15. Write property-based tests for correctness properties
+  - [ ]* 15.1 Write property test for R2 storage round-trip (Property 1)
+    - **Property 1: R2 Storage Round-Trip**
+    - Generate random Uint8Array payloads and storage keys, put then get via mock R2, compare bytes
+    - **Validates: Requirements 3.1, 3.3, 3.6, 8.6**
+  - [ ]* 15.2 Write property test for R2 delete removes object (Property 2)
+    - **Property 2: R2 Delete Removes Object**
+    - Generate random keys, put then delete then get via mock R2, assert null
+    - **Validates: Requirements 3.2**
+  - [ ]* 15.3 Write property test for session create-verify round-trip (Property 3)
+    - **Property 3: Session Create-Verify Round-Trip**
+    - Generate random valid @chicago-reno.com emails, initiateAuth then verifySession, compare user email
+    - **Validates: Requirements 4.1, 4.2, 4.4**
+  - [ ]* 15.4 Write property test for session expiry after 7 days (Property 4)
+    - **Property 4: Session Expiry After 7 Days**
+    - Generate sessions with old timestamps, verify returns null and session deleted
+    - **Validates: Requirements 4.3**
+  - [ ]* 15.5 Write property test for session logout invalidation (Property 5)
+    - **Property 5: Session Logout Invalidation**
+    - Generate sessions, logout then verify, assert null
+    - **Validates: Requirements 4.5**
+  - [ ]* 15.6 Write property test for AES-GCM encryption round-trip (Property 6)
+    - **Property 6: AES-GCM Encryption Round-Trip**
+    - Generate random plaintext strings, encrypt then decrypt with a fixed key, compare
+    - **Validates: Requirements 8.5, 11.1, 11.2**
+  - [ ]* 15.7 Write property test for image generation job lifecycle (Property 7)
+    - **Property 7: Image Generation Job Lifecycle**
+    - Generate random job params, enqueue then process via mock consumer, verify status transitions
+    - **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
+  - [ ]* 15.8 Write property test for D1 batch atomicity (Property 8)
+    - **Property 8: D1 Batch Atomicity**
+    - Generate batch with one failing statement, verify no side effects persisted
+    - **Validates: Requirements 8.4**
+  - [ ]* 15.9 Write property test for error handler status code mapping (Property 9)
+    - **Property 9: Error Handler Status Code Mapping**
+    - Generate random PlatformErrors with random severity, verify HTTP 400 for warning, 500 for error
+    - **Validates: Requirements 13.1, 13.2**
+  - [ ]* 15.10 Write property test for error handler activity logging (Property 10)
+    - **Property 10: Error Handler Activity Logging**
+    - Generate random errors, pass through handler, verify D1 insert called with correct fields
+    - **Validates: Requirements 13.3**
+  - [ ]* 15.11 Write property test for application-level UUID generation (Property 11)
+    - **Property 11: Application-Level UUID Generation**
+    - Generate random service create calls, verify id field is valid UUID v4
+    - **Validates: Requirements 2.2**
+  - [ ]* 15.12 Write property test for post status state machine preservation (Property 12)
+    - **Property 12: Post Status State Machine Preservation**
+    - Generate random (status, targetStatus) pairs, verify allowed/rejected matches transition map
+    - **Validates: Requirements 8.3**
+
+- [ ] 16. Final checkpoint - Ensure all tests pass
+  - Ensure all tests pass via npm test, ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for faster MVP
+- All TypeScript code must use string concatenation (no backtick template literals) due to PowerShell corruption on this Windows machine
+- The shared/ package is NOT modified in any task
+- D1 uses SQLite syntax: ? params, no RETURNING, datetime('now'), db.batch() for transactions
+- Services receive D1/R2 bindings via constructor, not via shared database module import
+- Property tests validate universal correctness properties from the design document
+- Unit tests validate specific examples and edge cases
+- Checkpoints ensure incremental validation throughout the migration

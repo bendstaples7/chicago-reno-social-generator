@@ -63,17 +63,35 @@ export class MediaService {
         bytes[i] = binaryStr.charCodeAt(i);
       }
     } else {
-      const response = await fetch(image.url);
-      if (!response.ok) {
-        throw new PlatformError({
-          severity: 'error',
-          component: 'MediaService',
-          operation: 'storeGenerated',
-          description: 'Failed to download the generated image for storage.',
-          recommendedActions: ['Try generating the image again'],
-        });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const response = await fetch(image.url, { signal: controller.signal });
+        if (!response.ok) {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'MediaService',
+            operation: 'storeGenerated',
+            description: 'Failed to download the generated image for storage.',
+            recommendedActions: ['Try generating the image again'],
+          });
+        }
+        bytes = new Uint8Array(await response.arrayBuffer());
+      } catch (err) {
+        if (err instanceof PlatformError) throw err;
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'MediaService',
+            operation: 'storeGenerated',
+            description: 'Image download timed out.',
+            recommendedActions: ['Try generating the image again'],
+          });
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
       }
-      bytes = new Uint8Array(await response.arrayBuffer());
     }
 
     const mimeType = image.format === 'png' ? 'image/png' : image.format === 'webp' ? 'image/webp' : 'image/jpeg';

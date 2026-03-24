@@ -30,23 +30,24 @@ describe('PublishApprovalService', () => {
 
   describe('approve()', () => {
     it('approves a post in awaiting_approval status', async () => {
+      // Atomic UPDATE returns 1 change when post is in awaiting_approval
       configurePrepareResults(db, [
-        { first: { id: 'post-1', status: 'awaiting_approval' } },
-        { run: { success: true } },
+        { run: { success: true, meta: { changes: 1 } } },
       ]);
 
       await expect(service.approve('post-1', 'user-1')).resolves.toBeUndefined();
 
-      expect(db.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT id, status FROM posts'),
-      );
       expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining("SET status = 'approved'"),
       );
     });
 
     it('throws PlatformError when post is not found', async () => {
-      configurePrepareResults(db, [{ first: null }]);
+      // Atomic UPDATE returns 0 changes, then SELECT returns null
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: null },
+      ]);
 
       try {
         await service.approve('missing', 'user-1');
@@ -58,31 +59,46 @@ describe('PublishApprovalService', () => {
     });
 
     it('throws PlatformError when post is in draft status', async () => {
-      configurePrepareResults(db, [{ first: { id: 'post-1', status: 'draft' } }]);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'draft' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is already approved', async () => {
-      configurePrepareResults(db, [{ first: { id: 'post-1', status: 'approved' } }]);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'approved' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is in published status', async () => {
-      configurePrepareResults(db, [{ first: { id: 'post-1', status: 'published' } }]);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'published' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('throws PlatformError when post is in failed status', async () => {
-      configurePrepareResults(db, [{ first: { id: 'post-1', status: 'failed' } }]);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'failed' } },
+      ]);
 
       await expect(service.approve('post-1', 'user-1')).rejects.toThrow(PlatformError);
     });
 
     it('includes descriptive error message for wrong status', async () => {
-      configurePrepareResults(db, [{ first: { id: 'post-1', status: 'draft' } }]);
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+        { first: { id: 'post-1', status: 'draft' } },
+      ]);
 
       try {
         await service.approve('post-1', 'user-1');

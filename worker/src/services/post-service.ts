@@ -198,6 +198,12 @@ export class PostService {
     return this.mapRow(row);
   }
 
+  async setExternalPostId(postId: string, userId: string, externalPostId: string): Promise<void> {
+    await this.db.prepare(
+      "UPDATE posts SET external_post_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+    ).bind(externalPostId, postId, userId).run();
+  }
+
   async getPostMedia(postId: string): Promise<PostMedia[]> {
     const result = await this.db.prepare(
       'SELECT id, post_id, media_item_id, display_order FROM post_media WHERE post_id = ? ORDER BY display_order ASC'

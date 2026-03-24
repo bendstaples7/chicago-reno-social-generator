@@ -61,8 +61,23 @@ export function createMockR2(): MockR2Bucket {
       }
     }),
 
-    list: vi.fn().mockResolvedValue({ objects: [], truncated: false }),
-    head: vi.fn().mockResolvedValue(null),
+    list: vi.fn().mockImplementation(async () => {
+      const objects = Array.from(store.entries()).map(([key, entry]) => ({
+        key,
+        size: entry.body.byteLength,
+        httpMetadata: entry.httpMetadata ?? {},
+      }));
+      return { objects, truncated: false };
+    }),
+    head: vi.fn().mockImplementation(async (key: string) => {
+      const entry = store.get(key);
+      if (!entry) return null;
+      return {
+        key,
+        size: entry.body.byteLength,
+        httpMetadata: entry.httpMetadata ?? {},
+      };
+    }),
     _store: store,
   };
 

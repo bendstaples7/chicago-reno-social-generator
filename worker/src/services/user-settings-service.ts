@@ -39,7 +39,7 @@ export class UserSettingsService {
     userId: string,
     updates: { advisorMode?: AdvisorMode; approvalMode?: ApprovalMode },
   ): Promise<UserSettings> {
-    if (updates.approvalMode === 'auto_publish') {
+    if (updates.approvalMode !== undefined && updates.approvalMode === 'auto_publish') {
       throw new PlatformError({
         severity: 'error',
         component: 'UserSettingsService',
@@ -49,7 +49,7 @@ export class UserSettingsService {
       });
     }
 
-    if (updates.advisorMode && !VALID_ADVISOR_MODES.includes(updates.advisorMode)) {
+    if (updates.advisorMode !== undefined && !VALID_ADVISOR_MODES.includes(updates.advisorMode)) {
       throw new PlatformError({
         severity: 'error',
         component: 'UserSettingsService',

@@ -4,6 +4,11 @@ import { AuthService } from '../services/auth-service.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+function getBearerToken(c: { req: { header: (name: string) => string | undefined } }): string {
+  const authHeader = c.req.header('Authorization');
+  return authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+}
+
 /**
  * POST /login
  * Validate email domain and create session.
@@ -20,10 +25,7 @@ app.post('/login', async (c) => {
  * Check if the current session token is still valid.
  */
 app.post('/verify', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  const token = authHeader && authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : '';
+  const token = getBearerToken(c);
   const authService = new AuthService(c.env.DB);
   const user = await authService.verifySession(token);
 
@@ -39,10 +41,7 @@ app.post('/verify', async (c) => {
  * Destroy the current session.
  */
 app.post('/logout', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  const token = authHeader && authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : '';
+  const token = getBearerToken(c);
   const authService = new AuthService(c.env.DB);
   await authService.logout(token);
   return c.json({ success: true });

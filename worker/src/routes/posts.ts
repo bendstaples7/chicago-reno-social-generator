@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, PostStatus } from 'shared';
+import type { User, PostStatus, ContentType } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import {
   PostService,
@@ -24,7 +24,9 @@ app.use('*', sessionMiddleware);
 app.get('/', async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20', 10) || 20));
-  const status = c.req.query('status') as PostStatus | undefined;
+  const rawStatus = c.req.query('status');
+  const validStatuses = ['draft', 'awaiting_approval', 'approved', 'publishing', 'published', 'failed'];
+  const status = rawStatus && validStatuses.includes(rawStatus) ? rawStatus as PostStatus : undefined;
   const postService = new PostService(c.env.DB);
   const posts = await postService.list(c.get('user').id, { page, limit }, status);
   return c.json({ posts, page, limit });
@@ -90,8 +92,8 @@ app.post('/', async (c) => {
   const postService = new PostService(c.env.DB);
   const post = await postService.create({
     userId: c.get('user').id,
-    channelConnectionId: body.channelConnectionId || '',
-    contentType: body.contentType as any,
+    channelConnectionId: body.channelConnectionId || undefined as any,
+    contentType: body.contentType as ContentType,
     caption: body.caption,
     hashtags: body.hashtags,
     templateFields: body.templateFields,
@@ -147,8 +149,13 @@ app.post('/:id/approve', async (c) => {
   const postService = new PostService(db);
   const approvalService = new PublishApprovalService(db);
 
-  // If the post is still a draft, transition to awaiting_approval first
+  // Validate post status — only draft and awaiting_approval are allowed
   const post = await postService.getById(postId, userId);
+  if (post.status !== 'draft' && post.status !== 'awaiting_approval') {
+    return c.json({ error: 'Cannot approve a post with status \'' + post.status + '\'.' }, 409);
+  }
+
+  // If the post is still a draft, transition to awaiting_approval first
   if (post.status === 'draft') {
     await postService.transitionStatus(postId, userId, 'awaiting_approval');
   }

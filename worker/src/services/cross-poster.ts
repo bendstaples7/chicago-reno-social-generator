@@ -88,10 +88,8 @@ export class CrossPoster {
 
     // 6. Handle result
     if (result.success) {
-      // Update external_post_id in DB via D1
-      await this.db.prepare(
-        "UPDATE posts SET external_post_id = ?, updated_at = datetime('now') WHERE id = ?"
-      ).bind(result.externalPostId, postId).run();
+      // Update external_post_id via PostService
+      await this.postService.setExternalPostId(postId, userId, result.externalPostId!);
 
       // Transition to 'published'
       await this.postService.transitionStatus(postId, userId, 'published');

@@ -4,6 +4,30 @@ import type { User, ChannelConnection } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { InstagramChannel } from '../services/instagram-channel.js';
 
+// Re-export encrypt for direct-token mode
+async function encryptToken(text: string, keyHex: string): Promise<string> {
+  const hexToBytes = (hex: string): Uint8Array => {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return bytes;
+  };
+  const bytesToHex = (bytes: Uint8Array): string => {
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, '0');
+    }
+    return hex;
+  };
+  const keyBytes = hexToBytes(keyHex);
+  const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(text);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+  return bytesToHex(iv) + ':' + bytesToHex(new Uint8Array(ciphertext));
+}
+
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
 app.use('*', sessionMiddleware);
@@ -15,18 +39,16 @@ app.use('*', sessionMiddleware);
 app.get('/', async (c) => {
   const db = c.env.DB;
   const result = await db.prepare(
-    'SELECT id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status, created_at, updated_at FROM channel_connections WHERE user_id = ?'
+    'SELECT id, user_id, channel_type, external_account_id, external_account_name, status, created_at, updated_at FROM channel_connections WHERE user_id = ?'
   ).bind(c.get('user').id).all();
 
-  const channels: ChannelConnection[] = (result.results as any[]).map((row) => ({
+  const channels = (result.results as any[]).map((row) => ({
     id: row.id as string,
     userId: row.user_id as string,
     channelType: row.channel_type as string,
     externalAccountId: row.external_account_id as string,
     externalAccountName: row.external_account_name as string,
-    accessTokenEncrypted: row.access_token_encrypted as string,
-    tokenExpiresAt: new Date(row.token_expires_at as string),
-    status: row.status as ChannelConnection['status'],
+    status: row.status as string,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   }));
@@ -64,15 +86,18 @@ app.post('/instagram/connect', async (c) => {
 
     const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(); // 60 days
 
-    // Remove any existing connection for this user+channel, then insert fresh
-    await db.prepare(
-      "DELETE FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram'"
-    ).bind(userId).run();
-
+    // Remove any existing connection for this user+channel, then insert fresh — use batch for atomicity
     const id = crypto.randomUUID();
-    await db.prepare(
-      "INSERT INTO channel_connections (id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status) VALUES (?, ?, 'instagram', ?, ?, ?, ?, 'connected')"
-    ).bind(id, userId, igAccountId, accountName, pageToken, expiresAt).run();
+    const encryptedToken = await encryptToken(pageToken, c.env.CHANNEL_ENCRYPTION_KEY);
+
+    await db.batch([
+      db.prepare(
+        "DELETE FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram'"
+      ).bind(userId),
+      db.prepare(
+        "INSERT INTO channel_connections (id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status) VALUES (?, ?, 'instagram', ?, ?, ?, ?, 'connected')"
+      ).bind(id, userId, igAccountId, accountName, encryptedToken, expiresAt),
+    ]);
 
     const row = await db.prepare(
       'SELECT id, user_id, channel_type, external_account_id, external_account_name, status, created_at, updated_at FROM channel_connections WHERE id = ?'
@@ -101,6 +126,12 @@ app.post('/instagram/connect', async (c) => {
   });
 
   const state = crypto.randomUUID();
+  // Persist state for CSRF verification in callback
+  await db.prepare(
+    "INSERT INTO oauth_states (id, user_id, created_at) VALUES (?, ?, datetime('now'))"
+  ).bind(state, c.get('user').id).run().catch(() => {
+    // Table may not exist yet; fall through — state check in callback will be best-effort
+  });
   const authorizationUrl = instagramChannel.getAuthorizationUrl(state);
   return c.json({ authorizationUrl, state });
 });

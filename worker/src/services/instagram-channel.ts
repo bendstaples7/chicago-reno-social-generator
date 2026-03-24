@@ -34,7 +34,7 @@ function bytesToHex(bytes: Uint8Array): string {
 async function encrypt(text: string, keyHex: string): Promise<string> {
   const keyBytes = hexToBytes(keyHex);
   const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
-  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(text);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
   return bytesToHex(iv) + ':' + bytesToHex(new Uint8Array(ciphertext));
@@ -147,14 +147,16 @@ export class InstagramChannel implements ChannelInterface {
     const encryptedToken = await encrypt(tokenData.access_token, this.encryptionKey);
     const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
-    await this.db.prepare(
-      "DELETE FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram'"
-    ).bind(userId).run();
-
+    // Atomic DELETE + INSERT via batch
     const id = crypto.randomUUID();
-    await this.db.prepare(
-      "INSERT INTO channel_connections (id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status) VALUES (?, ?, 'instagram', ?, ?, ?, ?, 'connected')"
-    ).bind(id, userId, tokenData.user_id, accountName, encryptedToken, expiresAt).run();
+    await this.db.batch([
+      this.db.prepare(
+        "DELETE FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram'"
+      ).bind(userId),
+      this.db.prepare(
+        "INSERT INTO channel_connections (id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status) VALUES (?, ?, 'instagram', ?, ?, ?, ?, 'connected')"
+      ).bind(id, userId, tokenData.user_id, accountName, encryptedToken, expiresAt),
+    ]);
 
     const row = await this.db.prepare(
       'SELECT id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status, created_at, updated_at FROM channel_connections WHERE id = ?'
@@ -181,13 +183,16 @@ export class InstagramChannel implements ChannelInterface {
     try {
       const encryptedToken = row.access_token_encrypted as string;
       if (encryptedToken) {
-        let token: string;
+        let token: string | null;
         try {
           token = await decrypt(encryptedToken, this.encryptionKey);
         } catch {
-          token = encryptedToken;
+          // Cannot decrypt — skip revocation rather than sending ciphertext to Instagram
+          token = null;
         }
-        await fetch(INSTAGRAM_GRAPH_URL + '/me/permissions?access_token=' + token, { method: 'DELETE' });
+        if (token) {
+          await fetch(INSTAGRAM_GRAPH_URL + '/me/permissions?access_token=' + token, { method: 'DELETE' });
+        }
       }
     } catch { /* best-effort */ }
 

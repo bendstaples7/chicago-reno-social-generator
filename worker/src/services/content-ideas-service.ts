@@ -37,13 +37,15 @@ export class ContentIdeasService {
   }
 
   async markUsed(ideaId: string, userId: string): Promise<ContentIdea | null> {
-    await this.db.prepare(
+    const result = await this.db.prepare(
       'UPDATE content_ideas SET used = 1 WHERE id = ? AND user_id = ?'
     ).bind(ideaId, userId).run();
 
+    if ((result.meta?.changes ?? 0) === 0) return null;
+
     const row = await this.db.prepare(
-      'SELECT id, user_id, content_type, idea, used, created_at FROM content_ideas WHERE id = ?'
-    ).bind(ideaId).first() as any;
+      'SELECT id, user_id, content_type, idea, used, created_at FROM content_ideas WHERE id = ? AND user_id = ?'
+    ).bind(ideaId, userId).first() as any;
 
     if (!row) return null;
     return this.mapRow(row);

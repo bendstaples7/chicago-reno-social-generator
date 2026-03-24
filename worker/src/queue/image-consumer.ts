@@ -9,6 +9,13 @@ export interface ImageJobMessage {
   request: ImageGenerationRequest;
 }
 
+/** Errors that are permanent and should not be retried. */
+function isPermanentError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return ['invalid', 'unauthorized', 'forbidden', 'bad request', 'not found'].some((k) => msg.includes(k));
+}
+
 export async function handleImageQueue(
   batch: MessageBatch<ImageJobMessage>,
   env: Bindings,
@@ -27,24 +34,36 @@ export async function handleImageQueue(
       const imageGenerator = new ImageGenerator(env.AI_TEXT_API_KEY);
       const images = await imageGenerator.generate(job.request);
 
-      // Store first image in R2 via MediaService
+      // Store all generated images in R2 via MediaService
       const mediaService = new MediaService(db, r2);
-      const mediaItem = await mediaService.storeGenerated(images[0], job.userId);
+      let firstMediaId: string | null = null;
+      for (const image of images) {
+        const mediaItem = await mediaService.storeGenerated(image, job.userId);
+        if (!firstMediaId) firstMediaId = mediaItem.id;
+      }
 
-      // Update job as completed with result media id
+      // Update job as completed with first result media id
       await db.prepare(
         "UPDATE image_generation_jobs SET status = ?, result_media_id = ?, updated_at = datetime('now') WHERE id = ?"
-      ).bind('completed', mediaItem.id, job.jobId).run();
+      ).bind('completed', firstMediaId, job.jobId).run();
 
       message.ack();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
 
-      await db.prepare(
-        "UPDATE image_generation_jobs SET status = ?, error = ?, updated_at = datetime('now') WHERE id = ?"
-      ).bind('failed', errorMsg, job.jobId).run();
-
-      message.ack();
+      if (isPermanentError(err)) {
+        // Permanent failure — ack so it won't retry
+        await db.prepare(
+          "UPDATE image_generation_jobs SET status = ?, error = ?, updated_at = datetime('now') WHERE id = ?"
+        ).bind('failed', errorMsg, job.jobId).run();
+        message.ack();
+      } else {
+        // Transient failure — retry via the queue
+        await db.prepare(
+          "UPDATE image_generation_jobs SET status = ?, error = ?, updated_at = datetime('now') WHERE id = ?"
+        ).bind('retrying', errorMsg, job.jobId).run();
+        message.retry();
+      }
     }
   }
 }

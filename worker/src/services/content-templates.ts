@@ -1,5 +1,6 @@
 import { ContentType } from 'shared';
 import type { ContentTypeTemplate } from 'shared';
+import { PlatformError } from '../errors/index.js';
 
 /**
  * Content type template definitions for all four v1 content types.
@@ -136,7 +137,13 @@ export const CONTENT_TEMPLATES: ReadonlyMap<ContentType, ContentTypeTemplate> = 
 export function getTemplate(contentType: ContentType): ContentTypeTemplate {
   const template = CONTENT_TEMPLATES.get(contentType);
   if (!template) {
-    throw new Error('No template found for content type: ' + contentType);
+    throw new PlatformError({
+      severity: 'error',
+      component: 'ContentTemplates',
+      operation: 'getTemplate',
+      description: 'No template found for content type: ' + contentType,
+      recommendedActions: ['Use a valid content type'],
+    });
   }
   return template;
 }

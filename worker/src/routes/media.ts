@@ -73,22 +73,30 @@ app.post('/generate', async (c) => {
   }
 
   const jobId = crypto.randomUUID();
+  const sanitizedCount = Math.min(4, Math.max(1, Math.floor(Number(body.count) || 1)));
 
   // Create job record in D1
   await c.env.DB.prepare(
     'INSERT INTO image_generation_jobs (id, user_id, status, description, style, count, topic) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(jobId, userId, 'queued', description, body.style || null, body.count || 1, body.topic || null).run();
+  ).bind(jobId, userId, 'queued', description, body.style || null, sanitizedCount, body.topic || null).run();
 
-  // Enqueue the job
-  await c.env.IMAGE_QUEUE.send({
-    jobId,
-    userId,
-    request: {
-      description,
-      style: body.style,
-      count: body.count,
-    },
-  });
+  // Enqueue the job — clean up DB row on failure
+  try {
+    await c.env.IMAGE_QUEUE.send({
+      jobId,
+      userId,
+      request: {
+        description,
+        style: body.style,
+        count: sanitizedCount,
+      },
+    });
+  } catch (err) {
+    await c.env.DB.prepare(
+      "UPDATE image_generation_jobs SET status = 'failed', error = 'Failed to enqueue job', updated_at = datetime('now') WHERE id = ?"
+    ).bind(jobId).run();
+    throw err;
+  }
 
   return c.json({ jobId });
 });

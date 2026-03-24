@@ -15,8 +15,11 @@ import contentIdeasRoutes from './routes/content-ideas.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// 10 MB body size limit
+// Default 10 MB body size limit for non-upload routes
 app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));
+
+// Override with 50 MB limit for media upload endpoints
+app.use('/api/media/*', bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));

@@ -14,18 +14,19 @@ app.use('*', sessionMiddleware);
  * Get unused ideas by content type.
  */
 app.get('/', async (c) => {
-  const contentType = c.req.query('contentType');
-  if (!contentType) {
+  const rawContentType = (c.req.query('contentType') || '').trim();
+  const validTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+  if (!rawContentType || !validTypes.includes(rawContentType)) {
     throw new PlatformError({
       severity: 'warning',
       component: 'ContentIdeas',
       operation: 'list',
-      description: 'contentType query parameter is required.',
-      recommendedActions: ['Provide a contentType'],
+      description: 'A valid contentType query parameter is required. Valid types: ' + validTypes.join(', '),
+      recommendedActions: ['Provide a valid contentType'],
     });
   }
   const service = new ContentIdeasService(c.env.DB, c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
-  const ideas = await service.getUnused(c.get('user').id, contentType as ContentType);
+  const ideas = await service.getUnused(c.get('user').id, rawContentType as ContentType);
   return c.json({ ideas });
 });
 
@@ -35,17 +36,19 @@ app.get('/', async (c) => {
  */
 app.post('/generate', async (c) => {
   const body = await c.req.json() as { contentType?: string };
-  if (!body.contentType) {
+  const rawContentType = (body.contentType || '').trim();
+  const validTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+  if (!rawContentType || !validTypes.includes(rawContentType)) {
     throw new PlatformError({
       severity: 'warning',
       component: 'ContentIdeas',
       operation: 'generate',
-      description: 'contentType is required in the request body.',
-      recommendedActions: ['Provide a contentType'],
+      description: 'A valid contentType is required. Valid types: ' + validTypes.join(', '),
+      recommendedActions: ['Provide a valid contentType'],
     });
   }
   const service = new ContentIdeasService(c.env.DB, c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
-  const ideas = await service.generateBatch(c.get('user').id, body.contentType as ContentType);
+  const ideas = await service.generateBatch(c.get('user').id, rawContentType as ContentType);
   return c.json({ ideas });
 });
 

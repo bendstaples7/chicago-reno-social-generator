@@ -23,11 +23,13 @@ export class ActivityLogService {
   }
 
   async getEntries(userId: string, pagination: PaginationParams): Promise<ActivityLogEntry[]> {
-    const offset = (pagination.page - 1) * pagination.limit;
+    const page = Math.max(1, Math.floor(pagination.page) || 1);
+    const limit = Math.min(100, Math.max(1, Math.floor(pagination.limit) || 20));
+    const offset = (page - 1) * limit;
 
     const result = await this.db.prepare(
       'SELECT id, user_id, component, operation, severity, description, recommended_action, created_at FROM activity_log_entries WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
-    ).bind(userId, pagination.limit, offset).all();
+    ).bind(userId, limit, offset).all();
 
     return (result.results as any[]).map((row) => ({
       id: row.id as string,

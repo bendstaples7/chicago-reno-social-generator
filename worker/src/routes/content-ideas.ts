@@ -35,8 +35,19 @@ app.get('/', async (c) => {
  * Generate a new batch of ideas.
  */
 app.post('/generate', async (c) => {
-  const body = await c.req.json() as { contentType?: string };
-  const rawContentType = (body.contentType || '').trim();
+  let body: { contentType?: string };
+  try {
+    body = await c.req.json() as { contentType?: string };
+  } catch {
+    throw new PlatformError({
+      severity: 'warning',
+      component: 'ContentIdeas',
+      operation: 'generate',
+      description: 'Invalid JSON in request body.',
+      recommendedActions: ['Send a valid JSON body with a contentType field'],
+    });
+  }
+  const rawContentType = (typeof body.contentType === 'string' ? body.contentType : '').trim();
   const validTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
   if (!rawContentType || !validTypes.includes(rawContentType)) {
     throw new PlatformError({

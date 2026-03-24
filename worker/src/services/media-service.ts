@@ -63,6 +63,7 @@ export class MediaService {
         bytes[i] = binaryStr.charCodeAt(i);
       }
     } else {
+      const MAX_DOWNLOAD_SIZE = 20 * 1024 * 1024; // 20 MB max download
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10_000);
       try {
@@ -76,7 +77,26 @@ export class MediaService {
             recommendedActions: ['Try generating the image again'],
           });
         }
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > MAX_DOWNLOAD_SIZE) {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'MediaService',
+            operation: 'storeGenerated',
+            description: 'Generated image exceeds the 20 MB download size limit.',
+            recommendedActions: ['Try generating a smaller image'],
+          });
+        }
         bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length > MAX_DOWNLOAD_SIZE) {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'MediaService',
+            operation: 'storeGenerated',
+            description: 'Generated image exceeds the 20 MB download size limit.',
+            recommendedActions: ['Try generating a smaller image'],
+          });
+        }
       } catch (err) {
         if (err instanceof PlatformError) throw err;
         if (err instanceof Error && err.name === 'AbortError') {

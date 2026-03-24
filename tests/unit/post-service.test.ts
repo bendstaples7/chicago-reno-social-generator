@@ -135,6 +135,9 @@ describe('PostService', () => {
       expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('AND status = ?'),
       );
+      // Verify the bound values include the status filter
+      const stmt = db._stmts[0];
+      expect(stmt.bind).toHaveBeenCalledWith('user-1', 'draft', 10, 0);
     });
   });
 
@@ -245,7 +248,7 @@ describe('PostService', () => {
         },
       ]);
 
-      const media = await service.getPostMedia('post-1');
+      const media = await service.getPostMedia('post-1', 'user-1');
 
       expect(media).toHaveLength(2);
       expect(media[0].mediaItemId).toBe('media-1');

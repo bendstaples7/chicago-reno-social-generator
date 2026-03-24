@@ -110,11 +110,12 @@ export class ContentGenerator {
     }
     prompt = prompt.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_match: string, field: string, content: string) => {
       const val = input.templateFields?.[field] || (field === 'context' ? input.context : '');
-      return val ? content.replace(new RegExp('\\{\\{' + field + '\\}\\}', 'g'), val) : '';
+      const isTruthy = val && val !== 'false' && val !== '0';
+      return isTruthy ? content.replace(new RegExp('\\{\\{' + field + '\\}\\}', 'g'), val) : '';
     });
     prompt = prompt.replace(/\{\{\^(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_match: string, field: string, content: string) => {
       const val = input.templateFields?.[field] || '';
-      return !val || val === 'false' ? content : '';
+      return !val || val === 'false' || val === '0' ? content : '';
     });
     prompt = prompt.replace(/\{\{[#^/]?\w+\}\}/g, '');
     if (input.media.length > 0) {
@@ -146,13 +147,13 @@ export class ContentGenerator {
       const lines = cleaned.split('\n').filter(Boolean);
       const hashtagLine = lines.find((l) => l.includes('#'));
       const captionLines = lines.filter((l) => l !== hashtagLine);
-      const caption = captionLines.join('\n').slice(0, MAX_CAPTION_LENGTH);
+      const caption = captionLines.join('\n').slice(0, MAX_CAPTION_LENGTH) || 'Caption generation failed. Please try again.';
       const hashtags = hashtagLine
         ? hashtagLine.match(/#\w+/g)?.map((t) => t.replace('#', '')).slice(0, MAX_HASHTAGS) ?? []
         : [];
       const hashStr = hashtags.map((t) => '#' + t).join(' ');
       return {
-        caption: caption || 'Caption generation failed. Please try again.',
+        caption,
         hashtags,
         formattedCaption: hashtags.length > 0 ? caption + '\n\n' + hashStr : caption,
       };

@@ -204,10 +204,10 @@ export class PostService {
     ).bind(externalPostId, postId, userId).run();
   }
 
-  async getPostMedia(postId: string): Promise<PostMedia[]> {
+  async getPostMedia(postId: string, userId: string): Promise<PostMedia[]> {
     const result = await this.db.prepare(
-      'SELECT id, post_id, media_item_id, display_order FROM post_media WHERE post_id = ? ORDER BY display_order ASC'
-    ).bind(postId).all();
+      'SELECT pm.id, pm.post_id, pm.media_item_id, pm.display_order FROM post_media pm JOIN posts p ON p.id = pm.post_id WHERE pm.post_id = ? AND p.user_id = ? ORDER BY pm.display_order ASC'
+    ).bind(postId, userId).all();
 
     return (result.results as any[]).map((row) => ({
       id: row.id as string,

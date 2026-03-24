@@ -2,31 +2,7 @@ import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
 import type { User, ChannelConnection } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
-import { InstagramChannel } from '../services/instagram-channel.js';
-
-// Re-export encrypt for direct-token mode
-async function encryptToken(text: string, keyHex: string): Promise<string> {
-  const hexToBytes = (hex: string): Uint8Array => {
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < hex.length; i += 2) {
-      bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-    }
-    return bytes;
-  };
-  const bytesToHex = (bytes: Uint8Array): string => {
-    let hex = '';
-    for (let i = 0; i < bytes.length; i++) {
-      hex += bytes[i].toString(16).padStart(2, '0');
-    }
-    return hex;
-  };
-  const keyBytes = hexToBytes(keyHex);
-  const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(text);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-  return bytesToHex(iv) + ':' + bytesToHex(new Uint8Array(ciphertext));
-}
+import { InstagramChannel, encrypt as encryptToken } from '../services/instagram-channel.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -142,6 +118,22 @@ app.post('/instagram/connect', async (c) => {
  */
 app.get('/instagram/callback', async (c) => {
   const code = c.req.query('code') || '';
+  const state = c.req.query('state') || '';
+
+  // Verify OAuth state to prevent CSRF
+  if (state) {
+    const stateRow = await c.env.DB.prepare(
+      'SELECT id FROM oauth_states WHERE id = ? AND user_id = ?'
+    ).bind(state, c.get('user').id).first();
+
+    if (!stateRow) {
+      return c.json({ error: 'Invalid or expired OAuth state. Please try connecting again.' }, 403);
+    }
+
+    // Clean up used state
+    await c.env.DB.prepare('DELETE FROM oauth_states WHERE id = ?').bind(state).run();
+  }
+
   const instagramChannel = new InstagramChannel({
     db: c.env.DB,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,

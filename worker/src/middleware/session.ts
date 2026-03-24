@@ -23,6 +23,7 @@ export const sessionMiddleware = createMiddleware<SessionEnv>(
         operation: 'sessionMiddleware',
         description: 'Authentication is required. Please log in.',
         recommendedActions: ['Log in with your @chicago-reno.com email'],
+        statusCode: 401,
       });
     }
 
@@ -36,6 +37,7 @@ export const sessionMiddleware = createMiddleware<SessionEnv>(
         operation: 'sessionMiddleware',
         description: 'Your session has expired due to inactivity.',
         recommendedActions: ['Log in again to continue'],
+        statusCode: 401,
       });
     }
 

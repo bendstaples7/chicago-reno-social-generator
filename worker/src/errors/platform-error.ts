@@ -10,8 +10,9 @@ export class PlatformError extends Error implements PlatformErrorInterface {
   public readonly operation: string;
   public readonly description: string;
   public readonly recommendedActions: string[];
+  public readonly statusCode?: number;
 
-  constructor(params: PlatformErrorInterface) {
+  constructor(params: PlatformErrorInterface & { statusCode?: number }) {
     super(params.description);
     this.name = 'PlatformError';
 
@@ -24,5 +25,6 @@ export class PlatformError extends Error implements PlatformErrorInterface {
     this.operation = params.operation;
     this.description = params.description;
     this.recommendedActions = params.recommendedActions;
+    this.statusCode = params.statusCode;
   }
 }

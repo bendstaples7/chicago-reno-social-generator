@@ -3,6 +3,7 @@ import { AdvisorMode } from 'shared';
 import type { UserSettings, ApprovalMode } from 'shared';
 
 const VALID_ADVISOR_MODES = Object.values(AdvisorMode) as string[];
+const VALID_APPROVAL_MODES = ['manual_review', 'auto_publish'];
 
 export class UserSettingsService {
   private readonly db: D1Database;
@@ -39,7 +40,17 @@ export class UserSettingsService {
     userId: string,
     updates: { advisorMode?: AdvisorMode; approvalMode?: ApprovalMode },
   ): Promise<UserSettings> {
-    if (updates.approvalMode !== undefined && updates.approvalMode === 'auto_publish') {
+    if (updates.approvalMode !== undefined) {
+      if (!VALID_APPROVAL_MODES.includes(updates.approvalMode)) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'UserSettingsService',
+          operation: 'updateSettings',
+          description: 'Invalid approval mode: "' + updates.approvalMode + '". Valid modes are: ' + VALID_APPROVAL_MODES.join(', ') + '.',
+          recommendedActions: ['Select a valid approval mode'],
+        });
+      }
+      if (updates.approvalMode === 'auto_publish') {
       throw new PlatformError({
         severity: 'error',
         component: 'UserSettingsService',
@@ -47,6 +58,7 @@ export class UserSettingsService {
         description: 'Auto-publish mode is not available in v1. All posts require manual review before publishing.',
         recommendedActions: ['Keep the approval mode set to manual review'],
       });
+      }
     }
 
     if (updates.advisorMode !== undefined && !VALID_ADVISOR_MODES.includes(updates.advisorMode)) {

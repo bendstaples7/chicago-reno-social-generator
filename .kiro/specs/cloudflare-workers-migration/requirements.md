@@ -39,7 +39,7 @@ Migrate the Social Media Cross-Poster application from a local Express.js + Post
 
 #### Acceptance Criteria
 
-1. THE Migration_Script SHALL create all 10 tables (users, user_settings, channel_connections, posts, media_items, post_media, activity_log_entries, team_members, sessions, content_ideas) using SQLite-compatible syntax
+1. THE Migration_Script SHALL create all 11 tables (users, user_settings, channel_connections, posts, media_items, post_media, activity_log_entries, team_members, sessions, content_ideas, image_generation_jobs) using SQLite-compatible syntax
 2. THE Migration_Script SHALL replace uuid_generate_v4() default values with application-level UUID generation using crypto.randomUUID()
 3. THE Migration_Script SHALL replace PostgreSQL TIMESTAMP defaults (NOW()) with SQLite-compatible defaults (datetime('now'))
 4. THE Migration_Script SHALL replace PostgreSQL JSONB column types with TEXT columns

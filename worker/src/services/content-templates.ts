@@ -22,6 +22,7 @@ const educationTemplate: ContentTypeTemplate = {
     'Topic: {{topic_title}}',
     'Key points to cover: {{key_points}}',
     '{{#context}}Additional context: {{context}}{{/context}}',
+    '{{#supporting_media}}Supporting media: {{supporting_media}}{{/supporting_media}}',
     'The caption should:',
     '- Open with an engaging hook about the topic',
     '- Include actionable tips or key takeaways',

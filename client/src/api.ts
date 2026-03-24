@@ -98,7 +98,7 @@ export async function uploadMedia(file: File): Promise<MediaItem> {
   return handleResponse(res);
 }
 
-export async function generateImages(description: string, style?: ImageStyle, count?: number, topic?: string): Promise<{ images: GeneratedImage[] }> {
+export async function generateImages(description: string, style?: ImageStyle, count?: number, topic?: string): Promise<{ images: GeneratedImage[]; mediaItems?: MediaItem[] }> {
   // Enqueue the generation job
   const enqueueRes = await fetch(API_BASE + '/api/media/generate', {
     method: 'POST',
@@ -123,7 +123,7 @@ export async function generateImages(description: string, style?: ImageStyle, co
     }>(statusRes);
 
     if (status.status === 'completed' && status.mediaItem) {
-      // Build a GeneratedImage from the saved media item
+      // Build a GeneratedImage for backward compat, but also return the saved MediaItem
       const img: GeneratedImage = {
         url: status.mediaItem.thumbnailUrl || status.mediaItem.storageKey,
         format: status.mediaItem.mimeType === 'image/png' ? 'png' : 'jpeg',
@@ -131,7 +131,7 @@ export async function generateImages(description: string, style?: ImageStyle, co
         height: status.mediaItem.height ?? 1024,
         description: status.mediaItem.aiDescription || description || topic || '',
       };
-      return { images: [img] };
+      return { images: [img], mediaItems: [status.mediaItem] };
     }
 
     if (status.status === 'failed') {

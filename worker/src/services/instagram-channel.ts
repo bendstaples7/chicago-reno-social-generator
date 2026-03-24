@@ -31,7 +31,7 @@ function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
-async function encrypt(text: string, keyHex: string): Promise<string> {
+export async function encrypt(text: string, keyHex: string): Promise<string> {
   const keyBytes = hexToBytes(keyHex);
   const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -280,7 +280,7 @@ export class InstagramChannel implements ChannelInterface {
     try {
       accessToken = await decrypt(rawToken, this.encryptionKey);
     } catch {
-      accessToken = rawToken;
+      return { success: false, error: 'Failed to decrypt Instagram access token. Please reconnect your account.' };
     }
     const igUserId = connRow.external_account_id as string;
     const formatType = (formattedPost.metadata.formatType as string) ?? 'IMAGE';
@@ -335,8 +335,8 @@ export class InstagramChannel implements ChannelInterface {
   async getPostStatus(externalPostId: string): Promise<PostStatus> {
     try {
       const connRow = await this.db.prepare(
-        "SELECT access_token_encrypted FROM channel_connections WHERE channel_type = 'instagram' AND status = 'connected' ORDER BY updated_at DESC LIMIT 1"
-      ).first() as any;
+        "SELECT cc.access_token_encrypted FROM channel_connections cc JOIN posts p ON p.channel_connection_id = cc.id WHERE p.external_post_id = ? AND cc.channel_type = 'instagram' AND cc.status = 'connected' LIMIT 1"
+      ).bind(externalPostId).first() as any;
 
       if (!connRow) return 'failed';
 
@@ -345,7 +345,7 @@ export class InstagramChannel implements ChannelInterface {
       try {
         accessToken = await decrypt(rawToken, this.encryptionKey);
       } catch {
-        accessToken = rawToken;
+        return 'failed';
       }
 
       const response = await fetch(

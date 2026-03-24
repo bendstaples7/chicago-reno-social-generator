@@ -63,7 +63,7 @@ export class ContentIdeasService {
     }
 
     const pastResult = await this.db.prepare(
-      'SELECT idea FROM content_ideas WHERE user_id = ? AND content_type = ? ORDER BY created_at DESC'
+      'SELECT idea FROM content_ideas WHERE user_id = ? AND content_type = ? ORDER BY created_at DESC LIMIT 100'
     ).bind(userId, contentType).all();
     const pastIdeas = (pastResult.results as any[]).map((r) => r.idea as string);
 
@@ -125,7 +125,7 @@ export class ContentIdeasService {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '[]';
-      const ideas = this.parseIdeas(raw);
+      const ideas = this.parseIdeas(raw).slice(0, BATCH_SIZE);
 
       const inserted: ContentIdea[] = [];
       for (const idea of ideas) {

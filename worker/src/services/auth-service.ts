@@ -11,7 +11,8 @@ export class AuthService {
   }
 
   async initiateAuth(email: string): Promise<{ user: User; token: string }> {
-    if (!email || !email.toLowerCase().endsWith('@chicago-reno.com')) {
+    const trimmedEmail = (email || '').trim().toLowerCase();
+    if (!trimmedEmail || !trimmedEmail.endsWith('@chicago-reno.com')) {
       throw new PlatformError({
         severity: 'error',
         component: 'AuthModule',
@@ -21,7 +22,7 @@ export class AuthService {
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = trimmedEmail;
     const userName = normalizedEmail.split('@')[0];
     const userId = crypto.randomUUID();
     const settingsId = crypto.randomUUID();
@@ -51,7 +52,11 @@ export class AuthService {
       'INSERT INTO user_settings (id, user_id) VALUES (?, ?) ON CONFLICT (user_id) DO NOTHING'
     ).bind(settingsId, user.id).run();
 
-    // Create session token
+    // Create session token (purge expired sessions for this user first)
+    await this.db.prepare(
+      'DELETE FROM sessions WHERE user_id = ? AND last_active_at < datetime(\'now\', \'-7 days\')'
+    ).bind(user.id).run();
+
     await this.db.prepare(
       'INSERT INTO sessions (id, user_id, token) VALUES (?, ?, ?)'
     ).bind(sessionId, user.id, token).run();

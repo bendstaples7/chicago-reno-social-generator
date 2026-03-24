@@ -18,7 +18,7 @@ export const errorHandler: ErrorHandler<{ Bindings: Bindings }> = async (err, c)
     });
   }
 
-  const statusCode = platformError.severity === 'warning' ? 400 : 500;
+  const statusCode = platformError.statusCode ?? (platformError.severity === 'warning' ? 400 : 500);
 
   // Best-effort log to activity_log_entries
   try {

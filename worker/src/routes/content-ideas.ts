@@ -5,6 +5,8 @@ import { sessionMiddleware } from '../middleware/session.js';
 import { ContentIdeasService } from '../services/content-ideas-service.js';
 import { PlatformError } from '../errors/index.js';
 
+const VALID_CONTENT_TYPES = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
 app.use('*', sessionMiddleware);
@@ -15,13 +17,12 @@ app.use('*', sessionMiddleware);
  */
 app.get('/', async (c) => {
   const rawContentType = (c.req.query('contentType') || '').trim();
-  const validTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
-  if (!rawContentType || !validTypes.includes(rawContentType)) {
+  if (!rawContentType || !VALID_CONTENT_TYPES.includes(rawContentType)) {
     throw new PlatformError({
       severity: 'warning',
       component: 'ContentIdeas',
       operation: 'list',
-      description: 'A valid contentType query parameter is required. Valid types: ' + validTypes.join(', '),
+      description: 'A valid contentType query parameter is required. Valid types: ' + VALID_CONTENT_TYPES.join(', '),
       recommendedActions: ['Provide a valid contentType'],
     });
   }
@@ -48,13 +49,12 @@ app.post('/generate', async (c) => {
     });
   }
   const rawContentType = (typeof body.contentType === 'string' ? body.contentType : '').trim();
-  const validTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
-  if (!rawContentType || !validTypes.includes(rawContentType)) {
+  if (!rawContentType || !VALID_CONTENT_TYPES.includes(rawContentType)) {
     throw new PlatformError({
       severity: 'warning',
       component: 'ContentIdeas',
       operation: 'generate',
-      description: 'A valid contentType is required. Valid types: ' + validTypes.join(', '),
+      description: 'A valid contentType is required. Valid types: ' + VALID_CONTENT_TYPES.join(', '),
       recommendedActions: ['Provide a valid contentType'],
     });
   }

@@ -36,16 +36,16 @@ export async function handleImageQueue(
 
       // Store all generated images in R2 via MediaService
       const mediaService = new MediaService(db, r2);
-      let firstMediaId: string | null = null;
+      const mediaIds: string[] = [];
       for (const image of images) {
         const mediaItem = await mediaService.storeGenerated(image, job.userId);
-        if (!firstMediaId) firstMediaId = mediaItem.id;
+        mediaIds.push(mediaItem.id);
       }
 
-      // Update job as completed with first result media id
+      // Update job as completed with all result media ids
       await db.prepare(
         "UPDATE image_generation_jobs SET status = ?, result_media_id = ?, updated_at = datetime('now') WHERE id = ?"
-      ).bind('completed', firstMediaId, job.jobId).run();
+      ).bind('completed', JSON.stringify(mediaIds), job.jobId).run();
 
       message.ack();
     } catch (err) {

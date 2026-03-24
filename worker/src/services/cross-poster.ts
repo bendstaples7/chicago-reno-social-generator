@@ -64,9 +64,9 @@ export class CrossPoster {
     // 1. Get the post
     const post = await this.postService.getById(postId, userId);
 
-    // 2. Check approval
-    const approved = await this.approvalService.isApproved(postId);
-    if (!approved) {
+    // 2. Atomically check approval and transition to 'publishing'
+    const transitioned = await this.approvalService.markPublishingIfApproved(postId, userId);
+    if (!transitioned) {
       throw new PlatformError({
         severity: 'error',
         component: 'CrossPoster',
@@ -77,16 +77,13 @@ export class CrossPoster {
       });
     }
 
-    // 3. Transition to 'publishing'
-    await this.postService.transitionStatus(postId, userId, 'publishing');
-
-    // 4. Format the post for the channel
+    // 3. Format the post for the channel
     const formattedPost = await this.channel.formatPost(post);
 
-    // 5. Attempt publish with retry
+    // 4. Attempt publish with retry
     const result = await this.publishWithRetry(formattedPost);
 
-    // 6. Handle result
+    // 5. Handle result
     if (result.success) {
       // Update external_post_id via PostService
       await this.postService.setExternalPostId(postId, userId, result.externalPostId!);

@@ -156,4 +156,49 @@ describe('PublishApprovalService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('markPublishingIfApproved()', () => {
+    it('returns true when post is approved and transitions to publishing', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 1 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('post-1', 'user-1');
+      expect(result).toBe(true);
+
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("SET status = 'publishing'"),
+      );
+    });
+
+    it('returns false when post is not in approved status', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('post-1', 'user-1');
+      expect(result).toBe(false);
+    });
+
+    it('returns false when post does not exist', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      const result = await service.markPublishingIfApproved('nonexistent', 'user-1');
+      expect(result).toBe(false);
+    });
+
+    it('scopes the update to the correct user', async () => {
+      configurePrepareResults(db, [
+        { run: { success: true, meta: { changes: 0 } } },
+      ]);
+
+      await service.markPublishingIfApproved('post-1', 'user-2');
+
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('user_id'),
+      );
+    });
+  });
 });

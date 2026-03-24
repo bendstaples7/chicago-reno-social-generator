@@ -75,8 +75,19 @@ app.post('/posts/:id/generate-content', sessionMiddleware, async (c) => {
 
   // Build generator input
   const body = await c.req.json().catch(() => ({})) as Partial<{ context: string; templateFields: Record<string, string> }>;
-  const templateFields = body.templateFields
-    ?? (post.template_fields ? (typeof post.template_fields === 'string' ? JSON.parse(post.template_fields) : post.template_fields) : {});
+  let templateFields: Record<string, string> = {};
+  if (body.templateFields) {
+    templateFields = body.templateFields;
+  } else if (post.template_fields) {
+    try {
+      templateFields = typeof post.template_fields === 'string'
+        ? JSON.parse(post.template_fields)
+        : post.template_fields;
+    } catch {
+      // Malformed stored JSON — fall back to empty object
+      templateFields = {};
+    }
+  }
 
   const input: ContentGeneratorInput = {
     contentType,
@@ -88,10 +99,10 @@ app.post('/posts/:id/generate-content', sessionMiddleware, async (c) => {
   const contentGenerator = new ContentGenerator(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
   const generated = await contentGenerator.generate(input);
 
-  // Update the post with generated content
+  // Update the post with generated content (scoped to user)
   await db.prepare(
-    "UPDATE posts SET caption = ?, hashtags_json = ?, updated_at = datetime('now') WHERE id = ?"
-  ).bind(generated.caption, JSON.stringify(generated.hashtags), postId).run();
+    "UPDATE posts SET caption = ?, hashtags_json = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+  ).bind(generated.caption, JSON.stringify(generated.hashtags), postId, userId).run();
 
   return c.json(generated);
 });

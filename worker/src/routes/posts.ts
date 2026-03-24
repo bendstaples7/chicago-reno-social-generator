@@ -89,6 +89,19 @@ app.post('/', async (c) => {
     templateFields?: Record<string, string>;
     mediaItemIds?: string[];
   };
+
+  // Validate contentType
+  const validContentTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+  if (!body.contentType || !validContentTypes.includes(body.contentType)) {
+    return c.json({
+      severity: 'warning',
+      component: 'PostService',
+      operation: 'create',
+      message: 'A valid contentType is required. Valid types: ' + validContentTypes.join(', '),
+      actions: ['Provide a valid contentType'],
+    }, 400);
+  }
+
   const postService = new PostService(c.env.DB);
   const post = await postService.create({
     userId: c.get('user').id,

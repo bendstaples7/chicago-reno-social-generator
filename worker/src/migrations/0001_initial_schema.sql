@@ -141,3 +141,11 @@ CREATE TABLE IF NOT EXISTS image_generation_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_image_generation_jobs_user_id ON image_generation_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_image_generation_jobs_status ON image_generation_jobs(status);
+
+-- OAuth States (CSRF protection for OAuth flows)
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_user_id ON oauth_states(user_id);

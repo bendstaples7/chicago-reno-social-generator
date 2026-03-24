@@ -102,12 +102,20 @@ app.post('/instagram/connect', async (c) => {
   });
 
   const state = crypto.randomUUID();
-  // Persist state for CSRF verification in callback
-  await db.prepare(
-    "INSERT INTO oauth_states (id, user_id, created_at) VALUES (?, ?, datetime('now'))"
-  ).bind(state, c.get('user').id).run().catch(() => {
-    // Table may not exist yet; fall through — state check in callback will be best-effort
-  });
+  // Persist state for CSRF verification in callback — fail-closed if insert fails
+  try {
+    await db.prepare(
+      "INSERT INTO oauth_states (id, user_id, created_at) VALUES (?, ?, datetime('now'))"
+    ).bind(state, c.get('user').id).run();
+  } catch (err) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'InstagramChannel',
+      operation: 'connect',
+      description: 'Failed to initialize OAuth flow. Please try again.',
+      recommendedActions: ['Try connecting again'],
+    });
+  }
   const authorizationUrl = instagramChannel.getAuthorizationUrl(state);
   return c.json({ authorizationUrl, state });
 });
@@ -152,21 +160,29 @@ app.delete('/:id', async (c) => {
   const channelId = c.req.param('id');
   const userId = c.get('user').id;
 
-  // Verify the channel belongs to the authenticated user
+  // Verify the channel belongs to the authenticated user and get its type
   const check = await db.prepare(
-    'SELECT id FROM channel_connections WHERE id = ? AND user_id = ?'
-  ).bind(channelId, userId).first();
+    'SELECT id, channel_type FROM channel_connections WHERE id = ? AND user_id = ?'
+  ).bind(channelId, userId).first() as any;
 
   if (!check) {
     return c.json({ error: 'Channel not found' }, 404);
   }
 
-  const instagramChannel = new InstagramChannel({
-    db,
-    encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
-    publicUrl: c.env.S3_PUBLIC_URL,
-  });
-  await instagramChannel.disconnect(channelId);
+  if (check.channel_type === 'instagram') {
+    const instagramChannel = new InstagramChannel({
+      db,
+      encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
+      publicUrl: c.env.S3_PUBLIC_URL,
+    });
+    await instagramChannel.disconnect(channelId);
+  } else {
+    // Generic disconnect for unsupported channel types
+    await db.prepare(
+      "UPDATE channel_connections SET status = 'disconnected', access_token_encrypted = NULL, updated_at = datetime('now') WHERE id = ?"
+    ).bind(channelId).run();
+  }
+
   return c.json({ success: true });
 });
 

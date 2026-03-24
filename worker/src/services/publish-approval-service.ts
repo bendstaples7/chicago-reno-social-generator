@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import type { ApprovalMode } from 'shared';
+import type { ApprovalMode, PostStatus } from 'shared';
 
 export class PublishApprovalService {
   private readonly db: D1Database;
@@ -51,5 +51,17 @@ export class PublishApprovalService {
 
     if (!row) return false;
     return (row.status as PostStatus) === 'approved';
+  }
+
+  /**
+   * Atomically transition a post from 'approved' to 'publishing'.
+   * Returns true if the transition succeeded, false if the post was not in 'approved' status.
+   */
+  async markPublishingIfApproved(postId: string, userId: string): Promise<boolean> {
+    const result = await this.db.prepare(
+      "UPDATE posts SET status = 'publishing', updated_at = datetime('now') WHERE id = ? AND user_id = ? AND status = 'approved'"
+    ).bind(postId, userId).run();
+
+    return (result.meta?.changes ?? 0) > 0;
   }
 }

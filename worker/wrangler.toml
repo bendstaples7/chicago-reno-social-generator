@@ -1,0 +1,32 @@
+name = "social-media-cross-poster"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cross-poster-db"
+database_id = "300f9629-60b2-4e2d-a574-e77bf50235ff"
+migrations_dir = "src/migrations"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "chicago-reno-media"
+
+[[queues.producers]]
+binding = "IMAGE_QUEUE"
+queue = "image-generation-queue"
+
+[[queues.consumers]]
+queue = "image-generation-queue"
+max_batch_size = 1
+max_retries = 2
+
+[vars]
+AI_TEXT_API_URL = "https://api.openai.com/v1/chat/completions"
+S3_PUBLIC_URL = "https://pub-afd5afa0999c424cac970f4b4e671bd6.r2.dev"
+
+# Secrets (set via `wrangler secret put`):
+# AI_TEXT_API_KEY
+# FB_PAGE_ACCESS_TOKEN
+# IG_BUSINESS_ACCOUNT_ID
+# CHANNEL_ENCRYPTION_KEY

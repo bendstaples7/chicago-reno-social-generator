@@ -15,8 +15,9 @@
     "build:server": "npm run build --workspace=server"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "fast-check": "^3.22.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.1.0",
-    "fast-check": "^3.22.0"
+    "vitest": "^2.1.0"
   }
 }

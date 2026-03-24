@@ -1,14 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockD1, configurePrepareResults } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import { InstagramChannel } from '../../worker/src/services/instagram-channel.js';
+import type { Post } from '../../shared/src/types/index.js';
 
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-}));
-
-import { InstagramChannel } from '../../server/src/services/instagram-channel.js';
-import { query } from '../../server/src/config/database.js';
-import type { Post, FormattedPost } from '../../shared/src/types/index.js';
-
-const mockedQuery = vi.mocked(query);
+const ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 function makePost(overrides: Partial<Post> = {}): Post {
   return {
@@ -26,11 +22,16 @@ function makePost(overrides: Partial<Post> = {}): Post {
 }
 
 describe('InstagramChannel', () => {
+  let db: MockD1Database;
   let channel: InstagramChannel;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    db = createMockD1();
     channel = new InstagramChannel({
+      db: db as unknown as D1Database,
+      encryptionKey: ENCRYPTION_KEY,
+      publicUrl: '',
       clientId: 'test-client-id',
       clientSecret: 'test-client-secret',
       redirectUri: 'https://example.com/callback',
@@ -90,9 +91,9 @@ describe('InstagramChannel', () => {
 
   describe('validatePost()', () => {
     it('returns valid for a post within all constraints', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{ mime_type: 'image/jpeg', file_size_bytes: 1000 }],
-      } as never);
+      configurePrepareResults(db, [
+        { all: { results: [{ mime_type: 'image/jpeg', file_size_bytes: 1000 }] } },
+      ]);
 
       const post = makePost();
       const result = await channel.validatePost(post);
@@ -102,7 +103,7 @@ describe('InstagramChannel', () => {
     });
 
     it('catches caption exceeding 2200 characters', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ all: { results: [] } }]);
 
       const post = makePost({ caption: 'x'.repeat(2201) });
       const result = await channel.validatePost(post);
@@ -113,9 +114,9 @@ describe('InstagramChannel', () => {
     });
 
     it('catches too many hashtags', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ all: { results: [] } }]);
 
-      const hashtags = Array.from({ length: 31 }, (_, i) => `#tag${i}`);
+      const hashtags = Array.from({ length: 31 }, (_, i) => '#tag' + i);
       const post = makePost({ hashtagsJson: JSON.stringify(hashtags) });
       const result = await channel.validatePost(post);
 
@@ -128,7 +129,7 @@ describe('InstagramChannel', () => {
         mime_type: 'image/jpeg',
         file_size_bytes: 1000,
       }));
-      mockedQuery.mockResolvedValueOnce({ rows } as never);
+      configurePrepareResults(db, [{ all: { results: rows } }]);
 
       const post = makePost();
       const result = await channel.validatePost(post);
@@ -138,9 +139,9 @@ describe('InstagramChannel', () => {
     });
 
     it('catches unsupported media types', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{ mime_type: 'image/gif', file_size_bytes: 1000 }],
-      } as never);
+      configurePrepareResults(db, [
+        { all: { results: [{ mime_type: 'image/gif', file_size_bytes: 1000 }] } },
+      ]);
 
       const post = makePost();
       const result = await channel.validatePost(post);
@@ -150,7 +151,7 @@ describe('InstagramChannel', () => {
     });
 
     it('returns valid when post has no caption and no hashtags', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ all: { results: [] } }]);
 
       const post = makePost({ caption: '', hashtagsJson: '[]' });
       const result = await channel.validatePost(post);
@@ -161,33 +162,24 @@ describe('InstagramChannel', () => {
 
   describe('disconnect()', () => {
     it('updates the connection status to disconnected and clears the token', async () => {
-      // Set up encryption key for the test
-      const key = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      vi.stubEnv('CHANNEL_ENCRYPTION_KEY', key);
-
-      // Mock: find the connection
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{ access_token_encrypted: null }],
-      } as never);
-      // Mock: update the connection
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      // Mock: find the connection, then update
+      configurePrepareResults(db, [
+        { first: { access_token_encrypted: null } },
+        { run: { success: true } },
+      ]);
 
       await channel.disconnect('conn-1');
 
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE channel_connections'),
-        ['conn-1'],
       );
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining("status = 'disconnected'"),
-        ['conn-1'],
       );
-
-      vi.unstubAllEnvs();
     });
 
     it('throws PlatformError when connection not found', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ first: null }]);
 
       await expect(channel.disconnect('missing')).rejects.toThrow('not found');
     });
@@ -195,9 +187,9 @@ describe('InstagramChannel', () => {
 
   describe('formatPost()', () => {
     it('builds correct structure for a single image post', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{ storage_key: 'media/user-1/photo.jpg', mime_type: 'image/jpeg' }],
-      } as never);
+      configurePrepareResults(db, [
+        { all: { results: [{ storage_key: 'media/user-1/photo.jpg', mime_type: 'image/jpeg' }] } },
+      ]);
 
       const post = makePost();
       const formatted = await channel.formatPost(post);
@@ -211,12 +203,16 @@ describe('InstagramChannel', () => {
     });
 
     it('detects carousel format for multiple images', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [
-          { storage_key: 'media/user-1/a.jpg', mime_type: 'image/jpeg' },
-          { storage_key: 'media/user-1/b.png', mime_type: 'image/png' },
-        ],
-      } as never);
+      configurePrepareResults(db, [
+        {
+          all: {
+            results: [
+              { storage_key: 'media/user-1/a.jpg', mime_type: 'image/jpeg' },
+              { storage_key: 'media/user-1/b.png', mime_type: 'image/png' },
+            ],
+          },
+        },
+      ]);
 
       const post = makePost();
       const formatted = await channel.formatPost(post);
@@ -226,9 +222,9 @@ describe('InstagramChannel', () => {
     });
 
     it('detects reel format for video', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{ storage_key: 'media/user-1/clip.mp4', mime_type: 'video/mp4' }],
-      } as never);
+      configurePrepareResults(db, [
+        { all: { results: [{ storage_key: 'media/user-1/clip.mp4', mime_type: 'video/mp4' }] } },
+      ]);
 
       const post = makePost();
       const formatted = await channel.formatPost(post);
@@ -237,7 +233,7 @@ describe('InstagramChannel', () => {
     });
 
     it('handles post with no hashtags', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ all: { results: [] } }]);
 
       const post = makePost({ hashtagsJson: '' });
       const formatted = await channel.formatPost(post);

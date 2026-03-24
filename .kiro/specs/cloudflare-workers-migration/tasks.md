@@ -6,41 +6,41 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
 
 ## Tasks
 
-- [ ] 1. Scaffold worker/ project structure and configuration
-  - [ ] 1.1 Create worker/package.json with hono, @cloudflare/workers-types, and wrangler dependencies
+- [x] 1. Scaffold worker/ project structure and configuration
+  - [x] 1.1 Create worker/package.json with hono, @cloudflare/workers-types, and wrangler dependencies
     - Include scripts for dev (wrangler dev) and deploy (wrangler deploy)
     - _Requirements: 1.1, 1.2, 7.1_
-  - [ ] 1.2 Create worker/tsconfig.json targeting ES2022 with Cloudflare Workers types
+  - [x] 1.2 Create worker/tsconfig.json targeting ES2022 with Cloudflare Workers types
     - Extend from tsconfig.base.json, reference shared/ package
     - _Requirements: 1.6, 9.2_
-  - [ ] 1.3 Create worker/wrangler.toml with all bindings declared
+  - [x] 1.3 Create worker/wrangler.toml with all bindings declared
     - Declare D1 binding (DB), R2 binding (R2_BUCKET), Queue producer (IMAGE_QUEUE), Queue consumer
     - Declare vars: AI_TEXT_API_URL, S3_PUBLIC_URL
     - Comment secrets: AI_TEXT_API_KEY, FB_PAGE_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID, CHANNEL_ENCRYPTION_KEY
     - Set compatibility_date, main entry point, migrations_dir
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
-  - [ ] 1.4 Create worker/src/bindings.ts with the Bindings interface
+  - [x] 1.4 Create worker/src/bindings.ts with the Bindings interface
     - Declare DB: D1Database, R2_BUCKET: R2Bucket, IMAGE_QUEUE: Queue, and all env var strings
     - _Requirements: 1.3_
 
-- [ ] 2. Create D1 migration script and error utilities
-  - [ ] 2.1 Create worker/src/migrations/0001_initial_schema.sql with SQLite-compatible schema
+- [x] 2. Create D1 migration script and error utilities
+  - [x] 2.1 Create worker/src/migrations/0001_initial_schema.sql with SQLite-compatible schema
     - Convert all 9 existing tables + new image_generation_jobs table (10 total)
     - TEXT PRIMARY KEY instead of UUID with default, datetime('now') instead of NOW()
     - TEXT instead of VARCHAR/JSONB, INTEGER instead of BOOLEAN, no CREATE EXTENSION
     - Include all indexes from the original schema
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.8, 10.1, 10.2, 10.3, 10.4, 10.5_
-  - [ ] 2.2 Copy worker/src/errors/platform-error.ts and worker/src/errors/format-error.ts from server/src/errors/
+  - [x] 2.2 Copy worker/src/errors/platform-error.ts and worker/src/errors/format-error.ts from server/src/errors/
     - These files are unchanged; copy them and create worker/src/errors/index.ts barrel
     - _Requirements: 13.1, 13.2_
 
-- [ ] 3. Implement core middleware (session + error handler)
-  - [ ] 3.1 Create worker/src/middleware/error-handler.ts as a Hono onError handler
+- [x] 3. Implement core middleware (session + error handler)
+  - [x] 3.1 Create worker/src/middleware/error-handler.ts as a Hono onError handler
     - Catch PlatformError and return formatted JSON with 400 (warning) or 500 (error)
     - Wrap non-PlatformError in PlatformError with component 'Server', operation 'unknown'
     - Best-effort log to activity_log_entries via D1 (do not throw if logging fails)
     - _Requirements: 13.1, 13.2, 13.3_
-  - [ ] 3.2 Create worker/src/middleware/session.ts as Hono middleware using createMiddleware
+  - [x] 3.2 Create worker/src/middleware/session.ts as Hono middleware using createMiddleware
     - Extract Bearer token from Authorization header
     - Create AuthService with c.env.DB, call verifySession
     - Set user on Hono context via c.set('user', user)
@@ -50,8 +50,8 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
 - [ ] 4. Checkpoint - Verify project scaffolding
   - Ensure worker/ directory compiles with tsc, ask the user if questions arise.
 
-- [ ] 5. Migrate database-only services (no R2 dependency)
-  - [ ] 5.1 Create worker/src/services/auth-service.ts
+- [x] 5. Migrate database-only services (no R2 dependency)
+  - [x] 5.1 Create worker/src/services/auth-service.ts
     - Constructor receives D1Database binding
     - Replace query($1,$2) with db.prepare().bind().run/first/all
     - Replace crypto.randomUUID() (already Web Crypto compatible)
@@ -60,12 +60,12 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - Replace ON CONFLICT (email) DO UPDATE with SQLite-compatible upsert
     - Use db.batch() for atomic initiateAuth (user upsert + settings insert + session insert)
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 8.1, 8.3, 8.4, 8.5_
-  - [ ] 5.2 Create worker/src/services/activity-log-service.ts
+  - [x] 5.2 Create worker/src/services/activity-log-service.ts
     - Constructor receives D1Database binding
     - Replace $1-$6 params with ? placeholders
     - Generate id with crypto.randomUUID() before INSERT
     - _Requirements: 8.1, 8.3_
-  - [ ] 5.3 Create worker/src/services/post-service.ts
+  - [x] 5.3 Create worker/src/services/post-service.ts
     - Constructor receives D1Database binding
     - Replace getClient()/BEGIN/COMMIT/ROLLBACK with db.batch() for create() and update()
     - Generate post id and post_media ids with crypto.randomUUID() before INSERT
@@ -73,41 +73,41 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - Replace NOW() with datetime('now'), $N with ?
     - Preserve the VALID_TRANSITIONS state machine exactly
     - _Requirements: 8.1, 8.3, 8.4_
-  - [ ] 5.4 Create worker/src/services/publish-approval-service.ts
+  - [x] 5.4 Create worker/src/services/publish-approval-service.ts
     - Constructor receives D1Database binding
     - Replace $1/$2 with ?, query() with db.prepare().bind()
     - _Requirements: 8.1, 8.3_
-  - [ ] 5.5 Create worker/src/services/user-settings-service.ts
+  - [x] 5.5 Create worker/src/services/user-settings-service.ts
     - Constructor receives D1Database binding
     - Replace $N params with ?, query() with db.prepare().bind()
     - Replace NOW() with datetime('now')
     - Replace RETURNING with separate SELECT
     - _Requirements: 8.1, 8.3_
-  - [ ] 5.6 Create worker/src/services/content-advisor.ts
+  - [x] 5.6 Create worker/src/services/content-advisor.ts
     - Constructor receives D1Database binding
     - Replace $1 with ?, INTERVAL '30 days' with datetime('now', '-30 days')
     - Replace COUNT(*)::int with COUNT(*)
     - _Requirements: 8.1, 8.3_
-  - [ ] 5.7 Create worker/src/services/content-ideas-service.ts
+  - [x] 5.7 Create worker/src/services/content-ideas-service.ts
     - Constructor receives D1Database binding and AI_TEXT_API_KEY env var
     - Replace $1-$3 with ?, query() with db.prepare().bind()
     - Replace RETURNING with separate SELECT after INSERT
     - Replace process.env.AI_TEXT_API_KEY with constructor-injected key
     - _Requirements: 8.1, 8.3_
-  - [ ] 5.8 Copy worker/src/services/content-templates.ts unchanged from server/
+  - [x] 5.8 Copy worker/src/services/content-templates.ts unchanged from server/
     - Pure data file with no runtime dependencies
     - _Requirements: 9.1_
-  - [ ] 5.9 Create worker/src/services/content-generator.ts
+  - [x] 5.9 Create worker/src/services/content-generator.ts
     - Constructor receives AI_TEXT_API_KEY and AI_TEXT_API_URL env vars
     - Replace process.env references with constructor-injected values
     - Business logic and prompt building unchanged
     - _Requirements: 8.1_
 
-- [ ] 6. Checkpoint - Verify service compilation
+- [x] 6. Checkpoint - Verify service compilation
   - Ensure all services in worker/src/services/ compile without errors, ask the user if questions arise.
 
-- [ ] 7. Migrate R2-dependent services and encryption
-  - [ ] 7.1 Create worker/src/services/media-service.ts
+- [x] 7. Migrate R2-dependent services and encryption
+  - [x] 7.1 Create worker/src/services/media-service.ts
     - Constructor receives D1Database and R2Bucket bindings
     - Replace PutObjectCommand with r2.put(key, body, { httpMetadata: { contentType } })
     - Replace DeleteObjectCommand with r2.delete(key)
@@ -116,7 +116,7 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - Generate id with crypto.randomUUID() before INSERT
     - Replace RETURNING with separate SELECT
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 8.1, 8.2, 8.6_
-  - [ ] 7.2 Create worker/src/services/instagram-channel.ts with Web Crypto encryption
+  - [x] 7.2 Create worker/src/services/instagram-channel.ts with Web Crypto encryption
     - Constructor receives D1Database and CHANNEL_ENCRYPTION_KEY env var
     - Implement encrypt() using crypto.subtle.encrypt with AES-GCM
     - Implement decrypt() using crypto.subtle.decrypt with AES-GCM
@@ -127,34 +127,34 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - Replace RETURNING with separate SELECT
     - Make encrypt/decrypt async (Web Crypto is async)
     - _Requirements: 8.1, 8.2, 8.5, 8.6, 11.1, 11.2, 11.3, 11.4_
-  - [ ] 7.3 Create worker/src/services/cross-poster.ts
+  - [x] 7.3 Create worker/src/services/cross-poster.ts
     - Constructor receives D1Database plus service dependencies (PostService, PublishApprovalService, channel, ActivityLogService)
     - Replace direct query() call for external_post_id update with db.prepare().bind()
     - Replace NOW() with datetime('now')
     - _Requirements: 8.1, 8.3_
-  - [ ] 7.4 Create worker/src/services/image-generator.ts
+  - [x] 7.4 Create worker/src/services/image-generator.ts
     - Constructor receives AI_TEXT_API_KEY env var
     - Replace process.env.AI_TEXT_API_KEY with constructor-injected key
     - Business logic unchanged (fetch calls to OpenAI)
     - _Requirements: 5.2, 8.1_
-  - [ ] 7.5 Create worker/src/services/index.ts barrel export for all services
+  - [x] 7.5 Create worker/src/services/index.ts barrel export for all services
     - Export all 13 services from the worker/src/services/ directory
     - _Requirements: 8.1_
 
-- [ ] 8. Implement Queue consumer for image generation
-  - [ ] 8.1 Create worker/src/queue/image-consumer.ts
+- [x] 8. Implement Queue consumer for image generation
+  - [x] 8.1 Create worker/src/queue/image-consumer.ts
     - Export handleImageQueue(batch, env) function
     - For each message: update job status to 'processing', call ImageGenerator.generate(), store image in R2 via MediaService.storeGenerated(), update job to 'completed' with result_media_id
     - On failure: update job to 'failed' with error message, ack the message
     - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 9. Create all Hono route files
-  - [ ] 9.1 Create worker/src/routes/auth.ts
+- [x] 9. Create all Hono route files
+  - [x] 9.1 Create worker/src/routes/auth.ts
     - POST /login: create AuthService(c.env.DB), call initiateAuth, return { user, token }
     - POST /verify: create AuthService(c.env.DB), call verifySession, return { valid, user }
     - POST /logout: create AuthService(c.env.DB), call logout
     - _Requirements: 1.1, 4.1, 4.5_
-  - [ ] 9.2 Create worker/src/routes/media.ts
+  - [x] 9.2 Create worker/src/routes/media.ts
     - GET /: list media with pagination (sessionMiddleware)
     - POST /upload: parse raw body, create MediaService(c.env.DB, c.env.R2_BUCKET), call upload
     - POST /generate: enqueue image generation job to c.env.IMAGE_QUEUE, return { jobId }
@@ -162,7 +162,7 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - POST /temp/save-generated: save a generated image from data URI to R2
     - DELETE /:id: delete media item
     - _Requirements: 1.1, 3.1, 3.2, 5.1, 5.3_
-  - [ ] 9.3 Create worker/src/routes/posts.ts
+  - [x] 9.3 Create worker/src/routes/posts.ts
     - GET /: list posts with pagination (sessionMiddleware)
     - POST /: create post
     - GET /:id: get post by id
@@ -172,33 +172,33 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - POST /:id/generate-content: generate content via ContentGenerator
     - POST /quick-start: quick-start workflow endpoint
     - _Requirements: 1.1_
-  - [ ] 9.4 Create worker/src/routes/channels.ts
+  - [x] 9.4 Create worker/src/routes/channels.ts
     - GET /: list channel connections (sessionMiddleware)
     - POST /instagram/connect: get Instagram authorization URL
     - GET /instagram/callback: handle OAuth callback
     - DELETE /:id: disconnect channel
     - _Requirements: 1.1_
-  - [ ] 9.5 Create worker/src/routes/content.ts
+  - [x] 9.5 Create worker/src/routes/content.ts
     - GET /content-types: return content type templates
     - GET /holidays: return holiday data
     - _Requirements: 1.1_
-  - [ ] 9.6 Create worker/src/routes/settings.ts
+  - [x] 9.6 Create worker/src/routes/settings.ts
     - GET /settings: get user settings (sessionMiddleware)
     - PUT /settings: update user settings
     - GET /content-advisor/suggest: get content suggestion
     - _Requirements: 1.1_
-  - [ ] 9.7 Create worker/src/routes/activity-log.ts
+  - [x] 9.7 Create worker/src/routes/activity-log.ts
     - GET /: list activity log entries with pagination (sessionMiddleware)
     - _Requirements: 1.1_
-  - [ ] 9.8 Create worker/src/routes/content-ideas.ts
+  - [x] 9.8 Create worker/src/routes/content-ideas.ts
     - GET /: get unused ideas by content type (sessionMiddleware)
     - POST /generate: generate new batch of ideas
     - POST /:id/use: mark idea as used
     - DELETE /:id: dismiss idea
     - _Requirements: 1.1_
 
-- [ ] 10. Create Hono app entry point and wire everything together
-  - [ ] 10.1 Create worker/src/index.ts
+- [x] 10. Create Hono app entry point and wire everything together
+  - [x] 10.1 Create worker/src/index.ts
     - Create Hono app with Bindings type
     - Register /health route
     - Register all route groups with app.route()
@@ -207,75 +207,75 @@ Migrate the Social Media Cross-Poster from Express.js + PostgreSQL + @aws-sdk/cl
     - Apply 10MB JSON body size limit
     - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6_
 
-- [ ] 11. Checkpoint - Verify worker compiles and routes are wired
+- [x] 11. Checkpoint - Verify worker compiles and routes are wired
   - Ensure worker/ compiles with tsc, all routes registered, ask the user if questions arise.
 
-- [ ] 12. Update frontend for Cloudflare Pages deployment
-  - [ ] 12.1 Update client/vite.config.ts to proxy to Wrangler dev server
+- [x] 12. Update frontend for Cloudflare Pages deployment
+  - [x] 12.1 Update client/vite.config.ts to proxy to Wrangler dev server
     - Change proxy target from http://localhost:3001 to http://localhost:8787
     - _Requirements: 6.5_
-  - [ ] 12.2 Update client/src/api.ts to support production Worker URL
+  - [x] 12.2 Update client/src/api.ts to support production Worker URL
     - Add API_BASE using import.meta.env.PROD and VITE_API_URL
     - Prefix all fetch calls with API_BASE using string concatenation
     - _Requirements: 6.3, 6.4_
 
-- [ ] 13. Migrate unit tests to mock D1/R2 instead of pg/S3
-  - [ ] 13.1 Create tests/unit/helpers/mock-d1.ts with createMockD1() factory
+- [x] 13. Migrate unit tests to mock D1/R2 instead of pg/S3
+  - [x] 13.1 Create tests/unit/helpers/mock-d1.ts with createMockD1() factory
     - Return object implementing D1Database interface with vi.fn() for prepare, batch, exec, dump
     - prepare() returns chainable bind/first/all/run methods
     - Support configuring return values per test
     - _Requirements: 12.1_
-  - [ ] 13.2 Create tests/unit/helpers/mock-r2.ts with createMockR2() factory
+  - [x] 13.2 Create tests/unit/helpers/mock-r2.ts with createMockR2() factory
     - Return object implementing R2Bucket interface with in-memory Map storage
     - put() stores ArrayBuffer, get() returns R2ObjectBody, delete() removes entry
     - _Requirements: 12.2_
-  - [ ] 13.3 Create tests/unit/helpers/mock-queue.ts with createMockQueue() factory
+  - [x] 13.3 Create tests/unit/helpers/mock-queue.ts with createMockQueue() factory
     - Return object implementing Queue interface with send() and sendBatch()
     - _Requirements: 12.2_
-  - [ ] 13.4 Migrate tests/unit/post-service.test.ts
+  - [x] 13.4 Migrate tests/unit/post-service.test.ts
     - Replace vi.mock('../../server/src/config/database.js') with createMockD1()
     - Import PostService from worker/src/services/post-service.ts
     - Update create() tests to expect db.batch() instead of BEGIN/COMMIT/ROLLBACK
     - Update all query assertions to use db.prepare().bind() patterns
     - Preserve all existing test cases and assertions
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.5 Migrate tests/unit/auth-service.test.ts
+  - [x] 13.5 Migrate tests/unit/auth-service.test.ts
     - Replace pg mock with createMockD1()
     - Import AuthService from worker/src/services/
     - Update query assertions for D1 prepared statement patterns
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.6 Migrate tests/unit/cross-poster.test.ts
+  - [x] 13.6 Migrate tests/unit/cross-poster.test.ts
     - Replace pg mock with createMockD1()
     - Import CrossPoster from worker/src/services/
     - Update direct query() mock to db.prepare().bind() pattern
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.7 Migrate tests/unit/instagram-channel.test.ts
+  - [x] 13.7 Migrate tests/unit/instagram-channel.test.ts
     - Replace pg mock with createMockD1()
     - Import InstagramChannel from worker/src/services/
     - Mock Web Crypto API (crypto.subtle) instead of Node.js crypto
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.8 Migrate tests/unit/activity-log-service.test.ts
+  - [x] 13.8 Migrate tests/unit/activity-log-service.test.ts
     - Replace pg mock with createMockD1()
     - Import ActivityLogService from worker/src/services/
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.9 Migrate tests/unit/publish-approval-service.test.ts
+  - [x] 13.9 Migrate tests/unit/publish-approval-service.test.ts
     - Replace pg mock with createMockD1()
     - Import PublishApprovalService from worker/src/services/
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.10 Migrate tests/unit/user-settings-service.test.ts
+  - [x] 13.10 Migrate tests/unit/user-settings-service.test.ts
     - Replace pg mock with createMockD1()
     - Import UserSettingsService from worker/src/services/
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.11 Migrate tests/unit/quick-start.test.ts
+  - [x] 13.11 Migrate tests/unit/quick-start.test.ts
     - Replace pg mock with createMockD1()
     - Update imports to worker/src/services/
     - _Requirements: 12.1, 12.3_
-  - [ ] 13.12 Verify tests/unit/error-formatting.test.ts needs no changes
+  - [x] 13.12 Verify tests/unit/error-formatting.test.ts needs no changes
     - This test covers PlatformError and formatErrorResponse which are unchanged
     - Confirm imports still resolve correctly
     - _Requirements: 12.3_
 
-- [ ] 14. Checkpoint - Ensure all unit tests pass
+- [x] 14. Checkpoint - Ensure all unit tests pass
   - Ensure all tests pass via npm test, ask the user if questions arise.
 
 - [ ] 15. Write property-based tests for correctness properties

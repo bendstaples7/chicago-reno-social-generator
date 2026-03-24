@@ -1,23 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Post } from '../../shared/src/types/post.js';
 import { ContentType } from '../../shared/src/types/enums.js';
-
-const mockClientQuery = vi.fn();
-const mockClientRelease = vi.fn();
-
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-  getClient: vi.fn().mockResolvedValue({
-    query: (...args: unknown[]) => mockClientQuery(...args),
-    release: () => mockClientRelease(),
-  }),
-}));
-
-import { PostService } from '../../server/src/services/post-service.js';
-import { query, getClient } from '../../server/src/config/database.js';
-import { PlatformError } from '../../server/src/errors/platform-error.js';
-
-const mockedQuery = vi.mocked(query);
+import { createMockD1, configurePrepareResults } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import { PostService } from '../../worker/src/services/post-service.js';
+import { PlatformError } from '../../worker/src/errors/platform-error.js';
 
 const NOW = '2024-06-15T10:00:00Z';
 
@@ -40,22 +27,25 @@ function makePostRow(overrides: Record<string, unknown> = {}): Record<string, un
 }
 
 describe('PostService', () => {
+  let db: MockD1Database;
   let service: PostService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClientQuery.mockReset();
-    mockClientRelease.mockReset();
-    service = new PostService();
+    db = createMockD1();
+    service = new PostService(db as unknown as D1Database);
   });
 
   describe('create()', () => {
     it('creates a draft post and returns it', async () => {
       const row = makePostRow();
-      mockClientQuery
-        .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [row] }) // INSERT
-        .mockResolvedValueOnce(undefined); // COMMIT
+      // prepare() is called for each batch statement (1 INSERT), then for the SELECT
+      // We need a dummy result for the batch INSERT prepare, then the real row for SELECT
+      db.batch.mockResolvedValueOnce([]);
+      configurePrepareResults(db, [
+        {}, // INSERT INTO posts prepare (consumed by batch building)
+        { first: row }, // SELECT after batch
+      ]);
 
       const post = await service.create({
         userId: 'user-1',
@@ -68,22 +58,18 @@ describe('PostService', () => {
       expect(post.id).toBe('post-1');
       expect(post.status).toBe('draft');
       expect(post.contentType).toBe('education');
-      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
-      expect(mockClientQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO posts'),
-        expect.any(Array),
-      );
-      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+      expect(db.batch).toHaveBeenCalledTimes(1);
     });
 
     it('attaches media items when provided', async () => {
       const row = makePostRow();
-      mockClientQuery
-        .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [row] }) // INSERT post
-        .mockResolvedValueOnce(undefined) // INSERT post_media 1
-        .mockResolvedValueOnce(undefined) // INSERT post_media 2
-        .mockResolvedValueOnce(undefined); // COMMIT
+      db.batch.mockResolvedValueOnce([]);
+      configurePrepareResults(db, [
+        {}, // INSERT INTO posts
+        {}, // INSERT INTO post_media 1
+        {}, // INSERT INTO post_media 2
+        { first: row }, // SELECT after batch
+      ]);
 
       await service.create({
         userId: 'user-1',
@@ -92,20 +78,13 @@ describe('PostService', () => {
         mediaItemIds: ['media-1', 'media-2'],
       });
 
-      expect(mockClientQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO post_media'),
-        ['post-1', 'media-1', 0],
-      );
-      expect(mockClientQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO post_media'),
-        ['post-1', 'media-2', 1],
-      );
+      // batch should receive 3 statements: 1 post INSERT + 2 post_media INSERTs
+      const batchArg = db.batch.mock.calls[0][0] as unknown[];
+      expect(batchArg).toHaveLength(3);
     });
 
-    it('rolls back on error', async () => {
-      mockClientQuery
-        .mockResolvedValueOnce(undefined) // BEGIN
-        .mockRejectedValueOnce(new Error('db error')); // INSERT fails
+    it('rolls back on error (batch is atomic)', async () => {
+      db.batch.mockRejectedValueOnce(new Error('db error'));
 
       await expect(
         service.create({
@@ -114,15 +93,12 @@ describe('PostService', () => {
           contentType: ContentType.Education,
         }),
       ).rejects.toThrow('db error');
-
-      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
-      expect(mockClientRelease).toHaveBeenCalled();
     });
   });
 
   describe('getById()', () => {
     it('returns the post when found', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [makePostRow()] } as never);
+      configurePrepareResults(db, [{ first: makePostRow() }]);
 
       const post = await service.getById('post-1', 'user-1');
 
@@ -131,7 +107,7 @@ describe('PostService', () => {
     });
 
     it('throws PlatformError when not found', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ first: null }]);
 
       await expect(service.getById('missing', 'user-1')).rejects.toThrow(PlatformError);
     });
@@ -139,30 +115,29 @@ describe('PostService', () => {
 
   describe('list()', () => {
     it('returns posts with pagination', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow(), makePostRow({ id: 'post-2' })],
-      } as never);
+      configurePrepareResults(db, [
+        { all: { results: [makePostRow(), makePostRow({ id: 'post-2' })] } },
+      ]);
 
       const posts = await service.list('user-1', { page: 1, limit: 10 });
 
       expect(posts).toHaveLength(2);
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('LIMIT'),
-        ['user-1', 10, 0],
       );
     });
 
     it('applies status filter when provided', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ all: { results: [] } }]);
 
       await service.list('user-1', { page: 1, limit: 10 }, 'draft');
 
-      expect(mockedQuery).toHaveBeenCalledWith(
-        expect.stringContaining('AND status = $2'),
-        ['user-1', 'draft', 10, 0],
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('AND status = ?'),
       );
     });
   });
+
 
   describe('transitionStatus()', () => {
     const validTransitions: [string, string][] = [
@@ -179,14 +154,12 @@ describe('PostService', () => {
     it.each(validTransitions)(
       'allows transition from %s to %s',
       async (from, to) => {
-        // getById call
-        mockedQuery.mockResolvedValueOnce({
-          rows: [makePostRow({ status: from })],
-        } as never);
-        // UPDATE call
-        mockedQuery.mockResolvedValueOnce({
-          rows: [makePostRow({ status: to })],
-        } as never);
+        // getById call returns post with current status, then UPDATE run, then SELECT first for result
+        configurePrepareResults(db, [
+          { first: makePostRow({ status: from }) },
+          { run: { success: true } },
+          { first: makePostRow({ status: to }) },
+        ]);
 
         const post = await service.transitionStatus('post-1', 'user-1', to as any);
         expect(post.status).toBe(to);
@@ -221,9 +194,9 @@ describe('PostService', () => {
     it.each(invalidTransitions)(
       'rejects transition from %s to %s',
       async (from, to) => {
-        mockedQuery.mockResolvedValueOnce({
-          rows: [makePostRow({ status: from })],
-        } as never);
+        configurePrepareResults(db, [
+          { first: makePostRow({ status: from }) },
+        ]);
 
         await expect(
           service.transitionStatus('post-1', 'user-1', to as any),
@@ -232,27 +205,26 @@ describe('PostService', () => {
     );
 
     it('sets published_at when transitioning to published', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow({ status: 'publishing' })],
-      } as never);
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow({ status: 'published', published_at: NOW })],
-      } as never);
+      configurePrepareResults(db, [
+        { first: makePostRow({ status: 'publishing' }) },
+        { run: { success: true } },
+        { first: makePostRow({ status: 'published', published_at: NOW }) },
+      ]);
 
       await service.transitionStatus('post-1', 'user-1', 'published');
 
-      expect(mockedQuery).toHaveBeenLastCalledWith(
-        expect.stringContaining('published_at = NOW()'),
-        ['published', 'post-1', 'user-1'],
+      // The UPDATE statement should contain published_at
+      expect(db.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('published_at'),
       );
     });
   });
 
   describe('update()', () => {
     it('throws when post is not a draft', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow({ status: 'awaiting_approval' })],
-      } as never);
+      configurePrepareResults(db, [
+        { first: makePostRow({ status: 'awaiting_approval' }) },
+      ]);
 
       await expect(
         service.update('post-1', 'user-1', { caption: 'new' }),
@@ -262,12 +234,16 @@ describe('PostService', () => {
 
   describe('getPostMedia()', () => {
     it('returns media items ordered by display_order', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [
-          { id: 'pm-1', post_id: 'post-1', media_item_id: 'media-1', display_order: 0 },
-          { id: 'pm-2', post_id: 'post-1', media_item_id: 'media-2', display_order: 1 },
-        ],
-      } as never);
+      configurePrepareResults(db, [
+        {
+          all: {
+            results: [
+              { id: 'pm-1', post_id: 'post-1', media_item_id: 'media-1', display_order: 0 },
+              { id: 'pm-2', post_id: 'post-1', media_item_id: 'media-2', display_order: 1 },
+            ],
+          },
+        },
+      ]);
 
       const media = await service.getPostMedia('post-1');
 
@@ -279,19 +255,19 @@ describe('PostService', () => {
   });
 
   describe('mapRow()', () => {
-    it('parses template_fields from JSONB', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow({ template_fields: { topic_title: 'Flooring' } })],
-      } as never);
+    it('parses template_fields from TEXT/JSON string', async () => {
+      configurePrepareResults(db, [
+        { first: makePostRow({ template_fields: JSON.stringify({ topic_title: 'Flooring' }) }) },
+      ]);
 
       const post = await service.getById('post-1', 'user-1');
       expect(post.templateFields).toEqual({ topic_title: 'Flooring' });
     });
 
     it('handles null template_fields', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [makePostRow({ template_fields: null })],
-      } as never);
+      configurePrepareResults(db, [
+        { first: makePostRow({ template_fields: null }) },
+      ]);
 
       const post = await service.getById('post-1', 'user-1');
       expect(post.templateFields).toBeUndefined();

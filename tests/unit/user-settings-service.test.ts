@@ -1,35 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-}));
-
-import { UserSettingsService } from '../../server/src/services/user-settings-service.js';
-import { PlatformError } from '../../server/src/errors/platform-error.js';
-import { query } from '../../server/src/config/database.js';
+import { createMockD1, configurePrepareResults } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import { UserSettingsService } from '../../worker/src/services/user-settings-service.js';
+import { PlatformError } from '../../worker/src/errors/platform-error.js';
 import { AdvisorMode } from 'shared';
 
-const mockedQuery = vi.mocked(query);
-
 describe('UserSettingsService', () => {
+  let db: MockD1Database;
   let service: UserSettingsService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new UserSettingsService();
+    db = createMockD1();
+    service = new UserSettingsService(db as unknown as D1Database);
   });
 
   describe('getSettings()', () => {
     it('returns user settings mapped from DB row', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{
-          id: 'settings-1',
-          user_id: 'user-1',
-          advisor_mode: 'manual',
-          approval_mode: 'manual_review',
-          updated_at: '2024-06-01T00:00:00Z',
-        }],
-      } as never);
+      configurePrepareResults(db, [
+        {
+          first: {
+            id: 'settings-1',
+            user_id: 'user-1',
+            advisor_mode: 'manual',
+            approval_mode: 'manual_review',
+            updated_at: '2024-06-01T00:00:00Z',
+          },
+        },
+      ]);
 
       const settings = await service.getSettings('user-1');
 
@@ -41,44 +39,51 @@ describe('UserSettingsService', () => {
     });
 
     it('throws PlatformError when settings not found', async () => {
-      mockedQuery.mockResolvedValue({ rows: [] } as never);
+      configurePrepareResults(db, [{ first: null }]);
 
       await expect(service.getSettings('nonexistent')).rejects.toThrow(PlatformError);
+      configurePrepareResults(db, [{ first: null }]);
       await expect(service.getSettings('nonexistent')).rejects.toThrow('User settings not found');
     });
   });
 
   describe('updateSettings()', () => {
     it('updates advisor_mode successfully', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{
-          id: 'settings-1',
-          user_id: 'user-1',
-          advisor_mode: 'smart',
-          approval_mode: 'manual_review',
-          updated_at: '2024-06-01T12:00:00Z',
-        }],
-      } as never);
+      // UPDATE run, then SELECT first for result
+      configurePrepareResults(db, [
+        { run: { success: true } },
+        {
+          first: {
+            id: 'settings-1',
+            user_id: 'user-1',
+            advisor_mode: 'smart',
+            approval_mode: 'manual_review',
+            updated_at: '2024-06-01T12:00:00Z',
+          },
+        },
+      ]);
 
       const result = await service.updateSettings('user-1', { advisorMode: AdvisorMode.Smart });
 
       expect(result.advisorMode).toBe('smart');
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE user_settings'),
-        ['smart', 'user-1'],
       );
     });
 
     it('updates approval_mode to manual_review', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{
-          id: 'settings-1',
-          user_id: 'user-1',
-          advisor_mode: 'manual',
-          approval_mode: 'manual_review',
-          updated_at: '2024-06-01T12:00:00Z',
-        }],
-      } as never);
+      configurePrepareResults(db, [
+        { run: { success: true } },
+        {
+          first: {
+            id: 'settings-1',
+            user_id: 'user-1',
+            advisor_mode: 'manual',
+            approval_mode: 'manual_review',
+            updated_at: '2024-06-01T12:00:00Z',
+          },
+        },
+      ]);
 
       const result = await service.updateSettings('user-1', { approvalMode: 'manual_review' });
 
@@ -95,7 +100,7 @@ describe('UserSettingsService', () => {
       ).rejects.toThrow('Auto-publish mode is not available in v1');
 
       // Should not have made any DB calls
-      expect(mockedQuery).not.toHaveBeenCalled();
+      expect(db.prepare).not.toHaveBeenCalled();
     });
 
     it('rejects invalid advisor_mode', async () => {
@@ -109,27 +114,31 @@ describe('UserSettingsService', () => {
     });
 
     it('returns current settings when no updates provided', async () => {
-      mockedQuery.mockResolvedValueOnce({
-        rows: [{
-          id: 'settings-1',
-          user_id: 'user-1',
-          advisor_mode: 'manual',
-          approval_mode: 'manual_review',
-          updated_at: '2024-06-01T00:00:00Z',
-        }],
-      } as never);
+      configurePrepareResults(db, [
+        {
+          first: {
+            id: 'settings-1',
+            user_id: 'user-1',
+            advisor_mode: 'manual',
+            approval_mode: 'manual_review',
+            updated_at: '2024-06-01T00:00:00Z',
+          },
+        },
+      ]);
 
       const result = await service.updateSettings('user-1', {});
 
       expect(result.advisorMode).toBe('manual');
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('SELECT'),
-        ['user-1'],
       );
     });
 
     it('throws PlatformError when user settings row not found on update', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [
+        { run: { success: true } },
+        { first: null },
+      ]);
 
       await expect(
         service.updateSettings('nonexistent', { advisorMode: AdvisorMode.Random }),

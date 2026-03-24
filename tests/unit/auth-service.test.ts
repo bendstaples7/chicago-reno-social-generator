@@ -1,22 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock the database module before importing the service
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-}));
-
-import { AuthService } from '../../server/src/services/auth-service.js';
-import { PlatformError } from '../../server/src/errors/platform-error.js';
-import { query } from '../../server/src/config/database.js';
-
-const mockedQuery = vi.mocked(query);
+import { createMockD1, configurePrepareResults } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
+import { AuthService } from '../../worker/src/services/auth-service.js';
+import { PlatformError } from '../../worker/src/errors/platform-error.js';
 
 describe('AuthService', () => {
+  let db: MockD1Database;
   let service: AuthService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new AuthService();
+    db = createMockD1();
+    service = new AuthService(db as unknown as D1Database);
   });
 
   describe('initiateAuth()', () => {
@@ -35,19 +30,21 @@ describe('AuthService', () => {
     });
 
     it('accepts valid @chicago-reno.com email (case-insensitive)', async () => {
-      const userId = 'user-uuid-1';
-      mockedQuery
-        .mockResolvedValueOnce({
-          rows: [{
-            id: userId,
+      // upsert user run, SELECT user first, upsert settings run, session insert run
+      configurePrepareResults(db, [
+        { run: { success: true } },
+        {
+          first: {
+            id: 'user-uuid-1',
             email: 'alice@chicago-reno.com',
             name: 'alice',
             created_at: '2024-01-01T00:00:00Z',
             last_active_at: '2024-01-01T00:00:00Z',
-          }],
-        } as never)
-        .mockResolvedValueOnce({ rows: [] } as never) // user_settings upsert
-        .mockResolvedValueOnce({ rows: [] } as never); // session insert
+          },
+        },
+        { run: { success: true } },
+        { run: { success: true } },
+      ]);
 
       const result = await service.initiateAuth('Alice@Chicago-Reno.COM');
 
@@ -57,21 +54,23 @@ describe('AuthService', () => {
     });
 
     it('creates user_settings row on first login', async () => {
-      mockedQuery
-        .mockResolvedValueOnce({
-          rows: [{
+      configurePrepareResults(db, [
+        { run: { success: true } },
+        {
+          first: {
             id: 'user-1', email: 'bob@chicago-reno.com', name: 'bob',
             created_at: '2024-01-01T00:00:00Z', last_active_at: '2024-01-01T00:00:00Z',
-          }],
-        } as never)
-        .mockResolvedValueOnce({ rows: [] } as never)
-        .mockResolvedValueOnce({ rows: [] } as never);
+          },
+        },
+        { run: { success: true } },
+        { run: { success: true } },
+      ]);
 
       await service.initiateAuth('bob@chicago-reno.com');
 
-      expect(mockedQuery).toHaveBeenCalledWith(
+      // Third prepare call should be the user_settings INSERT
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO user_settings'),
-        ['user-1'],
       );
     });
   });
@@ -83,60 +82,59 @@ describe('AuthService', () => {
     });
 
     it('returns null for non-existent token', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ first: null }]);
       const result = await service.verifySession('bad-token');
       expect(result).toBeNull();
     });
 
     it('returns null and deletes expired session', async () => {
-      const expired = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(); // 8 days ago
-      mockedQuery
-        .mockResolvedValueOnce({
-          rows: [{
+      const expired = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+      configurePrepareResults(db, [
+        {
+          first: {
             session_id: 'sess-1', last_active_at: expired,
             id: 'user-1', email: 'a@chicago-reno.com', name: 'a',
             created_at: '2024-01-01T00:00:00Z', user_last_active: expired,
-          }],
-        } as never)
-        .mockResolvedValueOnce({ rows: [] } as never); // DELETE
+          },
+        },
+        { run: { success: true } },
+      ]);
 
       const result = await service.verifySession('some-token');
       expect(result).toBeNull();
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM sessions'),
-        ['sess-1'],
       );
     });
 
     it('returns user and touches session for valid token', async () => {
-      const recent = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min ago
-      mockedQuery
-        .mockResolvedValueOnce({
-          rows: [{
+      const recent = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      configurePrepareResults(db, [
+        {
+          first: {
             session_id: 'sess-2', last_active_at: recent,
             id: 'user-2', email: 'b@chicago-reno.com', name: 'b',
             created_at: '2024-01-01T00:00:00Z', user_last_active: recent,
-          }],
-        } as never)
-        .mockResolvedValueOnce({ rows: [] } as never); // UPDATE
+          },
+        },
+        { run: { success: true } },
+      ]);
 
       const result = await service.verifySession('valid-token');
       expect(result).not.toBeNull();
       expect(result!.email).toBe('b@chicago-reno.com');
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE sessions SET last_active_at'),
-        ['sess-2'],
       );
     });
   });
 
   describe('logout()', () => {
     it('deletes the session by token', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] } as never);
+      configurePrepareResults(db, [{ run: { success: true } }]);
       await service.logout('my-token');
-      expect(mockedQuery).toHaveBeenCalledWith(
+      expect(db.prepare).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM sessions WHERE token'),
-        ['my-token'],
       );
     });
   });

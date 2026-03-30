@@ -107,9 +107,15 @@ export default function SettingsPage() {
     try {
       const result = await refreshInstagramToken(id);
       setChannels((prev) => prev.map((c) => c.id === id ? result.channel : c));
-    } catch (err) {
-      const e = err as ErrorResponse;
-      setChannelError(e.message || 'Token refresh failed. Please reconnect your Instagram account.');
+    } catch {
+      // handleResponse always populates e.message with a generic string,
+      // so provide the reconnect guidance explicitly for refresh failures.
+      setChannelError('Token refresh failed. Please reconnect your Instagram account.');
+      // Refetch channels to sync any server-side status changes (e.g., token marked expired)
+      try {
+        const res = await fetchChannels();
+        setChannels(res.channels);
+      } catch { /* best-effort */ }
     } finally {
       setRefreshing(null);
     }

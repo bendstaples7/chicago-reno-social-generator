@@ -60,24 +60,35 @@ export default function QuickPostPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [qs, typesRes, channelsRes, settingsRes] = await Promise.all([
-        quickStart(), fetchContentTypes(), fetchChannels(), fetchSettings(),
+      const [qs, typesRes, channelsRes] = await Promise.all([
+        quickStart(), fetchContentTypes(), fetchChannels(),
       ]);
       setTemplates(typesRes.contentTypes);
       setChannels(channelsRes.channels);
       setSuggestion(qs.suggestion);
 
-      const mode = settingsRes.settings.advisorMode;
-      setAdvisorMode(mode);
-      const isEnabled = mode !== AdvisorMode.Manual;
-      setAdvisorEnabled(isEnabled);
+      // Settings fetch is non-critical — don't let it block the page
+      try {
+        const settingsRes = await fetchSettings();
+        const mode = settingsRes.settings.advisorMode;
+        setAdvisorMode(mode);
+        const isEnabled = mode !== AdvisorMode.Manual;
+        setAdvisorEnabled(isEnabled);
 
-      // When advisor is enabled and has a suggestion, auto-select it
-      if (isEnabled && qs.suggestion) {
-        setSelectedContentType(qs.suggestion.contentType);
-      } else if (qs.defaults.contentType) {
-        setSelectedContentType(qs.defaults.contentType);
+        if (isEnabled && qs.suggestion) {
+          setSelectedContentType(qs.suggestion.contentType);
+        } else if (qs.defaults.contentType) {
+          setSelectedContentType(qs.defaults.contentType);
+        }
+      } catch {
+        // Settings unavailable — default to advisor enabled with suggestion if available
+        if (qs.suggestion) {
+          setSelectedContentType(qs.suggestion.contentType);
+        } else if (qs.defaults.contentType) {
+          setSelectedContentType(qs.defaults.contentType);
+        }
       }
+
       setStep('content-type');
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to initialize.');
@@ -284,20 +295,24 @@ export default function QuickPostPage() {
                   aria-checked={advisorEnabled}
                   tabIndex={0}
                   onClick={async () => {
+                    if (advisorSaving) return;
                     const next = !advisorEnabled;
-                    setAdvisorEnabled(next);
                     setAdvisorSaving(true);
                     try {
                       const newMode = next ? AdvisorMode.Smart : AdvisorMode.Manual;
                       await updateSettings({ advisorMode: newMode });
                       setAdvisorMode(newMode);
+                      setAdvisorEnabled(next);
                       if (next && suggestion) {
                         setSelectedContentType(suggestion.contentType);
                       }
-                    } catch { /* non-critical */ }
-                    setAdvisorSaving(false);
+                    } catch {
+                      // Revert — leave advisorEnabled unchanged
+                    } finally {
+                      setAdvisorSaving(false);
+                    }
                   }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
+                  onKeyDown={(e) => { if (advisorSaving) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                   style={{
                     width: 40, height: 22, borderRadius: 11, position: 'relative',
                     background: advisorEnabled ? '#4caf50' : '#ccc', transition: 'background 0.2s',

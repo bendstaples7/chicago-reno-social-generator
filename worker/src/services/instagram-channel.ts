@@ -136,7 +136,16 @@ export class InstagramChannel implements ChannelInterface {
 
     // Exchange short-lived token for a long-lived token (60 days)
     const longLivedToken = await this.exchangeForLongLivedToken(tokenData.access_token);
-    const finalToken = longLivedToken ?? tokenData.access_token;
+    if (!longLivedToken) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'InstagramChannel',
+        operation: 'handleAuthCallback',
+        description: 'Failed to exchange for a long-lived Instagram token. Cannot store a short-lived token safely.',
+        recommendedActions: ['Verify INSTAGRAM_CLIENT_SECRET is configured correctly', 'Try connecting your Instagram account again'],
+      });
+    }
+    const finalToken = longLivedToken;
 
     const profileResponse = await fetch(
       INSTAGRAM_GRAPH_URL + '/me?fields=id,username&access_token=' + finalToken,

@@ -151,7 +151,9 @@ app.post('/instagram/connect', async (c) => {
     db,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
     publicUrl: c.env.S3_PUBLIC_URL,
+    clientId: c.env.INSTAGRAM_CLIENT_ID,
     clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+    redirectUri: c.env.INSTAGRAM_REDIRECT_URI,
   });
 
   const state = crypto.randomUUID();
@@ -199,7 +201,9 @@ app.get('/instagram/callback', async (c) => {
     db: c.env.DB,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
     publicUrl: c.env.S3_PUBLIC_URL,
+    clientId: c.env.INSTAGRAM_CLIENT_ID,
     clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+    redirectUri: c.env.INSTAGRAM_REDIRECT_URI,
   });
   const connection = await instagramChannel.handleAuthCallback(code, c.get('user').id);
   return c.json(connection);
@@ -223,6 +227,11 @@ app.post('/instagram/refresh/:id', async (c) => {
     return c.json({ error: 'Channel not found' }, 404);
   }
 
+  // In direct-token mode (FB_PAGE_ACCESS_TOKEN), refresh is not supported
+  if (c.env.FB_PAGE_ACCESS_TOKEN) {
+    return c.json({ error: 'Token refresh is not available in direct-token mode. Update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
+  }
+
   const instagramChannel = new InstagramChannel({
     db,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
@@ -235,7 +244,19 @@ app.post('/instagram/refresh/:id', async (c) => {
     return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account.' }, 400);
   }
 
-  return c.json({ channel: refreshed });
+  return c.json({
+    channel: {
+      id: refreshed.id,
+      userId: refreshed.userId,
+      channelType: refreshed.channelType,
+      externalAccountId: refreshed.externalAccountId,
+      externalAccountName: refreshed.externalAccountName,
+      tokenExpiresAt: refreshed.tokenExpiresAt,
+      status: refreshed.status,
+      createdAt: refreshed.createdAt,
+      updatedAt: refreshed.updatedAt,
+    },
+  });
 });
 
 /**

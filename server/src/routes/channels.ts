@@ -187,13 +187,32 @@ router.post('/instagram/refresh/:id', async (req, res, next) => {
       return;
     }
 
+    // In direct-token mode (FB_PAGE_ACCESS_TOKEN), refresh is not supported
+    // because the stored token is a Facebook Page token, not an Instagram OAuth token.
+    if (process.env.FB_PAGE_ACCESS_TOKEN) {
+      res.status(400).json({ error: 'Token refresh is not available in direct-token mode. Update FB_PAGE_ACCESS_TOKEN in your .env to rotate the token.' });
+      return;
+    }
+
     const refreshed = await instagramChannel.refreshToken(req.params.id);
     if (!refreshed) {
       res.status(400).json({ error: 'Token refresh failed. Please reconnect your Instagram account.' });
       return;
     }
 
-    res.json({ channel: refreshed });
+    res.json({
+      channel: {
+        id: refreshed.id,
+        userId: refreshed.userId,
+        channelType: refreshed.channelType,
+        externalAccountId: refreshed.externalAccountId,
+        externalAccountName: refreshed.externalAccountName,
+        tokenExpiresAt: refreshed.tokenExpiresAt,
+        status: refreshed.status,
+        createdAt: refreshed.createdAt,
+        updatedAt: refreshed.updatedAt,
+      },
+    });
   } catch (err) {
     next(err);
   }

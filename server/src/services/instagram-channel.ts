@@ -124,7 +124,16 @@ export class InstagramChannel implements ChannelInterface {
 
     // Exchange short-lived token for a long-lived one (valid ~60 days)
     const longLivedToken = await this.exchangeForLongLivedToken(tokenData.access_token);
-    const finalToken = longLivedToken ?? tokenData.access_token;
+    if (!longLivedToken) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'InstagramChannel',
+        operation: 'handleAuthCallback',
+        description: 'Failed to exchange for a long-lived Instagram token. Cannot store a short-lived token safely.',
+        recommendedActions: ['Verify INSTAGRAM_CLIENT_SECRET is configured correctly', 'Try connecting your Instagram account again'],
+      });
+    }
+    const finalToken = longLivedToken;
 
     // Fetch account info
     const profileResponse = await fetch(
@@ -559,10 +568,17 @@ export class InstagramChannel implements ChannelInterface {
         access_token: currentToken,
       });
       const res = await fetch(`${INSTAGRAM_GRAPH_URL}/refresh_access_token?${params.toString()}`);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.error(`[InstagramChannel.refreshToken] Refresh API failed for connection ${connectionId}: status=${res.status} body=${body}`);
+        return null;
+      }
 
       const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
-      if (!data.access_token) return null;
+      if (!data.access_token) {
+        console.error(`[InstagramChannel.refreshToken] Refresh API returned no access_token for connection ${connectionId}`);
+        return null;
+      }
 
       const newEncryptedToken = encrypt(data.access_token);
       const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000);
@@ -574,7 +590,8 @@ export class InstagramChannel implements ChannelInterface {
       );
 
       return updated.rows.length > 0 ? this.mapConnectionRow(updated.rows[0] as Record<string, unknown>) : null;
-    } catch {
+    } catch (err) {
+      console.error(`[InstagramChannel.refreshToken] Unexpected error for connection ${connectionId}:`, err);
       return null;
     }
   }

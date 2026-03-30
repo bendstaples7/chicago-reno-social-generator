@@ -49,12 +49,6 @@ export default function DashboardPage() {
       onClick: () => navigate('/posts/quick'),
     },
     {
-      title: '✏️ New Post',
-      desc: 'Full post creation with content types, templates, and preview',
-      color: '#81c784',
-      onClick: () => navigate('/posts/new'),
-    },
-    {
       title: '🖼️ Media Library',
       desc: 'Upload photos, generate AI images, and manage your media',
       color: '#ffb74d',

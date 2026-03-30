@@ -5,13 +5,14 @@ import type {
   ChannelConnection, ErrorResponse, ContentType,
   GeneratedImage, ImageStyle, ContentIdea,
 } from 'shared';
+import { AdvisorMode } from 'shared';
 import {
   quickStart, fetchContentTypes, fetchChannels,
+  fetchSettings, updateSettings,
   createPost, generateContent, approvePost, publishPost,
   generateImages, saveGeneratedImage, updatePost,
   fetchContentIdeas, generateContentIdeas, useContentIdea, dismissContentIdea,
 } from '../api';
-import type { QuickStartResponse } from '../api';
 
 type Step = 'loading' | 'content-type' | 'ideas' | 'generating' | 'image' | 'preview' | 'done';
 
@@ -21,13 +22,15 @@ const MAX_HASHTAGS = 30;
 export default function QuickPostPage() {
   const navigate = useNavigate();
 
-  const [quickData, setQuickData] = useState<QuickStartResponse | null>(null);
   const [templates, setTemplates] = useState<ContentTypeTemplate[]>([]);
   const [channels, setChannels] = useState<ChannelConnection[]>([]);
 
   const [step, setStep] = useState<Step>('loading');
   const [selectedContentType, setSelectedContentType] = useState<ContentType | ''>('');
   const [suggestion, setSuggestion] = useState<ContentSuggestion | null>(null);
+  const [advisorEnabled, setAdvisorEnabled] = useState(true);
+  const [advisorMode, setAdvisorMode] = useState<AdvisorMode>(AdvisorMode.Smart);
+  const [advisorSaving, setAdvisorSaving] = useState(false);
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [savedPostId, setSavedPostId] = useState<string | null>(null);
@@ -57,14 +60,24 @@ export default function QuickPostPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [qs, typesRes, channelsRes] = await Promise.all([
-        quickStart(), fetchContentTypes(), fetchChannels(),
+      const [qs, typesRes, channelsRes, settingsRes] = await Promise.all([
+        quickStart(), fetchContentTypes(), fetchChannels(), fetchSettings(),
       ]);
-      setQuickData(qs);
       setTemplates(typesRes.contentTypes);
       setChannels(channelsRes.channels);
       setSuggestion(qs.suggestion);
-      if (qs.defaults.contentType) setSelectedContentType(qs.defaults.contentType);
+
+      const mode = settingsRes.settings.advisorMode;
+      setAdvisorMode(mode);
+      const isEnabled = mode !== AdvisorMode.Manual;
+      setAdvisorEnabled(isEnabled);
+
+      // When advisor is enabled and has a suggestion, auto-select it
+      if (isEnabled && qs.suggestion) {
+        setSelectedContentType(qs.suggestion.contentType);
+      } else if (qs.defaults.contentType) {
+        setSelectedContentType(qs.defaults.contentType);
+      }
       setStep('content-type');
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to initialize.');
@@ -255,19 +268,67 @@ export default function QuickPostPage() {
       {/* Step 1: Content Type */}
       {step === 'content-type' && (
         <div>
-          {suggestion && (
-            <div style={suggestionBannerStyle}>
-              <div style={{ flex: 1 }}>
-                <strong>Suggested:</strong>{' '}
-                {suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                <span style={{ color: '#666', marginLeft: '0.5rem' }}>— {suggestion.reason}</span>
+          {/* Content Advisor Section */}
+          <div style={advisorSectionStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: advisorEnabled ? '0.75rem' : 0 }}>
+              <div>
+                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Content Advisor</span>
+                <span style={{ color: '#666', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
+                  {advisorEnabled ? (advisorMode === AdvisorMode.Smart ? 'Smart mode' : 'Random mode') : 'Off'}
+                </span>
               </div>
-              <button onClick={() => { setSelectedContentType(suggestion.contentType); loadIdeas(suggestion.contentType); setStep('ideas'); }} style={btnStyle}>
-                Accept &amp; Continue
-              </button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                <span style={{ color: '#666' }}>{advisorEnabled ? 'On' : 'Off'}</span>
+                <div
+                  role="switch"
+                  aria-checked={advisorEnabled}
+                  tabIndex={0}
+                  onClick={async () => {
+                    const next = !advisorEnabled;
+                    setAdvisorEnabled(next);
+                    setAdvisorSaving(true);
+                    try {
+                      const newMode = next ? AdvisorMode.Smart : AdvisorMode.Manual;
+                      await updateSettings({ advisorMode: newMode });
+                      setAdvisorMode(newMode);
+                      if (next && suggestion) {
+                        setSelectedContentType(suggestion.contentType);
+                      }
+                    } catch { /* non-critical */ }
+                    setAdvisorSaving(false);
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
+                  style={{
+                    width: 40, height: 22, borderRadius: 11, position: 'relative',
+                    background: advisorEnabled ? '#4caf50' : '#ccc', transition: 'background 0.2s',
+                    opacity: advisorSaving ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{
+                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    position: 'absolute', top: 2, left: advisorEnabled ? 20 : 2,
+                    transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                  }} />
+                </div>
+              </label>
             </div>
-          )}
-          <p style={{ margin: '0 0 0.75rem', fontWeight: 500 }}>Select a content type:</p>
+            {advisorEnabled && suggestion && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, padding: '0.6rem 0.75rem' }}>
+                <span style={{ fontSize: '1.1rem' }}>💡</span>
+                <div style={{ flex: 1, fontSize: '0.85rem' }}>
+                  Recommended: <strong>{suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</strong>
+                  <span style={{ color: '#666', marginLeft: '0.5rem' }}>— {suggestion.reason}</span>
+                </div>
+              </div>
+            )}
+            {advisorEnabled && !suggestion && (
+              <div style={{ fontSize: '0.85rem', color: '#888' }}>No suggestion available right now. Pick a content type below.</div>
+            )}
+          </div>
+
+          <p style={{ margin: '0 0 0.75rem', fontWeight: 500 }}>
+            {advisorEnabled && suggestion ? 'Content type pre-selected by advisor. You can override it:' : 'Select a content type:'}
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
             {templates.map((t) => {
               const isSelected = selectedContentType === t.contentType;
@@ -286,7 +347,7 @@ export default function QuickPostPage() {
             disabled={!selectedContentType} style={{ ...btnStyle, opacity: selectedContentType ? 1 : 0.5 }}>
             Next: Pick an Idea →
           </button>
-          <button onClick={() => navigate('/posts/new')} style={{ ...btnOutlineStyle, marginLeft: '0.75rem' }}>Full Editor</button>
+
         </div>
       )}
 
@@ -437,7 +498,7 @@ export default function QuickPostPage() {
                 style={{ ...publishBtnStyle, opacity: (actionLoading || !channel) ? 0.5 : 1 }}>
                 {actionLoading ? 'Publishing…' : 'Approve & Publish'}
               </button>
-              <button onClick={() => savedPostId && navigate('/posts/' + savedPostId)} style={btnOutlineStyle}>Edit in Full Editor</button>
+
             </div>
           </div>
           <div style={{ width: 320, flexShrink: 0 }}>
@@ -497,7 +558,7 @@ const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border
 const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', fontSize: '0.85rem' };
 
 const alertStyle: React.CSSProperties = { background: '#fdecea', color: '#611a15', padding: '0.75rem 1rem', borderRadius: 4, marginBottom: '1rem' };
-const suggestionBannerStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '1rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, padding: '0.75rem 1rem', marginBottom: '1rem' };
+const advisorSectionStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem' };
 const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 8, padding: '1rem' };
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', fontWeight: 500 };
 const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem', boxSizing: 'border-box' };

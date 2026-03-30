@@ -185,13 +185,6 @@ export async function fetchContentTypes(): Promise<{ contentTypes: ContentTypeTe
   return handleResponse(res);
 }
 
-export async function fetchContentAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
-  const res = await fetch(API_BASE + '/api/content-advisor/suggest', {
-    headers: { ...authHeaders() },
-  });
-  return handleResponse(res);
-}
-
 // ── Channels ──
 
 export async function fetchChannels(): Promise<{ channels: ChannelConnection[] }> {

@@ -6,7 +6,6 @@ import Layout from './Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import MediaLibraryPage from './pages/MediaLibraryPage';
-import CreatePostPage from './pages/CreatePostPage';
 import PostDetailPage from './pages/PostDetailPage';
 import QuickPostPage from './pages/QuickPostPage';
 import SettingsPage from './pages/SettingsPage';
@@ -22,7 +21,6 @@ export default function App() {
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
                 <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/posts/new" element={<CreatePostPage />} />
                 <Route path="/posts/quick" element={<QuickPostPage />} />
                 <Route path="/posts/:id" element={<PostDetailPage />} />
                 <Route path="/media" element={<MediaLibraryPage />} />

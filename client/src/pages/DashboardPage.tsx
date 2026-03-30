@@ -49,12 +49,6 @@ export default function DashboardPage() {
       onClick: () => navigate('/posts/quick'),
     },
     {
-      title: '✏️ New Post',
-      desc: 'Full post creation with content types, templates, and preview',
-      color: '#81c784',
-      onClick: () => navigate('/posts/new'),
-    },
-    {
       title: '🖼️ Media Library',
       desc: 'Upload photos, generate AI images, and manage your media',
       color: '#ffb74d',
@@ -104,13 +98,13 @@ export default function DashboardPage() {
         <div style={{ background: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: 8, padding: '1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span style={{ fontSize: '1.25rem' }}>📡</span>
           <div>
-            <strong>No channels connected.</strong>{' '}
+            <strong>{channels.some((c) => c.status === 'expired') ? 'Instagram token expired.' : 'No channels connected.'}</strong>{' '}
             <span style={{ color: '#666' }}>
               Head to{' '}
               <a href="/settings" onClick={(e) => { e.preventDefault(); navigate('/settings'); }} style={{ color: '#e65100' }}>
                 Settings
               </a>{' '}
-              to connect your Instagram account before publishing.
+              to {channels.some((c) => c.status === 'expired') ? 'reconnect' : 'connect'} your Instagram account before publishing.
             </span>
           </div>
         </div>

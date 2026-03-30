@@ -32,7 +32,7 @@ export type ApprovalStatus = 'awaiting_approval' | 'approved' | 'rejected';
 export type MediaSource = 'uploaded' | 'ai_generated';
 
 /** Channel connection statuses */
-export type ChannelConnectionStatus = 'connected' | 'disconnected' | 'error';
+export type ChannelConnectionStatus = 'connected' | 'disconnected' | 'expired' | 'error';
 
 /** Activity log severity levels */
 export type LogSeverity = 'error' | 'warning' | 'info';

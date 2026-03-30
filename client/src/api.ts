@@ -43,7 +43,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (body && 'severity' in body) {
       error = body as ErrorResponse;
     } else {
-      error = { severity: 'error', component: 'API', operation: '', message: 'Request failed (' + res.status + ')', actions: [] } satisfies ErrorResponse;
+      // Extract message from { error: '...' } shaped responses (e.g., channel routes)
+      const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
+      error = { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
     }
     globalErrorListener?.(error);
     throw error;
@@ -180,13 +182,6 @@ export async function deleteMedia(id: string): Promise<void> {
 
 export async function fetchContentTypes(): Promise<{ contentTypes: ContentTypeTemplate[] }> {
   const res = await fetch(API_BASE + '/api/content-types', {
-    headers: { ...authHeaders() },
-  });
-  return handleResponse(res);
-}
-
-export async function fetchContentAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
-  const res = await fetch(API_BASE + '/api/content-advisor/suggest', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
@@ -340,6 +335,14 @@ export async function connectInstagram(): Promise<{ authorizationUrl: string; st
 export async function disconnectChannel(id: string): Promise<{ success: boolean }> {
   const res = await fetch(API_BASE + '/api/channels/' + id, {
     method: 'DELETE',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function refreshInstagramToken(id: string): Promise<{ channel: ChannelConnection }> {
+  const res = await fetch(API_BASE + '/api/channels/instagram/refresh/' + id, {
+    method: 'POST',
     headers: { ...authHeaders() },
   });
   return handleResponse(res);

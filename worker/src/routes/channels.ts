@@ -3,31 +3,85 @@ import type { Bindings } from '../bindings.js';
 import type { User, ChannelConnection } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { InstagramChannel, encrypt as encryptToken } from '../services/instagram-channel.js';
+import { PlatformError } from '../errors/index.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
 app.use('*', sessionMiddleware);
 
+// Refresh threshold: refresh tokens that expire within 7 days
+const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * GET /
  * List connected channels for the authenticated user.
+ * Automatically refreshes Instagram tokens nearing expiration and
+ * marks expired connections.
  */
 app.get('/', async (c) => {
   const db = c.env.DB;
   const result = await db.prepare(
-    'SELECT id, user_id, channel_type, external_account_id, external_account_name, status, created_at, updated_at FROM channel_connections WHERE user_id = ?'
+    'SELECT id, user_id, channel_type, external_account_id, external_account_name, token_expires_at, status, created_at, updated_at FROM channel_connections WHERE user_id = ?'
   ).bind(c.get('user').id).all();
 
-  const channels = (result.results as any[]).map((row) => ({
-    id: row.id as string,
-    userId: row.user_id as string,
-    channelType: row.channel_type as string,
-    externalAccountId: row.external_account_id as string,
-    externalAccountName: row.external_account_name as string,
-    status: row.status as string,
-    createdAt: new Date(row.created_at as string),
-    updatedAt: new Date(row.updated_at as string),
-  }));
+  const channels: Array<Record<string, unknown>> = [];
+
+  for (const row of result.results as any[]) {
+    let status = row.status as string;
+
+    // Check token expiry for connected channels
+    if (status === 'connected' && row.token_expires_at) {
+      const expiresAt = new Date(row.token_expires_at as string).getTime();
+      const now = Date.now();
+
+      if (expiresAt < now) {
+        // Token has expired — mark as expired
+        await db.prepare(
+          "UPDATE channel_connections SET status = 'expired', updated_at = datetime('now') WHERE id = ?"
+        ).bind(row.id).run();
+        status = 'expired';
+      } else if (expiresAt - now < REFRESH_THRESHOLD_MS && row.channel_type === 'instagram') {
+        // Token expiring soon — attempt auto-refresh
+        try {
+          const instagramChannel = new InstagramChannel({
+            db,
+            encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
+            publicUrl: c.env.S3_PUBLIC_URL,
+            clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+          });
+          const refreshResult = await instagramChannel.refreshToken(row.id as string);
+          if (refreshResult.connection) {
+            channels.push({
+              id: refreshResult.connection.id,
+              userId: refreshResult.connection.userId,
+              channelType: refreshResult.connection.channelType,
+              externalAccountId: refreshResult.connection.externalAccountId,
+              externalAccountName: refreshResult.connection.externalAccountName,
+              tokenExpiresAt: refreshResult.connection.tokenExpiresAt,
+              status: refreshResult.connection.status,
+              createdAt: refreshResult.connection.createdAt,
+              updatedAt: refreshResult.connection.updatedAt,
+            });
+            continue;
+          }
+        } catch {
+          // Refresh failed — still show current status
+        }
+      }
+    }
+
+    channels.push({
+      id: row.id as string,
+      userId: row.user_id as string,
+      channelType: row.channel_type as string,
+      externalAccountId: row.external_account_id as string,
+      externalAccountName: row.external_account_name as string,
+      tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at as string) : null,
+      status,
+      createdAt: new Date(row.created_at as string),
+      updatedAt: new Date(row.updated_at as string),
+    });
+  }
 
   return c.json({ channels });
 });
@@ -99,6 +153,9 @@ app.post('/instagram/connect', async (c) => {
     db,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
     publicUrl: c.env.S3_PUBLIC_URL,
+    clientId: c.env.INSTAGRAM_CLIENT_ID,
+    clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+    redirectUri: c.env.INSTAGRAM_REDIRECT_URI,
   });
 
   const state = crypto.randomUUID();
@@ -146,9 +203,57 @@ app.get('/instagram/callback', async (c) => {
     db: c.env.DB,
     encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
     publicUrl: c.env.S3_PUBLIC_URL,
+    clientId: c.env.INSTAGRAM_CLIENT_ID,
+    clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+    redirectUri: c.env.INSTAGRAM_REDIRECT_URI,
   });
   const connection = await instagramChannel.handleAuthCallback(code, c.get('user').id);
   return c.json(connection);
+});
+
+/**
+ * POST /instagram/refresh/:id
+ * Manually refresh an Instagram token.
+ */
+app.post('/instagram/refresh/:id', async (c) => {
+  const db = c.env.DB;
+  const channelId = c.req.param('id');
+  const userId = c.get('user').id;
+
+  // Verify ownership
+  const check = await db.prepare(
+    "SELECT id FROM channel_connections WHERE id = ? AND user_id = ? AND channel_type = 'instagram'"
+  ).bind(channelId, userId).first();
+
+  if (!check) {
+    return c.json({ error: 'Channel not found' }, 404);
+  }
+
+  const instagramChannel = new InstagramChannel({
+    db,
+    encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
+    publicUrl: c.env.S3_PUBLIC_URL,
+    clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
+  });
+
+  const result = await instagramChannel.refreshToken(channelId);
+  if (!result.connection) {
+    return c.json({ error: result.error ?? 'Token refresh failed.' }, 400);
+  }
+
+  return c.json({
+    channel: {
+      id: result.connection.id,
+      userId: result.connection.userId,
+      channelType: result.connection.channelType,
+      externalAccountId: result.connection.externalAccountId,
+      externalAccountName: result.connection.externalAccountName,
+      tokenExpiresAt: result.connection.tokenExpiresAt,
+      status: result.connection.status,
+      createdAt: result.connection.createdAt,
+      updatedAt: result.connection.updatedAt,
+    },
+  });
 });
 
 /**
@@ -174,6 +279,7 @@ app.delete('/:id', async (c) => {
       db,
       encryptionKey: c.env.CHANNEL_ENCRYPTION_KEY,
       publicUrl: c.env.S3_PUBLIC_URL,
+      clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
     });
     await instagramChannel.disconnect(channelId);
   } else {

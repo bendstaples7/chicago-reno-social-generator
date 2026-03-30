@@ -220,25 +220,13 @@ app.post('/instagram/refresh/:id', async (c) => {
   const channelId = c.req.param('id');
   const userId = c.get('user').id;
 
-  // Verify ownership and get token format
+  // Verify ownership
   const check = await db.prepare(
-    "SELECT id, access_token_encrypted FROM channel_connections WHERE id = ? AND user_id = ? AND channel_type = 'instagram'"
-  ).bind(channelId, userId).first() as any;
+    "SELECT id FROM channel_connections WHERE id = ? AND user_id = ? AND channel_type = 'instagram'"
+  ).bind(channelId, userId).first();
 
   if (!check) {
     return c.json({ error: 'Channel not found' }, 404);
-  }
-
-  // Direct-token connections use a Facebook Page token that can't be refreshed
-  // via the Instagram refresh API. Detect by checking if the connection was created
-  // with a FB_PAGE_ACCESS_TOKEN (the external_account_id matches IG_BUSINESS_ACCOUNT_ID).
-  if (c.env.FB_PAGE_ACCESS_TOKEN && c.env.IG_BUSINESS_ACCOUNT_ID) {
-    const conn = await db.prepare(
-      "SELECT external_account_id FROM channel_connections WHERE id = ? AND channel_type = 'instagram'"
-    ).bind(channelId).first() as any;
-    if (conn && conn.external_account_id === c.env.IG_BUSINESS_ACCOUNT_ID) {
-      return c.json({ error: 'Token refresh is not available for direct-token connections. Update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
-    }
   }
 
   const instagramChannel = new InstagramChannel({
@@ -250,6 +238,11 @@ app.post('/instagram/refresh/:id', async (c) => {
 
   const refreshed = await instagramChannel.refreshToken(channelId);
   if (!refreshed) {
+    // If direct-token env vars are configured, this connection may be a
+    // Facebook Page token that can't be refreshed via the Instagram API.
+    if (c.env.FB_PAGE_ACCESS_TOKEN) {
+      return c.json({ error: 'Token refresh failed. If this is a direct-token connection, update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
+    }
     return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account.' }, 400);
   }
 

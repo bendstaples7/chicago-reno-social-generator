@@ -238,7 +238,7 @@ app.post('/instagram/refresh/:id', async (c) => {
 
   const refreshed = await instagramChannel.refreshToken(channelId);
   if (!refreshed) {
-    return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account or, for direct-token setups, rotate FB_PAGE_ACCESS_TOKEN in your environment.' }, 400);
+    return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account.' }, 400);
   }
 
   return c.json({

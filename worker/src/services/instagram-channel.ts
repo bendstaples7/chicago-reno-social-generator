@@ -170,7 +170,7 @@ export class InstagramChannel implements ChannelInterface {
     }
 
     const encryptedToken = await encrypt(finalToken, this.encryptionKey);
-    const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + DEFAULT_TOKEN_EXPIRES_SECONDS * 1000).toISOString();
 
     // Atomic DELETE + INSERT via batch
     const id = crypto.randomUUID();
@@ -477,7 +477,7 @@ export class InstagramChannel implements ChannelInterface {
       "SELECT id, user_id, access_token_encrypted, token_expires_at FROM channel_connections WHERE id = ? AND channel_type = 'instagram' AND status = 'connected'"
     ).bind(connectionId).first() as any;
 
-    if (!row || !row.access_token_encrypted) return { connection: null, error: 'Connection not found.' };
+    if (!row || !row.access_token_encrypted) return { connection: null, error: 'This connection is not in a refreshable state. Please reconnect your Instagram account.' };
 
     let currentToken: string;
     try {

@@ -159,7 +159,7 @@ export class InstagramChannel implements ChannelInterface {
     }
 
     const encryptedToken = encrypt(finalToken);
-    const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000); // 60 days
+    const expiresAt = new Date(Date.now() + DEFAULT_TOKEN_EXPIRES_SECONDS * 1000); // 60 days
 
     // Remove any existing connection for this user+channel, then insert fresh
     await query(

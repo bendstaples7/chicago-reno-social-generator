@@ -345,6 +345,14 @@ export async function disconnectChannel(id: string): Promise<{ success: boolean 
   return handleResponse(res);
 }
 
+export async function refreshInstagramToken(id: string): Promise<{ channel: ChannelConnection }> {
+  const res = await fetch(API_BASE + '/api/channels/instagram/refresh/' + id, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Activity Log ──
 
 export async function fetchActivityLog(page = 1, limit = 20): Promise<{ entries: ActivityLogEntry[]; page: number; limit: number }> {

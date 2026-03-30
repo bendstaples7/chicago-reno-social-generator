@@ -134,8 +134,12 @@ export class InstagramChannel implements ChannelInterface {
 
     const tokenData = (await tokenResponse.json()) as { access_token: string; user_id: string };
 
+    // Exchange short-lived token for a long-lived token (60 days)
+    const longLivedToken = await this.exchangeForLongLivedToken(tokenData.access_token);
+    const finalToken = longLivedToken ?? tokenData.access_token;
+
     const profileResponse = await fetch(
-      INSTAGRAM_GRAPH_URL + '/me?fields=id,username&access_token=' + tokenData.access_token,
+      INSTAGRAM_GRAPH_URL + '/me?fields=id,username&access_token=' + finalToken,
     );
 
     let accountName = 'Instagram User';
@@ -144,7 +148,7 @@ export class InstagramChannel implements ChannelInterface {
       accountName = profile.username;
     }
 
-    const encryptedToken = await encrypt(tokenData.access_token, this.encryptionKey);
+    const encryptedToken = await encrypt(finalToken, this.encryptionKey);
     const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
     // Atomic DELETE + INSERT via batch
@@ -415,5 +419,82 @@ export class InstagramChannel implements ChannelInterface {
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };
+  }
+
+  /**
+   * Exchange a short-lived Instagram token for a long-lived one (valid ~60 days).
+   * Returns the long-lived token or null if the exchange fails.
+   */
+  private async exchangeForLongLivedToken(shortLivedToken: string): Promise<string | null> {
+    if (!this.clientSecret) return null;
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'ig_exchange_token',
+        client_secret: this.clientSecret,
+        access_token: shortLivedToken,
+      });
+      const res = await fetch(INSTAGRAM_GRAPH_URL + '/access_token?' + params.toString());
+      if (!res.ok) return null;
+      const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
+      return data.access_token ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Refresh a long-lived Instagram token. Long-lived tokens can be refreshed
+   * as long as they are at least 24 hours old and not expired.
+   * Returns the updated connection, or null if refresh fails.
+   */
+  async refreshToken(connectionId: string): Promise<ChannelConnection | null> {
+    const row = await this.db.prepare(
+      "SELECT id, user_id, access_token_encrypted, token_expires_at FROM channel_connections WHERE id = ? AND channel_type = 'instagram' AND status = 'connected'"
+    ).bind(connectionId).first() as any;
+
+    if (!row || !row.access_token_encrypted) return null;
+
+    let currentToken: string;
+    try {
+      currentToken = await decrypt(row.access_token_encrypted, this.encryptionKey);
+    } catch {
+      return null;
+    }
+
+    // Check if token is already expired
+    const expiresAt = new Date(row.token_expires_at);
+    if (expiresAt.getTime() < Date.now()) {
+      await this.db.prepare(
+        "UPDATE channel_connections SET status = 'expired', updated_at = datetime('now') WHERE id = ?"
+      ).bind(connectionId).run();
+      return null;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'ig_refresh_token',
+        access_token: currentToken,
+      });
+      const res = await fetch(INSTAGRAM_GRAPH_URL + '/refresh_access_token?' + params.toString());
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
+      if (!data.access_token) return null;
+
+      const newEncryptedToken = await encrypt(data.access_token, this.encryptionKey);
+      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000).toISOString();
+
+      await this.db.prepare(
+        "UPDATE channel_connections SET access_token_encrypted = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
+      ).bind(newEncryptedToken, newExpiresAt, connectionId).run();
+
+      const updated = await this.db.prepare(
+        'SELECT id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status, created_at, updated_at FROM channel_connections WHERE id = ?'
+      ).bind(connectionId).first() as any;
+
+      return updated ? this.mapConnectionRow(updated) : null;
+    } catch {
+      return null;
+    }
   }
 }

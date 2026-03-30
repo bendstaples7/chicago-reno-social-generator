@@ -122,9 +122,13 @@ export class InstagramChannel implements ChannelInterface {
       user_id: string;
     };
 
+    // Exchange short-lived token for a long-lived one (valid ~60 days)
+    const longLivedToken = await this.exchangeForLongLivedToken(tokenData.access_token);
+    const finalToken = longLivedToken ?? tokenData.access_token;
+
     // Fetch account info
     const profileResponse = await fetch(
-      `${INSTAGRAM_GRAPH_URL}/me?fields=id,username&access_token=${tokenData.access_token}`,
+      `${INSTAGRAM_GRAPH_URL}/me?fields=id,username&access_token=${finalToken}`,
     );
 
     let accountName = 'Instagram User';
@@ -133,7 +137,7 @@ export class InstagramChannel implements ChannelInterface {
       accountName = profile.username;
     }
 
-    const encryptedToken = encrypt(tokenData.access_token);
+    const encryptedToken = encrypt(finalToken);
     const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000); // 60 days
 
     // Remove any existing connection for this user+channel, then insert fresh
@@ -497,5 +501,81 @@ export class InstagramChannel implements ChannelInterface {
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };
+  }
+
+  /**
+   * Exchange a short-lived Instagram token for a long-lived one (valid ~60 days).
+   */
+  private async exchangeForLongLivedToken(shortLivedToken: string): Promise<string | null> {
+    if (!this.clientSecret) return null;
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'ig_exchange_token',
+        client_secret: this.clientSecret,
+        access_token: shortLivedToken,
+      });
+      const res = await fetch(`${INSTAGRAM_GRAPH_URL}/access_token?${params.toString()}`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
+      return data.access_token ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Refresh a long-lived Instagram token before it expires.
+   */
+  async refreshToken(connectionId: string): Promise<ChannelConnection | null> {
+    const result = await query(
+      `SELECT id, access_token_encrypted, token_expires_at FROM channel_connections WHERE id = $1 AND channel_type = 'instagram' AND status = 'connected'`,
+      [connectionId],
+    );
+
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0] as Record<string, unknown>;
+    const encryptedToken = row.access_token_encrypted as string;
+    if (!encryptedToken) return null;
+
+    let currentToken: string;
+    try {
+      currentToken = decrypt(encryptedToken);
+    } catch {
+      return null;
+    }
+
+    const expiresAt = new Date(row.token_expires_at as string);
+    if (expiresAt.getTime() < Date.now()) {
+      await query(
+        `UPDATE channel_connections SET status = 'expired', updated_at = NOW() WHERE id = $1`,
+        [connectionId],
+      );
+      return null;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'ig_refresh_token',
+        access_token: currentToken,
+      });
+      const res = await fetch(`${INSTAGRAM_GRAPH_URL}/refresh_access_token?${params.toString()}`);
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
+      if (!data.access_token) return null;
+
+      const newEncryptedToken = encrypt(data.access_token);
+      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000);
+
+      const updated = await query(
+        `UPDATE channel_connections SET access_token_encrypted = $1, token_expires_at = $2, updated_at = NOW() WHERE id = $3
+         RETURNING id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status, created_at, updated_at`,
+        [newEncryptedToken, newExpiresAt, connectionId],
+      );
+
+      return updated.rows.length > 0 ? this.mapConnectionRow(updated.rows[0] as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
   }
 }

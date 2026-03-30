@@ -3,7 +3,7 @@ import { AdvisorMode } from 'shared';
 import type { UserSettings, ChannelConnection, ErrorResponse } from 'shared';
 import {
   fetchSettings, updateSettings, fetchChannels,
-  connectInstagram, disconnectChannel,
+  connectInstagram, disconnectChannel, refreshInstagramToken,
 } from '../api';
 
 const advisorModes: { value: AdvisorMode; label: string; description: string }[] = [
@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +98,20 @@ export default function SettingsPage() {
       setChannelError(e.message || 'Failed to disconnect channel. Please try again.');
     } finally {
       setDisconnecting(null);
+    }
+  };
+
+  const handleRefresh = async (id: string) => {
+    setRefreshing(id);
+    setChannelError(null);
+    try {
+      const result = await refreshInstagramToken(id);
+      setChannels((prev) => prev.map((c) => c.id === id ? result.channel : c));
+    } catch (err) {
+      const e = err as ErrorResponse;
+      setChannelError(e.message || 'Token refresh failed. Please reconnect your Instagram account.');
+    } finally {
+      setRefreshing(null);
     }
   };
 
@@ -184,14 +199,38 @@ export default function SettingsPage() {
                 <div style={{ fontSize: '0.85rem', color: '#666' }}>
                   Status: <span style={{ color: ch.status === 'connected' ? '#2e7d32' : '#b71c1c' }}>{ch.status}</span>
                 </div>
+                {ch.status === 'expired' && (
+                  <div style={{ fontSize: '0.8rem', color: '#e65100', marginTop: 4 }}>
+                    Your Instagram token has expired. Please reconnect your account.
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => handleDisconnect(ch.id)}
-                disabled={disconnecting === ch.id}
-                style={{ background: '#fff', color: '#b71c1c', border: '1px solid #b71c1c', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
-              >
-                {disconnecting === ch.id ? 'Disconnecting…' : 'Disconnect'}
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {ch.status === 'connected' && (
+                  <button
+                    onClick={() => handleRefresh(ch.id)}
+                    disabled={refreshing === ch.id}
+                    style={{ background: '#fff', color: '#1565c0', border: '1px solid #1565c0', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
+                  >
+                    {refreshing === ch.id ? 'Refreshing…' : 'Refresh Token'}
+                  </button>
+                )}
+                {ch.status === 'expired' && (
+                  <button
+                    onClick={handleConnect}
+                    style={{ background: '#e1306c', color: '#fff', border: 'none', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    Reconnect
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDisconnect(ch.id)}
+                  disabled={disconnecting === ch.id}
+                  style={{ background: '#fff', color: '#b71c1c', border: '1px solid #b71c1c', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
+                >
+                  {disconnecting === ch.id ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+              </div>
             </div>
           ))
         )}

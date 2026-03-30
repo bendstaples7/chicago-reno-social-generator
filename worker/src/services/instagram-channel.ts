@@ -13,6 +13,8 @@ import type {
 const INSTAGRAM_AUTH_URL = 'https://api.instagram.com/oauth/authorize';
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_URL = 'https://graph.facebook.com/v25.0';
+/** Default token lifetime: 60 days in seconds */
+const DEFAULT_TOKEN_EXPIRES_SECONDS = 60 * 24 * 60 * 60;
 
 // Web Crypto helpers
 function hexToBytes(hex: string): Uint8Array {
@@ -112,6 +114,16 @@ export class InstagramChannel implements ChannelInterface {
   }
 
   async handleAuthCallback(code: string, userId: string): Promise<ChannelConnection> {
+    if (!this.clientSecret) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'InstagramChannel',
+        operation: 'handleAuthCallback',
+        description: 'INSTAGRAM_CLIENT_SECRET is not configured. Cannot complete OAuth flow.',
+        recommendedActions: ['Set INSTAGRAM_CLIENT_SECRET in your environment'],
+      });
+    }
+
     const body = new URLSearchParams({
       client_id: this.clientId,
       client_secret: this.clientSecret,
@@ -435,7 +447,10 @@ export class InstagramChannel implements ChannelInterface {
    * Returns the long-lived token or null if the exchange fails.
    */
   private async exchangeForLongLivedToken(shortLivedToken: string): Promise<string | null> {
-    if (!this.clientSecret) return null;
+    if (!this.clientSecret) {
+      console.warn('[InstagramChannel.exchangeForLongLivedToken] clientSecret is not configured — cannot exchange for long-lived token');
+      return null;
+    }
     try {
       const params = new URLSearchParams({
         grant_type: 'ig_exchange_token',
@@ -485,13 +500,21 @@ export class InstagramChannel implements ChannelInterface {
         access_token: currentToken,
       });
       const res = await fetch(INSTAGRAM_GRAPH_URL + '/refresh_access_token?' + params.toString());
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.error(`[InstagramChannel.refreshToken] Refresh API failed for connection ${connectionId}: status=${res.status} body=${body}`);
+        return null;
+      }
 
       const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
-      if (!data.access_token) return null;
+      if (!data.access_token) {
+        console.error(`[InstagramChannel.refreshToken] Refresh API returned no access_token for connection ${connectionId}`);
+        return null;
+      }
 
       const newEncryptedToken = await encrypt(data.access_token, this.encryptionKey);
-      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000).toISOString();
+      // expires_in is in seconds; fallback to 60 days if not provided
+      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? DEFAULT_TOKEN_EXPIRES_SECONDS) * 1000).toISOString();
 
       await this.db.prepare(
         "UPDATE channel_connections SET access_token_encrypted = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
@@ -502,7 +525,8 @@ export class InstagramChannel implements ChannelInterface {
       ).bind(connectionId).first() as any;
 
       return updated ? this.mapConnectionRow(updated) : null;
-    } catch {
+    } catch (err) {
+      console.error(`[InstagramChannel.refreshToken] Unexpected error for connection ${connectionId}:`, err);
       return null;
     }
   }

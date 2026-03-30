@@ -60,6 +60,9 @@ export default function QuickPostPage() {
 
   const loadData = useCallback(async () => {
     try {
+      // Settings fetch is non-critical and runs concurrently
+      const settingsPromise = fetchSettings().catch(() => null);
+
       const [qs, typesRes, channelsRes] = await Promise.all([
         quickStart(), fetchContentTypes(), fetchChannels(),
       ]);
@@ -67,9 +70,8 @@ export default function QuickPostPage() {
       setChannels(channelsRes.channels);
       setSuggestion(qs.suggestion);
 
-      // Settings fetch is non-critical — don't let it block the page
-      try {
-        const settingsRes = await fetchSettings();
+      const settingsRes = await settingsPromise;
+      if (settingsRes) {
         const mode = settingsRes.settings.advisorMode;
         setAdvisorMode(mode);
         const isEnabled = mode !== AdvisorMode.Manual;
@@ -80,7 +82,7 @@ export default function QuickPostPage() {
         } else if (qs.defaults.contentType) {
           setSelectedContentType(qs.defaults.contentType);
         }
-      } catch {
+      } else {
         // Settings unavailable — default to advisor enabled with suggestion if available
         if (qs.suggestion) {
           setSelectedContentType(qs.suggestion.contentType);

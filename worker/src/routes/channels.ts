@@ -57,6 +57,7 @@ app.get('/', async (c) => {
               channelType: refreshed.channelType,
               externalAccountId: refreshed.externalAccountId,
               externalAccountName: refreshed.externalAccountName,
+              tokenExpiresAt: refreshed.tokenExpiresAt,
               status: refreshed.status,
               createdAt: refreshed.createdAt,
               updatedAt: refreshed.updatedAt,
@@ -75,6 +76,7 @@ app.get('/', async (c) => {
       channelType: row.channel_type as string,
       externalAccountId: row.external_account_id as string,
       externalAccountName: row.external_account_name as string,
+      tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at as string) : null,
       status,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
@@ -218,18 +220,20 @@ app.post('/instagram/refresh/:id', async (c) => {
   const channelId = c.req.param('id');
   const userId = c.get('user').id;
 
-  // Verify ownership
+  // Verify ownership and get token format
   const check = await db.prepare(
-    "SELECT id FROM channel_connections WHERE id = ? AND user_id = ? AND channel_type = 'instagram'"
-  ).bind(channelId, userId).first();
+    "SELECT id, access_token_encrypted FROM channel_connections WHERE id = ? AND user_id = ? AND channel_type = 'instagram'"
+  ).bind(channelId, userId).first() as any;
 
   if (!check) {
     return c.json({ error: 'Channel not found' }, 404);
   }
 
-  // In direct-token mode (FB_PAGE_ACCESS_TOKEN), refresh is not supported
-  if (c.env.FB_PAGE_ACCESS_TOKEN) {
-    return c.json({ error: 'Token refresh is not available in direct-token mode. Update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
+  // In direct-token mode the stored token is encrypted via our scheme (iv:ciphertext).
+  // Plain-text tokens (from FB_PAGE_ACCESS_TOKEN) won't have that format and can't be refreshed.
+  const storedToken = check.access_token_encrypted as string | null;
+  if (storedToken && storedToken.split(':').length !== 2) {
+    return c.json({ error: 'Token refresh is not available for direct-token connections. Update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
   }
 
   const instagramChannel = new InstagramChannel({

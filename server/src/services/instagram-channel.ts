@@ -19,6 +19,8 @@ const INSTAGRAM_GRAPH_URL = 'https://graph.facebook.com/v25.0';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
+/** Default token lifetime: 60 days in seconds */
+const DEFAULT_TOKEN_EXPIRES_SECONDS = 60 * 24 * 60 * 60;
 
 function getEncryptionKey(): Buffer {
   const key = process.env.CHANNEL_ENCRYPTION_KEY;
@@ -94,6 +96,16 @@ export class InstagramChannel implements ChannelInterface {
   }
 
   async handleAuthCallback(code: string, userId: string): Promise<ChannelConnection> {
+    if (!this.clientSecret) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'InstagramChannel',
+        operation: 'handleAuthCallback',
+        description: 'INSTAGRAM_CLIENT_SECRET is not configured. Cannot complete OAuth flow.',
+        recommendedActions: ['Set INSTAGRAM_CLIENT_SECRET in your environment'],
+      });
+    }
+
     const body = new URLSearchParams({
       client_id: this.clientId,
       client_secret: this.clientSecret,
@@ -516,7 +528,10 @@ export class InstagramChannel implements ChannelInterface {
    * Exchange a short-lived Instagram token for a long-lived one (valid ~60 days).
    */
   private async exchangeForLongLivedToken(shortLivedToken: string): Promise<string | null> {
-    if (!this.clientSecret) return null;
+    if (!this.clientSecret) {
+      console.warn('[InstagramChannel.exchangeForLongLivedToken] clientSecret is not configured — cannot exchange for long-lived token');
+      return null;
+    }
     try {
       const params = new URLSearchParams({
         grant_type: 'ig_exchange_token',
@@ -581,7 +596,7 @@ export class InstagramChannel implements ChannelInterface {
       }
 
       const newEncryptedToken = encrypt(data.access_token);
-      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000);
+      const newExpiresAt = new Date(Date.now() + (data.expires_in ?? DEFAULT_TOKEN_EXPIRES_SECONDS) * 1000);
 
       const updated = await query(
         `UPDATE channel_connections SET access_token_encrypted = $1, token_expires_at = $2, updated_at = NOW() WHERE id = $3

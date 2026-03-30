@@ -52,6 +52,7 @@ router.get('/', async (req, res, next) => {
                 channelType: refreshed.channelType,
                 externalAccountId: refreshed.externalAccountId,
                 externalAccountName: refreshed.externalAccountName,
+                tokenExpiresAt: refreshed.tokenExpiresAt,
                 status: refreshed.status,
                 createdAt: refreshed.createdAt,
                 updatedAt: refreshed.updatedAt,
@@ -70,6 +71,7 @@ router.get('/', async (req, res, next) => {
         channelType: row.channel_type as string,
         externalAccountId: row.external_account_id as string,
         externalAccountName: row.external_account_name as string,
+        tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at as string) : null,
         status,
         createdAt: new Date(row.created_at as string),
         updatedAt: new Date(row.updated_at as string),
@@ -179,7 +181,7 @@ router.get('/instagram/callback', async (req, res, next) => {
 router.post('/instagram/refresh/:id', async (req, res, next) => {
   try {
     const check = await query(
-      `SELECT id FROM channel_connections WHERE id = $1 AND user_id = $2 AND channel_type = 'instagram'`,
+      `SELECT id, access_token_encrypted FROM channel_connections WHERE id = $1 AND user_id = $2 AND channel_type = 'instagram'`,
       [req.params.id, req.user!.id],
     );
     if (check.rows.length === 0) {
@@ -187,10 +189,12 @@ router.post('/instagram/refresh/:id', async (req, res, next) => {
       return;
     }
 
-    // In direct-token mode (FB_PAGE_ACCESS_TOKEN), refresh is not supported
-    // because the stored token is a Facebook Page token, not an Instagram OAuth token.
-    if (process.env.FB_PAGE_ACCESS_TOKEN) {
-      res.status(400).json({ error: 'Token refresh is not available in direct-token mode. Update FB_PAGE_ACCESS_TOKEN in your .env to rotate the token.' });
+    // In direct-token mode the stored token is plain text (not encrypted via our
+    // AES-GCM scheme), so refreshToken() will fail on decrypt. Detect this by
+    // checking if the token lacks the encrypted format (iv:authTag:ciphertext).
+    const storedToken = check.rows[0].access_token_encrypted as string | null;
+    if (storedToken && storedToken.split(':').length !== 3) {
+      res.status(400).json({ error: 'Token refresh is not available for direct-token connections. Update FB_PAGE_ACCESS_TOKEN in your .env to rotate the token.' });
       return;
     }
 

@@ -238,12 +238,7 @@ app.post('/instagram/refresh/:id', async (c) => {
 
   const refreshed = await instagramChannel.refreshToken(channelId);
   if (!refreshed) {
-    // If direct-token env vars are configured, this connection may be a
-    // Facebook Page token that can't be refreshed via the Instagram API.
-    if (c.env.FB_PAGE_ACCESS_TOKEN) {
-      return c.json({ error: 'Token refresh failed. If this is a direct-token connection, update FB_PAGE_ACCESS_TOKEN in your environment to rotate the token.' }, 400);
-    }
-    return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account.' }, 400);
+    return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account or, for direct-token setups, rotate FB_PAGE_ACCESS_TOKEN in your environment.' }, 400);
   }
 
   return c.json({

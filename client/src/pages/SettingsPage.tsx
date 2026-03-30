@@ -109,8 +109,6 @@ export default function SettingsPage() {
       setChannels((prev) => prev.map((c) => c.id === id ? result.channel : c));
     } catch (err) {
       const e = err as ErrorResponse;
-      // Use the server's error message — it provides mode-specific guidance
-      // (e.g., direct-token mode tells users to update .env, OAuth mode says reconnect)
       setChannelError(e.message || 'Token refresh failed.');
       // Refetch channels to sync any server-side status changes (e.g., token marked expired)
       try {

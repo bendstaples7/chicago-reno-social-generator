@@ -43,7 +43,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (body && 'severity' in body) {
       error = body as ErrorResponse;
     } else {
-      error = { severity: 'error', component: 'API', operation: '', message: 'Request failed (' + res.status + ')', actions: [] } satisfies ErrorResponse;
+      // Extract message from { error: '...' } shaped responses (e.g., channel routes)
+      const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
+      error = { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
     }
     globalErrorListener?.(error);
     throw error;

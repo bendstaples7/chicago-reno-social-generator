@@ -1,0 +1,2 @@
+/api/*  https://social-media-cross-poster.chicago-reno.workers.dev/api/:splat  200
+/* /index.html 200

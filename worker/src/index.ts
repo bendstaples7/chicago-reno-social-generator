@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { bodyLimit } from 'hono/body-limit';
 import type { Bindings } from './bindings.js';
 import { errorHandler } from './middleware/error-handler.js';
@@ -14,6 +15,13 @@ import activityLogRoutes from './routes/activity-log.js';
 import contentIdeasRoutes from './routes/content-ideas.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// CORS – allow the Pages frontend to call the Worker API
+app.use('*', cors({
+  origin: ['https://chicago-reno-social-generator.pages.dev'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+}));
 
 // Default 10 MB body size limit for non-upload routes
 app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));

@@ -469,20 +469,21 @@ export class InstagramChannel implements ChannelInterface {
   /**
    * Refresh a long-lived Instagram token. Long-lived tokens can be refreshed
    * as long as they are at least 24 hours old and not expired.
-   * Returns the updated connection, or null if refresh fails.
+   * Returns { connection, error } — connection is the updated record on success,
+   * error is a user-facing message on failure.
    */
-  async refreshToken(connectionId: string): Promise<ChannelConnection | null> {
+  async refreshToken(connectionId: string): Promise<{ connection: ChannelConnection | null; error?: string }> {
     const row = await this.db.prepare(
       "SELECT id, user_id, access_token_encrypted, token_expires_at FROM channel_connections WHERE id = ? AND channel_type = 'instagram' AND status = 'connected'"
     ).bind(connectionId).first() as any;
 
-    if (!row || !row.access_token_encrypted) return null;
+    if (!row || !row.access_token_encrypted) return { connection: null, error: 'Connection not found.' };
 
     let currentToken: string;
     try {
       currentToken = await decrypt(row.access_token_encrypted, this.encryptionKey);
     } catch {
-      return null;
+      return { connection: null, error: 'Failed to decrypt token. Please reconnect your Instagram account.' };
     }
 
     // Check if token is already expired
@@ -491,7 +492,7 @@ export class InstagramChannel implements ChannelInterface {
       await this.db.prepare(
         "UPDATE channel_connections SET status = 'expired', updated_at = datetime('now') WHERE id = ?"
       ).bind(connectionId).run();
-      return null;
+      return { connection: null, error: 'Token has expired. Please reconnect your Instagram account.' };
     }
 
     try {
@@ -503,13 +504,18 @@ export class InstagramChannel implements ChannelInterface {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         console.error(`[InstagramChannel.refreshToken] Refresh API failed for connection ${connectionId}: status=${res.status} body=${body}`);
-        return null;
+        // A 400 from the refresh API typically means the token is not a refreshable
+        // long-lived Instagram token (e.g., it's a Facebook Page Access Token).
+        if (res.status === 400) {
+          return { connection: null, error: 'This token cannot be refreshed. For direct-token setups, update FB_PAGE_ACCESS_TOKEN in your environment. For OAuth connections, reconnect your Instagram account.' };
+        }
+        return { connection: null, error: 'Token refresh failed. Please reconnect your Instagram account.' };
       }
 
       const data = (await res.json()) as { access_token: string; token_type: string; expires_in: number };
       if (!data.access_token) {
         console.error(`[InstagramChannel.refreshToken] Refresh API returned no access_token for connection ${connectionId}`);
-        return null;
+        return { connection: null, error: 'Token refresh failed. Please reconnect your Instagram account.' };
       }
 
       const newEncryptedToken = await encrypt(data.access_token, this.encryptionKey);
@@ -524,10 +530,10 @@ export class InstagramChannel implements ChannelInterface {
         'SELECT id, user_id, channel_type, external_account_id, external_account_name, access_token_encrypted, token_expires_at, status, created_at, updated_at FROM channel_connections WHERE id = ?'
       ).bind(connectionId).first() as any;
 
-      return updated ? this.mapConnectionRow(updated) : null;
+      return updated ? { connection: this.mapConnectionRow(updated) } : { connection: null, error: 'Token refresh failed.' };
     } catch (err) {
       console.error(`[InstagramChannel.refreshToken] Unexpected error for connection ${connectionId}:`, err);
-      return null;
+      return { connection: null, error: 'Token refresh failed. Please reconnect your Instagram account.' };
     }
   }
 }

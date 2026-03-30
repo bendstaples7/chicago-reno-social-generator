@@ -49,18 +49,18 @@ app.get('/', async (c) => {
             publicUrl: c.env.S3_PUBLIC_URL,
             clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
           });
-          const refreshed = await instagramChannel.refreshToken(row.id as string);
-          if (refreshed) {
+          const refreshResult = await instagramChannel.refreshToken(row.id as string);
+          if (refreshResult.connection) {
             channels.push({
-              id: refreshed.id,
-              userId: refreshed.userId,
-              channelType: refreshed.channelType,
-              externalAccountId: refreshed.externalAccountId,
-              externalAccountName: refreshed.externalAccountName,
-              tokenExpiresAt: refreshed.tokenExpiresAt,
-              status: refreshed.status,
-              createdAt: refreshed.createdAt,
-              updatedAt: refreshed.updatedAt,
+              id: refreshResult.connection.id,
+              userId: refreshResult.connection.userId,
+              channelType: refreshResult.connection.channelType,
+              externalAccountId: refreshResult.connection.externalAccountId,
+              externalAccountName: refreshResult.connection.externalAccountName,
+              tokenExpiresAt: refreshResult.connection.tokenExpiresAt,
+              status: refreshResult.connection.status,
+              createdAt: refreshResult.connection.createdAt,
+              updatedAt: refreshResult.connection.updatedAt,
             });
             continue;
           }
@@ -236,22 +236,22 @@ app.post('/instagram/refresh/:id', async (c) => {
     clientSecret: c.env.INSTAGRAM_CLIENT_SECRET,
   });
 
-  const refreshed = await instagramChannel.refreshToken(channelId);
-  if (!refreshed) {
-    return c.json({ error: 'Token refresh failed. Please reconnect your Instagram account.' }, 400);
+  const result = await instagramChannel.refreshToken(channelId);
+  if (!result.connection) {
+    return c.json({ error: result.error ?? 'Token refresh failed.' }, 400);
   }
 
   return c.json({
     channel: {
-      id: refreshed.id,
-      userId: refreshed.userId,
-      channelType: refreshed.channelType,
-      externalAccountId: refreshed.externalAccountId,
-      externalAccountName: refreshed.externalAccountName,
-      tokenExpiresAt: refreshed.tokenExpiresAt,
-      status: refreshed.status,
-      createdAt: refreshed.createdAt,
-      updatedAt: refreshed.updatedAt,
+      id: result.connection.id,
+      userId: result.connection.userId,
+      channelType: result.connection.channelType,
+      externalAccountId: result.connection.externalAccountId,
+      externalAccountName: result.connection.externalAccountName,
+      tokenExpiresAt: result.connection.tokenExpiresAt,
+      status: result.connection.status,
+      createdAt: result.connection.createdAt,
+      updatedAt: result.connection.updatedAt,
     },
   });
 });

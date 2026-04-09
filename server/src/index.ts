@@ -10,6 +10,7 @@ import postRoutes from './routes/posts.js';
 import channelRoutes from './routes/channels.js';
 import activityLogRoutes from './routes/activity-log.js';
 import contentIdeasRoutes from './routes/content-ideas.js';
+import quoteRoutes from './routes/quotes.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -33,6 +34,7 @@ app.use('/api/posts', postRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/content-ideas', contentIdeasRoutes);
+app.use('/api/quotes', quoteRoutes);
 
 // Error-handling middleware must be registered AFTER all routes
 app.use(errorHandler);

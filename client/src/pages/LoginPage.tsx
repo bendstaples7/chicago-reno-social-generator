@@ -30,7 +30,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(trimmed);
-      navigate('/dashboard', { replace: true });
+      navigate('/social/dashboard', { replace: true });
     } catch {
       // error is set in AuthContext
     } finally {

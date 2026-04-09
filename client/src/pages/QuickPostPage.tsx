@@ -230,7 +230,7 @@ export default function QuickPostPage() {
         setStep('done');
       } else {
         setError(result.error ?? 'Publishing failed.');
-        navigate('/posts/' + savedPostId);
+        navigate('/social/posts/' + savedPostId);
       }
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to publish.');
@@ -552,7 +552,7 @@ export default function QuickPostPage() {
           <h2 style={{ margin: '0 0 0.5rem' }}>Published!</h2>
           <p style={{ color: '#666', marginBottom: '1rem' }}>Your post was created and published in {elapsed} seconds.</p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
-            <button onClick={() => navigate('/dashboard')} style={btnStyle}>Go to Dashboard</button>
+            <button onClick={() => navigate('/social/dashboard')} style={btnStyle}>Go to Dashboard</button>
             <button onClick={() => window.location.reload()} style={btnOutlineStyle}>Create Another</button>
           </div>
         </div>

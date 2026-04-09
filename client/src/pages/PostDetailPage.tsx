@@ -80,7 +80,7 @@ export default function PostDetailPage() {
 
   return (
     <div>
-      <button onClick={() => navigate('/dashboard')} style={backBtnStyle}>← Back to Dashboard</button>
+      <button onClick={() => navigate('/social/dashboard')} style={backBtnStyle}>← Back to Dashboard</button>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
         <h1 style={{ margin: 0 }}>Post Details</h1>

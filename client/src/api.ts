@@ -2,7 +2,8 @@ import type {
   User, ErrorResponse, MediaItem, GeneratedImage, ImageStyle,
   ContentTypeTemplate, ContentSuggestion, Post, GeneratedContent,
   ChannelConnection, PublishResult, ContentType, UserSettings,
-  ActivityLogEntry, AdvisorMode, ContentIdea,
+  ActivityLogEntry, AdvisorMode, ContentIdea, QuoteDraft,
+  ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
 } from 'shared';
 
 const TOKEN_KEY = 'session_token';
@@ -389,4 +390,98 @@ export async function dismissContentIdea(ideaId: string): Promise<{ success: boo
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
+}
+
+// ── Quote Generation ──
+
+export async function generateQuote(data: {
+  customerText?: string;
+  mediaItemIds?: string[];
+}): Promise<QuoteDraft> {
+  const res = await fetch(API_BASE + '/api/quotes/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function fetchDrafts(): Promise<QuoteDraft[]> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts', {
+    headers: { ...authHeaders() },
+  });
+  const data = await handleResponse<{ drafts: QuoteDraft[] }>(res);
+  return data.drafts;
+}
+
+export async function fetchDraft(id: string): Promise<QuoteDraft> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + id, {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function updateDraft(id: string, updates: QuoteDraftUpdate): Promise<QuoteDraft> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(updates),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + id, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  });
+  await handleResponse(res);
+}
+
+export async function fetchCatalog(): Promise<ProductCatalogEntry[]> {
+  const res = await fetch(API_BASE + '/api/quotes/catalog', {
+    headers: { ...authHeaders() },
+  });
+  const data = await handleResponse<{ catalog: ProductCatalogEntry[] }>(res);
+  return data.catalog;
+}
+
+export async function saveCatalog(
+  entries: Array<{ name: string; unitPrice: number; description: string; category?: string }>,
+): Promise<ProductCatalogEntry[]> {
+  const res = await fetch(API_BASE + '/api/quotes/catalog', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ entries }),
+  });
+  const data = await handleResponse<{ catalog: ProductCatalogEntry[] }>(res);
+  return data.catalog;
+}
+
+export async function fetchTemplates(): Promise<QuoteTemplate[]> {
+  const res = await fetch(API_BASE + '/api/quotes/templates', {
+    headers: { ...authHeaders() },
+  });
+  const data = await handleResponse<{ templates: QuoteTemplate[] }>(res);
+  return data.templates;
+}
+
+export async function saveTemplates(
+  entries: Array<{ name: string; content: string; category?: string }>,
+): Promise<QuoteTemplate[]> {
+  const res = await fetch(API_BASE + '/api/quotes/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ entries }),
+  });
+  const data = await handleResponse<{ templates: QuoteTemplate[] }>(res);
+  return data.templates;
+}
+
+export async function checkJobberStatus(): Promise<boolean> {
+  const res = await fetch(API_BASE + '/api/quotes/jobber/status', {
+    headers: { ...authHeaders() },
+  });
+  const data = await handleResponse<{ available: boolean }>(res);
+  return data.available;
 }

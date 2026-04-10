@@ -117,10 +117,15 @@ export class QuoteDraftService {
     );
 
     const drafts: QuoteDraft[] = [];
-    for (const row of result.rows) {
-      const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
-      const similarQuotes = await this.fetchSimilarQuotes(row.id as string);
-      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems, similarQuotes));
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < result.rows.length; i += BATCH_SIZE) {
+      const batch = result.rows.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(async (row) => {
+        const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
+        const similarQuotes = await this.fetchSimilarQuotes(row.id as string);
+        return this.mapDraftRow(row, lineItems, unresolvedItems, similarQuotes);
+      }));
+      drafts.push(...batchResults);
     }
     return drafts;
   }

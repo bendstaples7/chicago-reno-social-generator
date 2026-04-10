@@ -275,7 +275,7 @@ export class JobberWebhookService {
               return {
                 message: e.node.message!,
                 createdBy,
-                createdAt: e.node.createdAt ?? (row.received_at as string),
+                createdAt: e.node.createdAt ?? new Date(row.received_at as string).toISOString(),
               };
             });
         } catch { /* ignore parse errors */ }

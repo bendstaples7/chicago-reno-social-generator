@@ -13,9 +13,15 @@ const webhookService = new JobberWebhookService(activityLog);
  */
 function rawBodyCapture(req: Request, _res: Response, next: NextFunction): void {
   let data = '';
+  let finished = false;
   req.setEncoding('utf8');
   req.on('data', (chunk: string) => { data += chunk; });
+  req.on('error', (err) => {
+    if (!finished) { finished = true; next(err); }
+  });
   req.on('end', () => {
+    if (finished) return;
+    finished = true;
     (req as Request & { rawBody: string }).rawBody = data;
     try {
       req.body = JSON.parse(data);

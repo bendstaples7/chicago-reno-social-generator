@@ -121,8 +121,13 @@ export class JobberWebSession {
       });
 
       if (!resp.ok) {
-        // Session might be expired, clear and retry once
+        // Session might be expired — if using manual cookies, don't retry (same cookies would be reused)
         if (resp.status === 401 || resp.status === 403) {
+          if (this.manualCookies) {
+            this.session = null;
+            this.manualCookies = null;
+            return null;
+          }
           this.session = null;
           const freshCookies = await this.getSessionCookies();
           const retryResp = await fetch(INTERNAL_GQL_URL, {
@@ -142,7 +147,11 @@ export class JobberWebSession {
         return null;
       }
 
-      const respData = await resp.json();
+      const respData = await resp.json() as any;
+      if (respData?.errors?.length > 0) {
+        console.error('JobberWebSession: GraphQL errors:', respData.errors.map((e: any) => e.message).join(', '));
+        return null;
+      }
       return this.parseFormResponse(respData);
     } catch (err) {
       console.error('JobberWebSession: Failed to fetch request form data:', err);
@@ -155,6 +164,7 @@ export class JobberWebSession {
     if (!sections || !Array.isArray(sections)) return null;
 
     const formSections: FormSection[] = sections
+      // Jobber form convention: sortOrder <= 0 = contact/address headers, 999 = file upload footer
       .filter((s: any) => s.sortOrder > 0 && s.sortOrder < 999)
       .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
       .map((s: any) => ({

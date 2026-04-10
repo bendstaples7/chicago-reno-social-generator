@@ -1,7 +1,7 @@
 import { ActivityLogService } from './activity-log-service.js';
-import { query as dbQuery, getClient } from '../config/database.js';
+import { query as dbQuery } from '../config/database.js';
 import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve } from 'path';
 
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -315,22 +315,15 @@ export class JobberIntegration {
   }
 
   private async cacheTemplatesToDb(templates: QuoteTemplate[]): Promise<void> {
-    const client = await getClient();
     try {
-      await client.query('BEGIN');
-      await client.query('DELETE FROM jobber_templates_cache');
       for (const t of templates) {
-        await client.query(
+        await dbQuery(
           'INSERT INTO jobber_templates_cache (id, name, content) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET name = $2, content = $3, cached_at = NOW()',
           [t.id, t.name, t.content],
         );
       }
-      await client.query('COMMIT');
     } catch {
-      await client.query('ROLLBACK');
       /* ignore cache write failures */
-    } finally {
-      client.release();
     }
   }
 
@@ -541,7 +534,12 @@ export class JobberIntegration {
       // Persist new tokens to .env so they survive server restarts
       try {
         const envPath = resolve(import.meta.dirname, '../../.env');
-        let envContent = readFileSync(envPath, 'utf-8');
+        let envContent = '';
+        try {
+          envContent = readFileSync(envPath, 'utf-8');
+        } catch {
+          envContent = '';
+        }
         const originalContent = envContent;
 
         const accessTokenRegex = /^JOBBER_ACCESS_TOKEN=.*/m;
@@ -572,7 +570,8 @@ export class JobberIntegration {
           console.warn('[JobberIntegration] .env content unchanged after token replacement');
         }
 
-        writeFileSync(envPath, envContent, 'utf-8');
+        writeFileSync(envPath + '.tmp', envContent, 'utf-8');
+        renameSync(envPath + '.tmp', envPath);
         console.log('[JobberIntegration] Tokens persisted to .env');
       } catch (writeErr) {
         console.error('[JobberIntegration] Failed to persist tokens to .env:', writeErr);

@@ -29,6 +29,7 @@ interface RequestDetail {
   requestStatus: string;
   createdAt: string;
   jobberWebUri: string;
+  client?: { id: string; firstName: string | null; lastName: string | null; companyName: string | null };
   notes: {
     edges: Array<{
       node: {
@@ -140,7 +141,7 @@ export class JobberWebhookService {
         .filter((m): m is string => !!m)
         .join('\n\n');
 
-      const clientDetail = (detail as any).client;
+      const clientDetail = detail.client;
       const clientName = detail.companyName
         || detail.contactName
         || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)

@@ -140,7 +140,16 @@ export class QuoteEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      const aiResult = this.parseAIResponse(raw, catalog);
+      if (!raw) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteEngine',
+          operation: 'generateQuote',
+          description: 'AI returned an empty response',
+          recommendedActions: ['Try again'],
+        });
+      }
+      const aiResult = this.parseAIResponse(raw, catalog, templates);
       return this.buildDraft(input, aiResult, catalog, similarQuotes);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
@@ -210,12 +219,12 @@ export class QuoteEngine {
 
   // ── AI response parsing ──────────────────────────────────────────────
 
-  private parseAIResponse(raw: string, catalog: ProductCatalogEntry[]): AIResponse {
+  private parseAIResponse(raw: string, catalog: ProductCatalogEntry[], templates: QuoteTemplate[]): AIResponse {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     try {
       const parsed = JSON.parse(cleaned) as AIResponse;
-      return this.validateAIResponse(parsed, catalog);
+      return this.validateAIResponse(parsed, catalog, templates);
     } catch {
       // Fallback: return everything as unresolved
       return this.fallbackResponse();
@@ -228,7 +237,7 @@ export class QuoteEngine {
    * - Ensure referenced catalog entries actually exist
    * - Use catalog prices for matched items
    */
-  private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[]): AIResponse {
+  private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[], templates: QuoteTemplate[]): AIResponse {
     const catalogIds = new Set(catalog.map((c) => c.id));
 
     const validatedItems: AILineItem[] = (parsed.lineItems ?? []).map((item) => {
@@ -260,9 +269,21 @@ export class QuoteEngine {
       return { ...item, confidenceScore: score };
     });
 
+    let selectedTemplateId = parsed.selectedTemplateId ?? null;
+    let selectedTemplateName = parsed.selectedTemplateName ?? null;
+    if (selectedTemplateId) {
+      const matchedTemplate = templates.find(t => t.id === selectedTemplateId);
+      if (!matchedTemplate) {
+        selectedTemplateId = null;
+        selectedTemplateName = null;
+      } else {
+        selectedTemplateName = matchedTemplate.name;
+      }
+    }
+
     return {
-      selectedTemplateId: parsed.selectedTemplateId ?? null,
-      selectedTemplateName: parsed.selectedTemplateName ?? null,
+      selectedTemplateId,
+      selectedTemplateName,
       lineItems: validatedItems,
     };
   }

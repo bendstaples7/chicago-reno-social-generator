@@ -116,12 +116,11 @@ export class QuoteDraftService {
       [userId],
     );
 
-    const drafts: QuoteDraft[] = [];
-    for (const row of result.rows) {
+    const drafts = await Promise.all(result.rows.map(async (row) => {
       const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
       const similarQuotes = await this.fetchSimilarQuotes(row.id as string);
-      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems, similarQuotes));
-    }
+      return this.mapDraftRow(row, lineItems, unresolvedItems, similarQuotes);
+    }));
     return drafts;
   }
 

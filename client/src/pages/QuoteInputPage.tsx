@@ -1,8 +1,16 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { MediaItem, ErrorResponse, JobberCustomerRequest } from 'shared';
+import type { MediaItem, JobberCustomerRequest } from 'shared';
 import { uploadMedia, generateQuote, checkJobberStatus, fetchJobberRequestFormData } from '../api';
 import RequestSelector from './RequestSelector';
+
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string') {
+    return (err as any).message;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
 
 const ACCEPTED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -102,7 +110,7 @@ export default function QuoteInputPage() {
       }
       setImages((prev) => [...prev, ...uploaded]);
     } catch (err) {
-      setFileError((err as ErrorResponse).message ?? 'Upload failed.');
+      setFileError(extractErrorMessage(err, 'Upload failed.'));
     } finally {
       setUploading(false);
     }
@@ -141,7 +149,7 @@ export default function QuoteInputPage() {
       });
       navigate('/quotes/drafts/' + draft.id);
     } catch (err) {
-      setFileError((err as ErrorResponse).message ?? 'Quote generation failed.');
+      setFileError(extractErrorMessage(err, 'Quote generation failed.'));
     } finally {
       setGenerating(false);
     }

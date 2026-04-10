@@ -67,10 +67,12 @@ export class JobberWebSession {
   private password: string;
   private authenticating: Promise<string> | null = null;
   private manualCookies: string | null = null;
+  private auth0ClientId: string;
 
   constructor() {
     this.email = process.env.JOBBER_WEB_EMAIL || '';
     this.password = process.env.JOBBER_WEB_PASSWORD || '';
+    this.auth0ClientId = process.env.JOBBER_AUTH0_CLIENT_ID || 'q9lB1bI9LPm31Q29WnuLQi3y75q7kcIQ';
   }
 
   isConfigured(): boolean {
@@ -231,7 +233,7 @@ export class JobberWebSession {
       // Don't pass redirect_uri — let Auth0 use the default configured for the app
       const authorizeUrl = 'https://login.auth.getjobber.com/authorize?' + new URLSearchParams({
         response_type: 'code',
-        client_id: 'q9lB1bI9LPm31Q29WnuLQi3y75q7kcIQ',
+        client_id: this.auth0ClientId,
         scope: 'openid profile email',
         state: crypto.randomUUID(),
       }).toString();

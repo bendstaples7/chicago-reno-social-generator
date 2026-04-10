@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve } from 'path';
 
 const router = Router();
@@ -75,7 +75,12 @@ router.get('/callback', async (req, res) => {
 
     // Persist tokens to .env (append if keys don't exist)
     const envPath = resolve(import.meta.dirname, '../../.env');
-    let envContent = readFileSync(envPath, 'utf-8');
+    let envContent = '';
+    try {
+      envContent = readFileSync(envPath, 'utf-8');
+    } catch {
+      envContent = '';
+    }
 
     if (/^JOBBER_ACCESS_TOKEN=.*/m.test(envContent)) {
       envContent = envContent.replace(/^JOBBER_ACCESS_TOKEN=.*/m, `JOBBER_ACCESS_TOKEN=${data.access_token}`);
@@ -89,7 +94,8 @@ router.get('/callback', async (req, res) => {
       envContent += `\nJOBBER_REFRESH_TOKEN=${data.refresh_token}`;
     }
 
-    writeFileSync(envPath, envContent, 'utf-8');
+    writeFileSync(envPath + '.tmp', envContent, 'utf-8');
+    renameSync(envPath + '.tmp', envPath);
 
     res.send(
       '<h2>Jobber re-authenticated successfully!</h2>' +

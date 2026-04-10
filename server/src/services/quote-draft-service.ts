@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { query, getClient } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
 import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem, SimilarQuote, RevisionHistoryEntry } from 'shared';
@@ -161,10 +162,59 @@ export class QuoteDraftService {
 
       // Replace line items if provided
       if (updates.lineItems !== undefined || updates.unresolvedItems !== undefined) {
+        // Load existing items for whichever list was NOT provided,
+        // so the DELETE doesn't wipe the other list
+        let existingLineItems: QuoteLineItem[] = [];
+        let existingUnresolvedItems: QuoteLineItem[] = [];
+        if (updates.lineItems === undefined || updates.unresolvedItems === undefined) {
+          const existingResult = await client.query(
+            `SELECT id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order
+             FROM quote_line_items
+             WHERE quote_draft_id = $1
+             ORDER BY display_order ASC`,
+            [draftId],
+          );
+          for (const row of existingResult.rows) {
+            const item = this.mapLineItemRow(row);
+            if (item.resolved) {
+              existingLineItems.push(item);
+            } else {
+              existingUnresolvedItems.push(item);
+            }
+          }
+        }
+
         await client.query('DELETE FROM quote_line_items WHERE quote_draft_id = $1', [draftId]);
 
-        const resolvedItems = (updates.lineItems ?? []) as QuoteLineItem[];
-        const unresolvedItemsList = (updates.unresolvedItems ?? []) as QuoteLineItem[];
+        const resolvedItems = (updates.lineItems !== undefined
+          ? updates.lineItems
+          : existingLineItems
+        ).map((item) => ({
+          id: item.id ?? crypto.randomUUID(),
+          productCatalogEntryId: item.productCatalogEntryId ?? null,
+          productName: item.productName ?? 'Unknown Product',
+          quantity: item.quantity ?? 1,
+          unitPrice: item.unitPrice ?? 0,
+          confidenceScore: item.confidenceScore ?? 0,
+          originalText: item.originalText ?? '',
+          resolved: true,
+          unmatchedReason: item.unmatchedReason ?? undefined,
+        })) as QuoteLineItem[];
+
+        const unresolvedItemsList = (updates.unresolvedItems !== undefined
+          ? updates.unresolvedItems
+          : existingUnresolvedItems
+        ).map((item) => ({
+          id: item.id ?? crypto.randomUUID(),
+          productCatalogEntryId: item.productCatalogEntryId ?? null,
+          productName: item.productName ?? 'Unknown Product',
+          quantity: item.quantity ?? 1,
+          unitPrice: item.unitPrice ?? 0,
+          confidenceScore: item.confidenceScore ?? 0,
+          originalText: item.originalText ?? '',
+          resolved: false,
+          unmatchedReason: item.unmatchedReason ?? undefined,
+        })) as QuoteLineItem[];
 
         const allItems = [
           ...resolvedItems.map((item, i) => ({ ...item, resolved: true, displayOrder: i })),

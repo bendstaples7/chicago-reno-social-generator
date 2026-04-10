@@ -78,6 +78,16 @@ export class RevisionEngine {
       });
     }
 
+    if (!apiUrl) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'RevisionEngine',
+        operation: 'revise',
+        description: 'AI text API URL is not configured.',
+        recommendedActions: ['Set AI_TEXT_API_URL in your .env file'],
+      });
+    }
+
     const userPrompt = this.buildPrompt(input);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);

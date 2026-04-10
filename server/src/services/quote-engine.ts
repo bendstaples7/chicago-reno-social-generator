@@ -91,6 +91,16 @@ export class QuoteEngine {
       });
     }
 
+    if (!apiUrl) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteEngine',
+        operation: 'generateQuote',
+        description: 'AI text API URL is not configured.',
+        recommendedActions: ['Set AI_TEXT_API_URL in your .env file'],
+      });
+    }
+
     const similarQuotes = input.similarQuotes ?? [];
     const userPrompt = this.buildPrompt(input, catalog, templates, similarQuotes);
     const controller = new AbortController();
@@ -282,7 +292,7 @@ export class QuoteEngine {
         id: crypto.randomUUID(),
         productCatalogEntryId: item.productCatalogEntryId,
         productName: item.productName,
-        quantity: Math.max(0, item.quantity ?? 1),
+        quantity: Math.max(1, item.quantity ?? 1),
         unitPrice: Math.max(0, item.unitPrice ?? 0),
         confidenceScore: item.confidenceScore,
         originalText: item.originalText ?? '',

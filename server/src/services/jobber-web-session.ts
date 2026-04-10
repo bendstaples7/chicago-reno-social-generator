@@ -190,6 +190,16 @@ export class JobberWebSession {
       return this.session.cookies;
     }
 
+    // If manual cookies are set, restore the session from them
+    // instead of falling through to the Auth0 authenticate flow
+    if (this.manualCookies) {
+      this.session = {
+        cookies: this.manualCookies,
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      };
+      return this.session.cookies;
+    }
+
     // Prevent concurrent auth attempts
     if (this.authenticating) {
       return this.authenticating;
@@ -321,7 +331,13 @@ export class JobberWebSession {
       body: JSON.stringify({ query: '{ __typename }' }),
     });
     const testData = await testResp.json() as any;
-    console.log('JobberWebSession: Session test:', testData?.data?.__typename === 'Query' ? 'SUCCESS' : 'FAILED');
+    const testPassed = testData?.data?.__typename === 'Query';
+    console.log('JobberWebSession: Session test:', testPassed ? 'SUCCESS' : 'FAILED');
+
+    if (!testPassed) {
+      console.error('JobberWebSession: Session test failed — not caching invalid cookies');
+      return '';
+    }
 
     this.session = {
       cookies,

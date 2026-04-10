@@ -254,9 +254,9 @@ export class QuoteSyncService {
 
   /**
    * Execute a single GraphQL request to the Jobber API.
-   * Handles 429 rate limit errors by waiting and retrying.
+   * Handles 429 rate limit errors by waiting and retrying up to `retries` times.
    */
-  private async executeGraphql(after: string | null): Promise<GraphQLResponse> {
+  private async executeGraphql(after: string | null, retries: number = 5): Promise<GraphQLResponse> {
     const accessToken = process.env.JOBBER_ACCESS_TOKEN || '';
     if (!accessToken) {
       throw new Error('JOBBER_ACCESS_TOKEN is not configured');
@@ -283,11 +283,13 @@ export class QuoteSyncService {
 
       // Handle rate limiting
       if (response.status === 429) {
+        if (retries <= 0) {
+          throw new Error('Jobber API rate limit: max retries exhausted (429)');
+        }
         const retryAfter = response.headers.get('retry-after');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : PAUSE_DURATION_MS;
         await this.sleepFn(waitMs);
-        // Retry the request
-        return this.executeGraphql(after);
+        return this.executeGraphql(after, retries - 1);
       }
 
       if (!response.ok) {
@@ -303,12 +305,15 @@ export class QuoteSyncService {
           (e) => e.extensions?.code === 'THROTTLED' || e.message.toLowerCase().includes('throttl'),
         );
         if (throttleError) {
+          if (retries <= 0) {
+            throw new Error('Jobber API throttle: max retries exhausted (THROTTLED)');
+          }
           const retryMs =
             typeof throttleError.extensions?.retryAfter === 'number'
               ? throttleError.extensions.retryAfter * 1000
               : PAUSE_DURATION_MS;
           await this.sleepFn(retryMs);
-          return this.executeGraphql(after);
+          return this.executeGraphql(after, retries - 1);
         }
         throw new Error(`Jobber GraphQL error: ${json.errors[0].message}`);
       }

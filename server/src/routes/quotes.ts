@@ -328,14 +328,24 @@ router.post('/catalog', async (req, res, next) => {
     }
 
     // Clear existing manual entries for this user and insert new ones
-    await query('DELETE FROM manual_catalog_entries WHERE user_id = $1', [userId]);
+    const client = await (await import('../config/database.js')).getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM manual_catalog_entries WHERE user_id = $1', [userId]);
 
-    for (const entry of entries) {
-      await query(
-        `INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
-        [userId, entry.name, entry.unitPrice, entry.description ?? null, entry.category ?? null],
-      );
+      for (const entry of entries) {
+        await client.query(
+          `INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
+          [userId, entry.name, entry.unitPrice, entry.description ?? null, entry.category ?? null],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
 
     const catalog = await fetchManualCatalog(userId);
@@ -556,7 +566,15 @@ router.post('/jobber/backfill', async (_req, res, next) => {
           await query(
             `INSERT INTO jobber_webhook_requests
               (jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+             ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+               title = COALESCE(EXCLUDED.title, jobber_webhook_requests.title),
+               client_name = COALESCE(EXCLUDED.client_name, jobber_webhook_requests.client_name),
+               description = COALESCE(EXCLUDED.description, jobber_webhook_requests.description),
+               request_body = COALESCE(EXCLUDED.request_body, jobber_webhook_requests.request_body),
+               image_urls = COALESCE(EXCLUDED.image_urls, jobber_webhook_requests.image_urls),
+               raw_payload = EXCLUDED.raw_payload,
+               processed_at = COALESCE(EXCLUDED.processed_at, jobber_webhook_requests.processed_at)`,
             [
               node.id,
               'BACKFILL',

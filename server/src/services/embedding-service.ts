@@ -80,6 +80,16 @@ export class EmbeddingService {
       });
     }
 
+    if (!apiUrl) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'EmbeddingService',
+        operation: 'embed',
+        description: 'AI text API URL is not configured.',
+        recommendedActions: ['Set AI_TEXT_API_URL in your .env file'],
+      });
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 

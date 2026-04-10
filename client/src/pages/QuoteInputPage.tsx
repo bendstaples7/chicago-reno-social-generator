@@ -32,17 +32,18 @@ export default function QuoteInputPage() {
       .catch(() => setJobberAvailable(false));
   }, []);
 
+  const [formData, setFormData] = useState<import('shared').JobberRequestFormData | null>(null);
+
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     setJobberRequestId(request.id);
 
     // Fetch form data from the internal API
     try {
-      const { formData } = await fetchJobberRequestFormData(request.id);
-      if (formData) {
-        // Attach form data to the request so RequestSelector can display it
-        request.formData = formData;
-        if (formData.text) {
-          setCustomerText(formData.text);
+      const { formData: fetchedFormData } = await fetchJobberRequestFormData(request.id);
+      if (fetchedFormData) {
+        setFormData(fetchedFormData);
+        if (fetchedFormData.text) {
+          setCustomerText(fetchedFormData.text);
           return;
         }
       }

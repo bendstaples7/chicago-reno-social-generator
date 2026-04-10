@@ -58,6 +58,12 @@ export default function ManualFallbackPage() {
   }, [catalogEntries, catalogSearch]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / ITEMS_PER_PAGE));
+
+  // Clamp page when total pages decrease (e.g., after deleting items)
+  useEffect(() => {
+    if (catalogPage > totalPages) setCatalogPage(totalPages);
+  }, [catalogPage, totalPages]);
+
   const paginatedCatalog = filteredCatalog.slice(
     (catalogPage - 1) * ITEMS_PER_PAGE,
     catalogPage * ITEMS_PER_PAGE,

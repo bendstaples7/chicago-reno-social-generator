@@ -217,13 +217,13 @@ export class JobberWebhookService {
         (jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
-         title = EXCLUDED.title,
-         client_name = EXCLUDED.client_name,
-         description = EXCLUDED.description,
-         request_body = EXCLUDED.request_body,
-         image_urls = EXCLUDED.image_urls,
+         title = COALESCE(EXCLUDED.title, jobber_webhook_requests.title),
+         client_name = COALESCE(EXCLUDED.client_name, jobber_webhook_requests.client_name),
+         description = COALESCE(EXCLUDED.description, jobber_webhook_requests.description),
+         request_body = COALESCE(EXCLUDED.request_body, jobber_webhook_requests.request_body),
+         image_urls = COALESCE(EXCLUDED.image_urls, jobber_webhook_requests.image_urls),
          raw_payload = EXCLUDED.raw_payload,
-         processed_at = EXCLUDED.processed_at`,
+         processed_at = COALESCE(EXCLUDED.processed_at, jobber_webhook_requests.processed_at)`,
       [
         jobberRequestId,
         topic,

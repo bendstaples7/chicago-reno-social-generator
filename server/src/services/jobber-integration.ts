@@ -1,5 +1,5 @@
 import { ActivityLogService } from './activity-log-service.js';
-import { query as dbQuery } from '../config/database.js';
+import { query as dbQuery, getClient } from '../config/database.js';
 import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
@@ -7,6 +7,7 @@ import { resolve } from 'path';
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const API_TIMEOUT_MS = 10_000;
 const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGES = 100;
 
 // ── Internal GraphQL response types ──────────────────────────────────
 
@@ -314,15 +315,23 @@ export class JobberIntegration {
   }
 
   private async cacheTemplatesToDb(templates: QuoteTemplate[]): Promise<void> {
+    const client = await getClient();
     try {
-      await dbQuery('DELETE FROM jobber_templates_cache');
+      await client.query('BEGIN');
+      await client.query('DELETE FROM jobber_templates_cache');
       for (const t of templates) {
-        await dbQuery(
+        await client.query(
           'INSERT INTO jobber_templates_cache (id, name, content) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET name = $2, content = $3, cached_at = NOW()',
           [t.id, t.name, t.content],
         );
       }
-    } catch { /* ignore cache write failures */ }
+      await client.query('COMMIT');
+    } catch {
+      await client.query('ROLLBACK');
+      /* ignore cache write failures */
+    } finally {
+      client.release();
+    }
   }
 
   private async loadCachedTemplates(): Promise<QuoteTemplate[]> {
@@ -533,16 +542,36 @@ export class JobberIntegration {
       try {
         const envPath = resolve(import.meta.dirname, '../../.env');
         let envContent = readFileSync(envPath, 'utf-8');
-        envContent = envContent.replace(
-          /^JOBBER_ACCESS_TOKEN=.*/m,
-          `JOBBER_ACCESS_TOKEN=${data.access_token}`,
-        );
-        if (data.refresh_token) {
+        const originalContent = envContent;
+
+        const accessTokenRegex = /^JOBBER_ACCESS_TOKEN=.*/m;
+        if (accessTokenRegex.test(envContent)) {
           envContent = envContent.replace(
-            /^JOBBER_REFRESH_TOKEN=.*/m,
-            `JOBBER_REFRESH_TOKEN=${data.refresh_token}`,
+            accessTokenRegex,
+            `JOBBER_ACCESS_TOKEN=${data.access_token}`,
           );
+        } else {
+          console.warn('[JobberIntegration] JOBBER_ACCESS_TOKEN not found in .env — appending');
+          envContent += `\nJOBBER_ACCESS_TOKEN=${data.access_token}\n`;
         }
+
+        if (data.refresh_token) {
+          const refreshTokenRegex = /^JOBBER_REFRESH_TOKEN=.*/m;
+          if (refreshTokenRegex.test(envContent)) {
+            envContent = envContent.replace(
+              refreshTokenRegex,
+              `JOBBER_REFRESH_TOKEN=${data.refresh_token}`,
+            );
+          } else {
+            console.warn('[JobberIntegration] JOBBER_REFRESH_TOKEN not found in .env — appending');
+            envContent += `\nJOBBER_REFRESH_TOKEN=${data.refresh_token}\n`;
+          }
+        }
+
+        if (envContent === originalContent) {
+          console.warn('[JobberIntegration] .env content unchanged after token replacement');
+        }
+
         writeFileSync(envPath, envContent, 'utf-8');
         console.log('[JobberIntegration] Tokens persisted to .env');
       } catch (writeErr) {
@@ -568,10 +597,17 @@ export class JobberIntegration {
   ): Promise<TNode[]> {
     const allNodes: TNode[] = [];
     let after: string | null = null;
+    let pageCount = 0;
 
     do {
+      if (pageCount >= MAX_PAGES) {
+        console.warn(`[JobberIntegration] fetchAllPages: hit MAX_PAGES limit (${MAX_PAGES}), stopping pagination with ${allNodes.length} nodes collected`);
+        break;
+      }
+
       const vars = { ...variables, first: pageSize, after };
       const data = await this.graphqlRequest<Record<string, unknown>>(query, vars);
+      pageCount++;
 
       // Navigate to the connection object using the path
       let connection: unknown = data;

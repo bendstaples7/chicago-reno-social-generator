@@ -39,13 +39,16 @@ router.post('/jobber', rawBodyCapture, (req: Request, res: Response) => {
   const rawBody = (req as Request & { rawBody: string }).rawBody || '';
   const signature = req.headers['x-jobber-hmac-sha256'] as string | undefined;
 
-  // Verify HMAC signature if secret is configured
-  if (process.env.JOBBER_CLIENT_SECRET) {
-    if (!signature || !webhookService.verifySignature(rawBody, signature)) {
-      console.warn('Jobber webhook signature verification failed');
-      res.status(401).json({ error: 'Invalid signature' });
-      return;
-    }
+  // Verify HMAC signature — fail closed if secret is not configured
+  if (!process.env.JOBBER_CLIENT_SECRET) {
+    console.warn('Jobber webhook rejected: JOBBER_CLIENT_SECRET not configured');
+    res.status(503).json({ error: 'Webhook secret not configured' });
+    return;
+  }
+  if (!signature || !webhookService.verifySignature(rawBody, signature)) {
+    console.warn('Jobber webhook signature verification failed');
+    res.status(401).json({ error: 'Invalid signature' });
+    return;
   }
 
   const payload = req.body as JobberWebhookPayload;

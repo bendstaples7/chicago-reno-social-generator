@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { MediaItem, ErrorResponse } from 'shared';
-import { uploadMedia, generateQuote } from '../api';
+import type { MediaItem, ErrorResponse, JobberCustomerRequest } from 'shared';
+import { uploadMedia, generateQuote, checkJobberStatus, fetchJobberRequestFormData } from '../api';
+import RequestSelector from './RequestSelector';
 
 const ACCEPTED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -22,10 +23,53 @@ export default function QuoteInputPage() {
   const [generating, setGenerating] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [jobberAvailable, setJobberAvailable] = useState(false);
+  const [jobberRequestId, setJobberRequestId] = useState<string | null>(null);
+
+  useEffect(() => {
+    checkJobberStatus()
+      .then((available) => setJobberAvailable(available))
+      .catch(() => setJobberAvailable(false));
+  }, []);
+
+  const handleRequestSelect = async (request: JobberCustomerRequest) => {
+    setJobberRequestId(request.id);
+
+    // Fetch form data from the internal API
+    try {
+      const { formData } = await fetchJobberRequestFormData(request.id);
+      if (formData) {
+        // Attach form data to the request so RequestSelector can display it
+        request.formData = formData;
+        if (formData.text) {
+          setCustomerText(formData.text);
+          return;
+        }
+      }
+    } catch {
+      // Fall through to fallback
+    }
+
+    // Fallback to title + notes
+    const parts: string[] = [];
+    if (request.title) parts.push(request.title);
+    for (const note of request.structuredNotes) {
+      const trimmed = note.message.trim();
+      if (!trimmed) continue;
+      const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
+      parts.push(`${label} ${trimmed}`);
+    }
+    setCustomerText(parts.join('\n\n') || request.title || '');
+  };
+
+  const handleRequestClear = () => {
+    setJobberRequestId(null);
+  };
 
   const hasText = customerText.trim().length > 0;
   const hasImages = images.length > 0;
-  const canGenerate = (hasText || hasImages) && !generating;
+  const hasJobberRequest = jobberRequestId !== null;
+  const canGenerate = (hasText || hasImages || hasJobberRequest) && !generating;
 
   const validateAndUploadFiles = useCallback(async (files: FileList | File[]) => {
     setFileError(null);
@@ -92,6 +136,7 @@ export default function QuoteInputPage() {
       const draft = await generateQuote({
         customerText: hasText ? customerText.trim() : undefined,
         mediaItemIds: images.length > 0 ? images.map((img) => img.id) : undefined,
+        jobberRequestId: jobberRequestId ?? undefined,
       });
       navigate('/quotes/drafts/' + draft.id);
     } catch (err) {
@@ -105,13 +150,24 @@ export default function QuoteInputPage() {
     <div style={containerStyle}>
       <h1 style={titleStyle}>New Quote</h1>
 
-      {/* Customer request text area */}
+      {/* Jobber Request Selector */}
+      {jobberAvailable && (
+        <RequestSelector
+          onSelect={handleRequestSelect}
+          onClear={handleRequestClear}
+          selectedRequestId={jobberRequestId}
+        />
+      )}
+
+      {/* Customer request text area — editable when no Jobber request, or shows extracted text when one is selected */}
       <label style={labelStyle}>
         Customer Request
         <textarea
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
-          placeholder="Paste the customer's email, text message, or describe the work requested…"
+          placeholder={jobberRequestId
+            ? 'Jobber form details aren\'t available via the API — paste or type the customer\'s description here to improve quote accuracy…'
+            : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}
           disabled={generating}
@@ -132,8 +188,8 @@ export default function QuoteInputPage() {
           onDrop={handleDrop}
           style={{
             ...dropZoneStyle,
-            borderColor: dragOver ? '#1976d2' : '#bbb',
-            background: dragOver ? '#e3f2fd' : '#fafafa',
+            borderColor: dragOver ? '#00a89d' : '#bbb',
+            background: dragOver ? '#e0f7f5' : '#fafafa',
           }}
         >
           <p style={{ margin: 0, color: '#666' }}>
@@ -158,7 +214,7 @@ export default function QuoteInputPage() {
           <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: '#999' }}>
             {ACCEPTED_FORMATS_LABEL} — up to {MAX_IMAGES} images
           </p>
-          {uploading && <p style={{ color: '#1976d2', margin: '0.5rem 0 0', fontSize: '0.85rem' }}>Uploading…</p>}
+          {uploading && <p style={{ color: '#00a89d', margin: '0.5rem 0 0', fontSize: '0.85rem' }}>Uploading…</p>}
         </div>
 
         {/* Inline error */}
@@ -289,8 +345,8 @@ const thumbRemoveStyle: React.CSSProperties = {
 
 const btnStyle: React.CSSProperties = {
   padding: '0.6rem 1.25rem',
-  border: '1px solid #1976d2',
-  background: '#1976d2',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',
@@ -300,9 +356,9 @@ const btnStyle: React.CSSProperties = {
 
 const btnOutlineStyle: React.CSSProperties = {
   padding: '0.4rem 0.75rem',
-  border: '1px solid #1976d2',
+  border: '1px solid #00a89d',
   background: 'transparent',
-  color: '#1976d2',
+  color: '#00a89d',
   borderRadius: 4,
   cursor: 'pointer',
   fontSize: '0.85rem',

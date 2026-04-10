@@ -15,3 +15,5 @@ export { JobberIntegration } from './jobber-integration.js';
 export { QuoteEngine } from './quote-engine.js';
 export type { QuoteEngineInput, QuoteEngineOutput } from './quote-engine.js';
 export { QuoteDraftService } from './quote-draft-service.js';
+export { JobberWebhookService } from './jobber-webhook-service.js';
+export type { JobberWebhookPayload } from './jobber-webhook-service.js';

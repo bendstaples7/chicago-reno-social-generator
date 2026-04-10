@@ -6,9 +6,9 @@ import { fetchPost, approvePost, publishPost } from '../api';
 const STATUS_CONFIG: Record<PostStatus, { label: string; bg: string; color: string; icon: string }> = {
   draft: { label: 'Draft', bg: '#e0e0e0', color: '#424242', icon: '📝' },
   awaiting_approval: { label: 'Awaiting Approval', bg: '#fff3e0', color: '#e65100', icon: '⏳' },
-  approved: { label: 'Approved', bg: '#e8f5e9', color: '#2e7d32', icon: '✅' },
-  publishing: { label: 'Publishing…', bg: '#e3f2fd', color: '#1565c0', icon: '🔄' },
-  published: { label: 'Published', bg: '#e8f5e9', color: '#1b5e20', icon: '✅' },
+  approved: { label: 'Approved', bg: '#e0f7f5', color: '#00a89d', icon: '✅' },
+  publishing: { label: 'Publishing…', bg: '#e0f7f5', color: '#00a89d', icon: '🔄' },
+  published: { label: 'Published', bg: '#e0f7f5', color: '#00897b', icon: '✅' },
   failed: { label: 'Failed', bg: '#fdecea', color: '#611a15', icon: '❌' },
 };
 
@@ -174,7 +174,7 @@ export default function PostDetailPage() {
         )}
 
         {post.status === 'published' && (
-          <span style={{ color: '#2e7d32', fontWeight: 500 }}>
+          <span style={{ color: '#00a89d', fontWeight: 500 }}>
             ✅ This post has been published.
           </span>
         )}
@@ -188,7 +188,7 @@ export default function PostDetailPage() {
 const backBtnStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',
-  color: '#1976d2',
+  color: '#00a89d',
   cursor: 'pointer',
   fontSize: '0.9rem',
   padding: 0,
@@ -218,8 +218,8 @@ const alertStyle: React.CSSProperties = {
 };
 
 const successStyle: React.CSSProperties = {
-  background: '#e8f5e9',
-  color: '#1b5e20',
+  background: '#e0f7f5',
+  color: '#00897b',
   padding: '0.75rem 1rem',
   borderRadius: 4,
   marginBottom: '1rem',
@@ -245,8 +245,8 @@ const fieldLabelStyle: React.CSSProperties = {
 const hashtagChipStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  background: '#e3f2fd',
-  color: '#1565c0',
+  background: '#e0f7f5',
+  color: '#00a89d',
   padding: '0.2rem 0.5rem',
   borderRadius: 12,
   fontSize: '0.8rem',
@@ -254,8 +254,8 @@ const hashtagChipStyle: React.CSSProperties = {
 
 const primaryBtnStyle: React.CSSProperties = {
   padding: '0.6rem 1.25rem',
-  border: '1px solid #1976d2',
-  background: '#1976d2',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',
@@ -265,8 +265,8 @@ const primaryBtnStyle: React.CSSProperties = {
 
 const publishBtnStyle: React.CSSProperties = {
   padding: '0.6rem 1.25rem',
-  border: '1px solid #2e7d32',
-  background: '#2e7d32',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',

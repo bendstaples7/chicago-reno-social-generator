@@ -282,6 +282,7 @@ export class QuoteEngine {
       lineItems,
       unresolvedItems,
       catalogSource: input.catalogSource,
+      jobberRequestId: null,
       status: 'draft',
       createdAt: now,
       updatedAt: now,

@@ -186,7 +186,7 @@ export default function MediaLibraryPage() {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDrop}
-              style={{ ...dropZoneStyle, borderColor: dragOver ? '#1976d2' : '#bbb', background: dragOver ? '#e3f2fd' : '#fafafa' }}
+              style={{ ...dropZoneStyle, borderColor: dragOver ? '#00a89d' : '#bbb', background: dragOver ? '#e0f7f5' : '#fafafa' }}
             >
               <p style={{ margin: 0, color: '#666' }}>Drag and drop a file here, or</p>
               <button onClick={() => fileInputRef.current?.click()} style={{ ...btnStyle, marginTop: '0.75rem' }} disabled={uploading}>
@@ -201,7 +201,7 @@ export default function MediaLibraryPage() {
               />
               <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: '#999' }}>JPEG, PNG, or MP4 — max 50 MB</p>
             </div>
-            {uploading && <p style={{ color: '#1976d2' }}>Uploading…</p>}
+            {uploading && <p style={{ color: '#00a89d' }}>Uploading…</p>}
             {uploadError && <div role="alert" style={{ ...alertStyle, marginTop: '0.75rem' }}>{uploadError}</div>}
             <div style={{ textAlign: 'right', marginTop: '1rem' }}>
               <button onClick={() => setShowUpload(false)} disabled={uploading} style={btnSmall}>Cancel</button>
@@ -236,7 +236,7 @@ export default function MediaLibraryPage() {
             <button onClick={handleGenerate} disabled={generating || !genDescription.trim()} style={{ ...btnStyle, marginTop: '0.5rem' }}>
               {generating ? 'Generating…' : 'Generate'}
             </button>
-            {generating && <p style={{ color: '#1976d2', marginTop: '0.5rem' }}>Generating images — this may take up to 30 seconds…</p>}
+            {generating && <p style={{ color: '#00a89d', marginTop: '0.5rem' }}>Generating images — this may take up to 30 seconds…</p>}
             {genError && <div role="alert" style={{ ...alertStyle, marginTop: '0.75rem' }}>{genError}</div>}
 
             {generatedImages.length > 0 && (
@@ -291,8 +291,8 @@ export default function MediaLibraryPage() {
 
 const btnStyle: React.CSSProperties = {
   padding: '0.5rem 1rem',
-  border: '1px solid #1976d2',
-  background: '#1976d2',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',

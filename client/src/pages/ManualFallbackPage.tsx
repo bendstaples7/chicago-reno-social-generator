@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ProductCatalogEntry, QuoteTemplate, ErrorResponse } from 'shared';
 import {
   fetchCatalog,
@@ -40,6 +40,31 @@ export default function ManualFallbackPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [jobberAvailable, setJobberAvailable] = useState(false);
+
+  // Pagination & search state
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogPage, setCatalogPage] = useState(1);
+  const ITEMS_PER_PAGE = 20;
+
+  const filteredCatalog = useMemo(() => {
+    if (!catalogSearch.trim()) return catalogEntries;
+    const q = catalogSearch.toLowerCase();
+    return catalogEntries.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q) ||
+        (e.category && e.category.toLowerCase().includes(q)),
+    );
+  }, [catalogEntries, catalogSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / ITEMS_PER_PAGE));
+  const paginatedCatalog = filteredCatalog.slice(
+    (catalogPage - 1) * ITEMS_PER_PAGE,
+    catalogPage * ITEMS_PER_PAGE,
+  );
+
+  // Reset to page 1 when search changes
+  useEffect(() => { setCatalogPage(1); }, [catalogSearch]);
 
   const loadData = useCallback(async () => {
     try {
@@ -231,6 +256,16 @@ export default function ManualFallbackPage() {
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Product Catalog</h2>
 
+        {/* Search */}
+        <input
+          type="text"
+          placeholder="Search products…"
+          value={catalogSearch}
+          onChange={(e) => setCatalogSearch(e.target.value)}
+          style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', boxSizing: 'border-box' }}
+          aria-label="Search products"
+        />
+
         {/* Add product form */}
         <div style={formRowStyle}>
           <input
@@ -268,11 +303,16 @@ export default function ManualFallbackPage() {
         </div>
 
         {/* Product list */}
-        {catalogEntries.length === 0 ? (
-          <p style={{ color: '#888', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>No products in the manual catalog.</p>
+        {filteredCatalog.length === 0 ? (
+          <p style={{ color: '#888', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
+            {catalogSearch.trim() ? 'No products match your search.' : 'No products in the manual catalog.'}
+          </p>
         ) : (
           <div style={{ marginTop: '0.75rem' }}>
-            {catalogEntries.map((entry) => (
+            <p style={{ color: '#888', fontSize: '0.8rem', margin: '0 0 0.5rem' }}>
+              Showing {(catalogPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(catalogPage * ITEMS_PER_PAGE, filteredCatalog.length)} of {filteredCatalog.length} products
+            </p>
+            {paginatedCatalog.map((entry) => (
               <div key={entry.id} style={itemRowStyle}>
                 {editingProductId === entry.id ? (
                   <>
@@ -317,6 +357,33 @@ export default function ManualFallbackPage() {
                 )}
               </div>
             ))}
+
+            {/* Pagination controls */}
+            {totalPages > 1 && (
+              <div style={paginationStyle} role="navigation" aria-label="Product catalog pagination">
+                <button
+                  onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
+                  disabled={catalogPage === 1}
+                  style={pageBtnStyle}
+                  type="button"
+                  aria-label="Previous page"
+                >
+                  ← Prev
+                </button>
+                <span style={{ fontSize: '0.85rem', color: '#555' }}>
+                  Page {catalogPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCatalogPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={catalogPage === totalPages}
+                  style={pageBtnStyle}
+                  type="button"
+                  aria-label="Next page"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -325,7 +392,7 @@ export default function ManualFallbackPage() {
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Quote Templates</h2>
 
-        {/* Add template form */}
+        {/* Templates are managed manually — Jobber doesn't expose templates via API */}
         <div style={{ marginBottom: '0.75rem' }}>
           <input
             type="text"
@@ -350,9 +417,8 @@ export default function ManualFallbackPage() {
           </button>
         </div>
 
-        {/* Template list */}
         {templateEntries.length === 0 ? (
-          <p style={{ color: '#888', fontSize: '0.85rem', margin: 0 }}>No templates in the manual library.</p>
+          <p style={{ color: '#888', fontSize: '0.85rem', margin: 0 }}>No templates yet. Add templates above to use as starting points for quotes.</p>
         ) : (
           <div>
             {templateEntries.map((tmpl) => (
@@ -392,7 +458,7 @@ const spinnerStyle: React.CSSProperties = {
   width: 28,
   height: 28,
   border: '3px solid #e0e0e0',
-  borderTopColor: '#1976d2',
+  borderTopColor: '#00a89d',
   borderRadius: '50%',
   animation: 'spin 0.6s linear infinite',
 };
@@ -406,16 +472,16 @@ const alertStyle: React.CSSProperties = {
 };
 
 const successStyle: React.CSSProperties = {
-  background: '#e8f5e9',
-  color: '#2e7d32',
+  background: '#e0f7f5',
+  color: '#00a89d',
   padding: '0.75rem 1rem',
   borderRadius: 4,
   marginBottom: '1rem',
 };
 
 const jobberBannerStyle: React.CSSProperties = {
-  background: '#e8f5e9',
-  color: '#2e7d32',
+  background: '#e0f7f5',
+  color: '#00a89d',
   padding: '0.75rem 1rem',
   borderRadius: 6,
   marginBottom: '1.25rem',
@@ -464,8 +530,8 @@ const textareaStyle: React.CSSProperties = {
 
 const addBtnStyle: React.CSSProperties = {
   padding: '0.4rem 0.75rem',
-  border: '1px solid #1976d2',
-  background: '#1976d2',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',
@@ -500,8 +566,8 @@ const removeBtnStyle: React.CSSProperties = {
 
 const saveBtnStyle: React.CSSProperties = {
   padding: '0.3rem 0.6rem',
-  border: '1px solid #2e7d32',
-  background: '#2e7d32',
+  border: '1px solid #00a89d',
+  background: '#00a89d',
   color: '#fff',
   borderRadius: 4,
   cursor: 'pointer',
@@ -529,4 +595,24 @@ const templatePreviewStyle: React.CSSProperties = {
   borderRadius: 4,
   maxHeight: 80,
   overflow: 'hidden',
+};
+
+const paginationStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '1rem',
+  marginTop: '0.75rem',
+  paddingTop: '0.75rem',
+  borderTop: '1px solid #e0e0e0',
+};
+
+const pageBtnStyle: React.CSSProperties = {
+  padding: '0.35rem 0.75rem',
+  border: '1px solid #ccc',
+  background: '#fff',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+  color: '#333',
 };

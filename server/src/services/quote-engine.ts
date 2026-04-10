@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 30_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -11,10 +11,12 @@ export interface QuoteEngineInput {
   catalogSource: 'jobber' | 'manual';
   manualCatalog?: ProductCatalogEntry[];
   manualTemplates?: QuoteTemplate[];
+  similarQuotes?: SimilarQuote[];
 }
 
 export interface QuoteEngineOutput {
   draft: QuoteDraft;
+  similarQuotes?: SimilarQuote[];
 }
 
 interface AILineItem {
@@ -44,6 +46,7 @@ const SYSTEM_PROMPT = [
   '- Estimate quantities from the customer text when possible; default to 1.',
   '- Use unit prices from the catalog entry.',
   '- If a template matches the type of work, reference it by ID and name.',
+  '- When SIMILAR PAST QUOTES are provided, prefer their line items and pricing when they match the current customer request. Higher similarity scores indicate stronger matches.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -88,7 +91,8 @@ export class QuoteEngine {
       });
     }
 
-    const userPrompt = this.buildPrompt(input, catalog, templates);
+    const similarQuotes = input.similarQuotes ?? [];
+    const userPrompt = this.buildPrompt(input, catalog, templates, similarQuotes);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
@@ -127,7 +131,7 @@ export class QuoteEngine {
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
       const aiResult = this.parseAIResponse(raw, catalog);
-      return this.buildDraft(input, aiResult, catalog);
+      return this.buildDraft(input, aiResult, catalog, similarQuotes);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -152,6 +156,7 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     catalog: ProductCatalogEntry[],
     templates: QuoteTemplate[],
+    similarQuotes: SimilarQuote[],
   ): string {
     const parts: string[] = [];
 
@@ -177,6 +182,16 @@ export class QuoteEngine {
     } else {
       for (const t of templates) {
         parts.push(`- [${t.id}] ${t.name}${t.category ? ' (' + t.category + ')' : ''}`);
+      }
+    }
+
+    // Include up to 3 similar past quotes when available
+    if (similarQuotes.length > 0) {
+      const topQuotes = similarQuotes.slice(0, 3);
+      parts.push('\nSIMILAR PAST QUOTES:');
+      for (const sq of topQuotes) {
+        const scorePercent = Math.round(sq.similarityScore * 100);
+        parts.push(`- [Score: ${scorePercent}%] Quote #${sq.quoteNumber} "${sq.title}" — ${sq.message}`);
       }
     }
 
@@ -256,6 +271,7 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     aiResult: AIResponse,
     _catalog: ProductCatalogEntry[],
+    similarQuotes: SimilarQuote[],
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
@@ -280,6 +296,7 @@ export class QuoteEngine {
 
     const draft: QuoteDraft = {
       id: draftId,
+      draftNumber: 0, // assigned by DB sequence on save
       userId: input.userId,
       customerRequestText: input.customerText,
       selectedTemplateId: aiResult.selectedTemplateId,
@@ -288,10 +305,15 @@ export class QuoteEngine {
       unresolvedItems,
       catalogSource: input.catalogSource,
       status: 'draft',
+      jobberRequestId: null,
+      similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: now,
       updatedAt: now,
     };
 
-    return { draft };
+    return {
+      draft,
+      similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
+    };
   }
 }

@@ -269,8 +269,8 @@ export default function QuickPostPage() {
           const isActive = i <= currentIdx;
           return (
             <div key={label} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ ...stepDotStyle, background: isActive ? '#1976d2' : '#e0e0e0', color: isActive ? '#fff' : '#888' }}>{i + 1}</div>
-              <div style={{ fontSize: '0.75rem', color: isActive ? '#1976d2' : '#888', marginTop: 4 }}>{label}</div>
+              <div style={{ ...stepDotStyle, background: isActive ? '#00a89d' : '#e0e0e0', color: isActive ? '#fff' : '#888' }}>{i + 1}</div>
+              <div style={{ fontSize: '0.75rem', color: isActive ? '#00a89d' : '#888', marginTop: 4 }}>{label}</div>
             </div>
           );
         })}
@@ -330,7 +330,7 @@ export default function QuickPostPage() {
               </label>
             </div>
             {advisorEnabled && suggestion && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, padding: '0.6rem 0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#e0f7f5', border: '1px solid #80d4ce', borderRadius: 6, padding: '0.6rem 0.75rem' }}>
                 <span style={{ fontSize: '1.1rem' }}>💡</span>
                 <div style={{ flex: 1, fontSize: '0.85rem' }}>
                   Recommended: <strong>{suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</strong>
@@ -353,7 +353,7 @@ export default function QuickPostPage() {
                 <div key={t.contentType} onClick={() => setSelectedContentType(t.contentType)} role="button" tabIndex={0} aria-pressed={isSelected}
                   aria-label={'Select ' + t.displayName}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedContentType(t.contentType); } }}
-                  style={{ ...cardStyle, border: isSelected ? '2px solid #1976d2' : '1px solid #e0e0e0', cursor: 'pointer' }}>
+                  style={{ ...cardStyle, border: isSelected ? '2px solid #00a89d' : '1px solid #e0e0e0', cursor: 'pointer' }}>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.displayName}</div>
                   <div style={{ fontSize: '0.8rem', color: '#666' }}>{t.description}</div>
                 </div>
@@ -392,7 +392,7 @@ export default function QuickPostPage() {
                     <button onClick={(e) => handleDismissIdea(e, idea)} title="Dismiss idea"
                       style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem', lineHeight: 1 }}
                       aria-label="Dismiss idea">✕</button>
-                    <span style={{ color: '#1976d2', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>Use this →</span>
+                    <span style={{ color: '#00a89d', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>Use this →</span>
                   </div>
                 ))}
               </div>
@@ -453,10 +453,10 @@ export default function QuickPostPage() {
             {generatedImages.length > 0 && (
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
                 {generatedImages.map((img, i) => (
-                  <div key={i} style={{ width: 200, borderRadius: 8, overflow: 'hidden', border: '2px solid #a5d6a7' }}>
+                  <div key={i} style={{ width: 200, borderRadius: 8, overflow: 'hidden', border: '2px solid #80d4ce' }}>
                     <img src={img.url} alt={img.description} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
                     <button onClick={() => handleSaveGenerated(img)} disabled={actionLoading}
-                      style={{ width: '100%', padding: '0.5rem', border: 'none', background: '#2e7d32', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}>
+                      style={{ width: '100%', padding: '0.5rem', border: 'none', background: '#00a89d', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}>
                       {actionLoading ? 'Saving...' : 'Use This Image'}
                     </button>
                   </div>
@@ -465,9 +465,9 @@ export default function QuickPostPage() {
             )}
           </div>
           {selectedImage && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e0f7f5', border: '1px solid #80d4ce', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <img src={selectedImage.thumbnailUrl} alt="Selected" style={{ width: 60, height: 60, borderRadius: 6, objectFit: 'cover' }} />
-              <span style={{ fontSize: '0.85rem', color: '#2e7d32', fontWeight: 500 }}>Image attached to post</span>
+              <span style={{ fontSize: '0.85rem', color: '#00a89d', fontWeight: 500 }}>Image attached to post</span>
             </div>
           )}
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
@@ -523,7 +523,7 @@ export default function QuickPostPage() {
               <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>Instagram Preview</h3>
               <div style={previewCardStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem', gap: '0.5rem' }}>
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1a1a2e' }} />
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#0a1e24' }} />
                   <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>chicago_reno</span>
                 </div>
                 <div style={{ background: '#e0e0e0', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -569,17 +569,17 @@ const timerStyle: React.CSSProperties = { fontSize: '0.85rem', color: '#888', fo
 const stepBarStyle: React.CSSProperties = { display: 'flex', marginBottom: '1.5rem', padding: '0.75rem 0', borderBottom: '1px solid #e0e0e0' };
 const stepDotStyle: React.CSSProperties = { width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, margin: '0 auto' };
 
-const btnStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: '#1976d2', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
-const btnOutlineStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: 'transparent', color: '#1976d2', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
-const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border: '1px solid #2e7d32', background: '#2e7d32', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500 };
-const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', fontSize: '0.85rem' };
+const btnStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #00a89d', background: '#00a89d', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const btnOutlineStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #00a89d', background: 'transparent', color: '#00a89d', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border: '1px solid #00a89d', background: '#00a89d', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500 };
+const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#00a89d', cursor: 'pointer', fontSize: '0.85rem' };
 
 const alertStyle: React.CSSProperties = { background: '#fdecea', color: '#611a15', padding: '0.75rem 1rem', borderRadius: 4, marginBottom: '1rem' };
 const advisorSectionStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem' };
 const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 8, padding: '1rem' };
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', fontWeight: 500 };
 const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem', boxSizing: 'border-box' };
-const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e3f2fd', color: '#1565c0', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
+const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e0f7f5', color: '#00a89d', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
 
 const ideaCardStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', padding: '0.75rem 1rem', background: '#fff',
@@ -590,6 +590,6 @@ const ideaCardStyle: React.CSSProperties = {
 const aiGenSectionStyle: React.CSSProperties = { background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem', marginBottom: '0.5rem' };
 const previewPanelStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', position: 'sticky', top: '1.5rem' };
 const previewCardStyle: React.CSSProperties = { border: '1px solid #dbdbdb', borderRadius: 6, overflow: 'hidden', background: '#fff' };
-const spinnerStyle: React.CSSProperties = { width: 40, height: 40, border: '4px solid #e0e0e0', borderTopColor: '#1976d2', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' };
+const spinnerStyle: React.CSSProperties = { width: 40, height: 40, border: '4px solid #e0e0e0', borderTopColor: '#00a89d', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' };
 const progressBarContainerStyle: React.CSSProperties = { width: '60%', margin: '1rem auto', height: 6, background: '#e0e0e0', borderRadius: 3, overflow: 'hidden' };
-const progressBarFillStyle: React.CSSProperties = { height: '100%', background: '#1976d2', borderRadius: 3, transition: 'width 0.3s ease' };
+const progressBarFillStyle: React.CSSProperties = { height: '100%', background: '#00a89d', borderRadius: 3, transition: 'width 0.3s ease' };

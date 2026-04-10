@@ -41,7 +41,7 @@ export default function LoginPage() {
   const displayError = clientError ?? (error ? error.message : null);
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#1a1a2e' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#0a1e24' }}>
       <form onSubmit={handleSubmit} style={{ background: '#fff', padding: '2rem', borderRadius: 8, width: 380 }}>
         <h1 style={{ margin: '0 0 0.25rem', fontSize: '1.4rem' }}>Chicago Reno</h1>
         <p style={{ margin: '0 0 1.5rem', color: '#666', fontSize: '0.9rem' }}>Sign in to the Social Media Platform</p>
@@ -78,7 +78,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={submitting}
-          style={{ marginTop: '1rem', width: '100%', padding: '0.65rem', background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 4, fontSize: '0.95rem', cursor: submitting ? 'wait' : 'pointer' }}
+          style={{ marginTop: '1rem', width: '100%', padding: '0.65rem', background: '#0a1e24', color: '#fff', border: 'none', borderRadius: 4, fontSize: '0.95rem', cursor: submitting ? 'wait' : 'pointer' }}
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>

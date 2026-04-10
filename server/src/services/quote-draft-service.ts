@@ -1,6 +1,6 @@
 import { query, getClient } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
-import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem } from 'shared';
+import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem, SimilarQuote, RevisionHistoryEntry } from 'shared';
 
 export class QuoteDraftService {
   /**
@@ -12,9 +12,9 @@ export class QuoteDraftService {
       await client.query('BEGIN');
 
       const result = await client.query(
-        `INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, created_at, updated_at`,
+        `INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, draft_number, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at`,
         [
           draft.id,
           draft.userId,
@@ -23,6 +23,7 @@ export class QuoteDraftService {
           draft.selectedTemplateName,
           draft.catalogSource,
           draft.status,
+          draft.jobberRequestId ?? null,
         ],
       );
 
@@ -51,8 +52,20 @@ export class QuoteDraftService {
         );
       }
 
+      // Insert similar quote references
+      if (draft.similarQuotes && draft.similarQuotes.length > 0) {
+        for (let i = 0; i < draft.similarQuotes.length; i++) {
+          const sq = draft.similarQuotes[i];
+          await client.query(
+            `INSERT INTO quote_draft_similar_quotes (quote_draft_id, jobber_quote_id, quote_number, title, similarity_score, display_order)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [draft.id, sq.jobberQuoteId, sq.quoteNumber, sq.title, sq.similarityScore, i],
+          );
+        }
+      }
+
       await client.query('COMMIT');
-      return this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems);
+      return this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems, draft.similarQuotes);
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -66,7 +79,7 @@ export class QuoteDraftService {
    */
   async getById(draftId: string, userId: string): Promise<QuoteDraft> {
     const result = await query(
-      `SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, created_at, updated_at
+      `SELECT id, draft_number, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at
        FROM quote_drafts
        WHERE id = $1 AND user_id = $2`,
       [draftId, userId],
@@ -83,7 +96,11 @@ export class QuoteDraftService {
     }
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
-    return this.mapDraftRow(result.rows[0], lineItems, unresolvedItems);
+    const similarQuotes = await this.fetchSimilarQuotes(draftId);
+    const revisionHistory = await this.getRevisionHistory(draftId);
+    const draft = this.mapDraftRow(result.rows[0], lineItems, unresolvedItems, similarQuotes);
+    draft.revisionHistory = revisionHistory.length > 0 ? revisionHistory : undefined;
+    return draft;
   }
 
   /**
@@ -91,7 +108,7 @@ export class QuoteDraftService {
    */
   async list(userId: string): Promise<QuoteDraft[]> {
     const result = await query(
-      `SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, created_at, updated_at
+      `SELECT id, draft_number, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at
        FROM quote_drafts
        WHERE user_id = $1
        ORDER BY created_at DESC`,
@@ -101,7 +118,8 @@ export class QuoteDraftService {
     const drafts: QuoteDraft[] = [];
     for (const row of result.rows) {
       const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
-      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems));
+      const similarQuotes = await this.fetchSimilarQuotes(row.id as string);
+      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems, similarQuotes));
     }
     return drafts;
   }
@@ -137,7 +155,7 @@ export class QuoteDraftService {
         setClauses.join(', ') +
         ' WHERE id = $' + paramIndex++ +
         ' AND user_id = $' + paramIndex +
-        ' RETURNING id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, created_at, updated_at';
+        ' RETURNING id, draft_number, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at';
 
       const result = await client.query(updateSql, values);
 
@@ -177,7 +195,8 @@ export class QuoteDraftService {
       await client.query('COMMIT');
 
       const { lineItems, unresolvedItems: unresolved } = await this.fetchLineItems(draftId);
-      return this.mapDraftRow(result.rows[0], lineItems, unresolved);
+      const similarQuotes = await this.fetchSimilarQuotes(draftId);
+      return this.mapDraftRow(result.rows[0], lineItems, unresolved, similarQuotes);
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -206,6 +225,51 @@ export class QuoteDraftService {
     }
 
     return true;
+  }
+
+  // ── Revision history ──────────────────────────────────────────
+
+  /**
+   * Persist a revision history entry for a draft.
+   */
+  async addRevisionEntry(draftId: string, userId: string, feedbackText: string): Promise<RevisionHistoryEntry> {
+    // Verify ownership
+    await this.getById(draftId, userId);
+
+    const result = await query(
+      `INSERT INTO quote_revision_history (id, quote_draft_id, feedback_text)
+       VALUES (gen_random_uuid(), $1, $2)
+       RETURNING id, quote_draft_id, feedback_text, created_at`,
+      [draftId, feedbackText],
+    );
+
+    const row = result.rows[0] as Record<string, unknown>;
+    return {
+      id: row.id as string,
+      quoteDraftId: row.quote_draft_id as string,
+      feedbackText: row.feedback_text as string,
+      createdAt: new Date(row.created_at as string),
+    };
+  }
+
+  /**
+   * Fetch all revision history entries for a draft, ordered oldest first.
+   */
+  async getRevisionHistory(draftId: string): Promise<RevisionHistoryEntry[]> {
+    const result = await query(
+      `SELECT id, quote_draft_id, feedback_text, created_at
+       FROM quote_revision_history
+       WHERE quote_draft_id = $1
+       ORDER BY created_at ASC`,
+      [draftId],
+    );
+
+    return result.rows.map((row: Record<string, unknown>) => ({
+      id: row.id as string,
+      quoteDraftId: row.quote_draft_id as string,
+      feedbackText: row.feedback_text as string,
+      createdAt: new Date(row.created_at as string),
+    }));
   }
 
   // ── Private helpers ──────────────────────────────────────────
@@ -237,6 +301,28 @@ export class QuoteDraftService {
     return { lineItems, unresolvedItems };
   }
 
+  /**
+   * Fetch similar quote references for a draft, joining with quote_corpus to get the message.
+   */
+  private async fetchSimilarQuotes(draftId: string): Promise<SimilarQuote[]> {
+    const result = await query(
+      `SELECT sq.jobber_quote_id, sq.quote_number, sq.title, sq.similarity_score, COALESCE(qc.message, '') AS message
+       FROM quote_draft_similar_quotes sq
+       LEFT JOIN quote_corpus qc ON sq.jobber_quote_id = qc.jobber_quote_id
+       WHERE sq.quote_draft_id = $1
+       ORDER BY sq.display_order ASC`,
+      [draftId],
+    );
+
+    return result.rows.map((row: Record<string, unknown>) => ({
+      jobberQuoteId: row.jobber_quote_id as string,
+      quoteNumber: row.quote_number as string,
+      title: (row.title as string) ?? '',
+      message: (row.message as string) ?? '',
+      similarityScore: Number(row.similarity_score),
+    }));
+  }
+
   private mapLineItemRow(row: Record<string, unknown>): QuoteLineItem {
     return {
       id: row.id as string,
@@ -255,9 +341,11 @@ export class QuoteDraftService {
     row: Record<string, unknown>,
     lineItems: QuoteLineItem[],
     unresolvedItems: QuoteLineItem[],
+    similarQuotes?: SimilarQuote[],
   ): QuoteDraft {
     return {
       id: row.id as string,
+      draftNumber: Number(row.draft_number),
       userId: row.user_id as string,
       customerRequestText: row.customer_request_text as string,
       selectedTemplateId: (row.selected_template_id as string) ?? null,
@@ -266,6 +354,8 @@ export class QuoteDraftService {
       unresolvedItems,
       catalogSource: row.catalog_source as QuoteDraft['catalogSource'],
       status: row.status as QuoteDraft['status'],
+      jobberRequestId: (row.jobber_request_id as string) ?? null,
+      similarQuotes: similarQuotes && similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };

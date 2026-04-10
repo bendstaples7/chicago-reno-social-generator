@@ -1,0 +1,303 @@
+import { useState, useEffect } from 'react';
+import type { JobberCustomerRequest } from 'shared';
+import { fetchJobberRequests } from '../api';
+
+interface RequestSelectorProps {
+  onSelect: (request: JobberCustomerRequest) => void;
+  onClear: () => void;
+  selectedRequestId: string | null;
+}
+
+export default function RequestSelector({ onSelect, onClear, selectedRequestId }: RequestSelectorProps) {
+  const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchJobberRequests()
+      .then((data) => {
+        if (!cancelled) {
+          setRequests(data.requests);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Could not load Jobber requests. You can enter text manually below.');
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectedRequest = requests.find((r) => r.id === selectedRequestId);
+
+  if (loading) {
+    return (
+      <div style={wrapperStyle}>
+        <span style={headingStyle}>Jobber Requests</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '1rem 0' }}>
+          <span style={spinnerStyle} />
+          <span style={{ fontSize: '0.85rem', color: '#666' }}>Loading requests…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={wrapperStyle}>
+        <span style={headingStyle}>Jobber Requests</span>
+        <div style={inlineMessageStyle}>{error}</div>
+      </div>
+    );
+  }
+
+  if (requests.length === 0) {
+    return (
+      <div style={wrapperStyle}>
+        <span style={headingStyle}>Jobber Requests</span>
+        <div style={inlineMessageStyle}>No customer requests found. You can enter text manually below.</div>
+      </div>
+    );
+  }
+
+  // Show read-only detail view when a request is selected
+  if (selectedRequest) {
+    return (
+      <div style={wrapperStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <span style={headingStyle}>Selected Request</span>
+          <button onClick={onClear} style={clearBtnStyle} type="button">
+            Change request
+          </button>
+        </div>
+        <div style={detailCardStyle}>
+          <div style={{ marginBottom: '0.5rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '1rem' }}>{selectedRequest.title}</span>
+          </div>
+          <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.75rem' }}>
+            {selectedRequest.clientName} · {formatDate(selectedRequest.createdAt)}
+          </div>
+
+          {/* Form submission data */}
+          {selectedRequest.formData && selectedRequest.formData.sections.length > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <span style={sectionLabelStyle}>Request Details</span>
+              {selectedRequest.formData.sections.map((section, si) => (
+                <div key={si} style={{ marginTop: '0.4rem' }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem' }}>{section.label}</div>
+                  {section.answers.map((answer, ai) => (
+                    answer.value ? (
+                      <div key={ai} style={noteStyle}>
+                        <span style={{ fontSize: '0.75rem', color: '#888' }}>{answer.label}</span>
+                        <div style={{ marginTop: '0.15rem', whiteSpace: 'pre-wrap' }}>{answer.value}</div>
+                      </div>
+                    ) : null
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Notes — labeled by author */}
+          {selectedRequest.structuredNotes.length > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <span style={sectionLabelStyle}>Notes</span>
+              {selectedRequest.structuredNotes.map((note, i) => (
+                <div key={i} style={noteStyle}>
+                  <span style={noteLabelStyle}>
+                    {note.createdBy === 'team' ? '👤 Team Note' : note.createdBy === 'client' ? '📩 Client' : '🤖 System'}
+                  </span>
+                  {note.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Images */}
+          {selectedRequest.imageUrls.length > 0 && (
+            <div>
+              <span style={sectionLabelStyle}>Attached Images</span>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                {selectedRequest.imageUrls.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={url}
+                      alt={`Attachment ${i + 1}`}
+                      style={attachmentImgStyle}
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && (
+            <div style={{ fontSize: '0.85rem', color: '#999', fontStyle: 'italic' }}>No notes or attachments on this request.</div>
+          )}
+
+          {/* Link to Jobber */}
+          {selectedRequest.jobberWebUri && (
+            <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #e0e0e0' }}>
+              <a
+                href={selectedRequest.jobberWebUri}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={jobberLinkStyle}
+              >
+                Open in Jobber ↗
+              </a>
+              <span style={{ fontSize: '0.8rem', color: '#888', marginLeft: '0.5rem' }}>
+                Copy the request details from Jobber and paste below
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Show request list for selection
+  return (
+    <div style={wrapperStyle}>
+      <div style={{ marginBottom: '0.5rem' }}>
+        <span style={headingStyle}>Jobber Requests</span>
+      </div>
+      <div style={listStyle}>
+        {requests.map((req) => (
+          <button
+            key={req.id}
+            onClick={() => onSelect(req)}
+            style={itemStyle}
+            type="button"
+          >
+            <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>{req.title}</span>
+            <span style={{ fontSize: '0.8rem', color: '#666' }}>
+              {req.clientName} · {formatDate(req.createdAt)}
+              {req.imageUrls.length > 0 && ` · 📷 ${req.imageUrls.length}`}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+// ── Styles ──
+
+const wrapperStyle: React.CSSProperties = { marginBottom: '1.25rem' };
+const headingStyle: React.CSSProperties = { fontWeight: 500, fontSize: '0.9rem' };
+
+const listStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.5rem',
+  maxHeight: 220,
+  overflowY: 'auto',
+};
+
+const itemStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.15rem',
+  textAlign: 'left',
+  padding: '0.5rem 0.75rem',
+  border: '1px solid #e0e0e0',
+  borderRadius: 6,
+  cursor: 'pointer',
+  background: '#fff',
+  transition: 'border-color 0.15s, background 0.15s',
+  fontFamily: 'inherit',
+};
+
+const clearBtnStyle: React.CSSProperties = {
+  padding: '0.25rem 0.5rem',
+  border: '1px solid #00a89d',
+  background: 'transparent',
+  color: '#00a89d',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+};
+
+const detailCardStyle: React.CSSProperties = {
+  border: '1px solid #00a89d',
+  borderRadius: 8,
+  padding: '1rem',
+  background: '#f8fbff',
+};
+
+const noteStyle: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e8e8e8',
+  borderRadius: 4,
+  padding: '0.5rem 0.75rem',
+  marginTop: '0.4rem',
+  fontSize: '0.85rem',
+  lineHeight: 1.5,
+  whiteSpace: 'pre-wrap',
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+  fontWeight: 500,
+  fontSize: '0.8rem',
+  color: '#888',
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.03em',
+};
+
+const noteLabelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: '0.7rem',
+  fontWeight: 600,
+  color: '#888',
+  marginBottom: '0.2rem',
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.03em',
+};
+
+const jobberLinkStyle: React.CSSProperties = {
+  color: '#00a89d',
+  fontSize: '0.85rem',
+  fontWeight: 500,
+  textDecoration: 'none',
+};
+
+const attachmentImgStyle: React.CSSProperties = {
+  width: 100,
+  height: 100,
+  objectFit: 'cover',
+  borderRadius: 6,
+  border: '1px solid #e0e0e0',
+};
+
+const spinnerStyle: React.CSSProperties = {
+  display: 'inline-block',
+  width: 14,
+  height: 14,
+  border: '2px solid #ccc',
+  borderTopColor: '#00a89d',
+  borderRadius: '50%',
+  animation: 'spin 0.6s linear infinite',
+};
+
+const inlineMessageStyle: React.CSSProperties = {
+  background: '#fff3e0',
+  color: '#6d4c00',
+  padding: '0.5rem 0.75rem',
+  borderRadius: 4,
+  marginTop: '0.25rem',
+  fontSize: '0.85rem',
+};

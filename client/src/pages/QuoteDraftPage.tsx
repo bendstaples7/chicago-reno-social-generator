@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { QuoteDraft, QuoteLineItem, ErrorResponse } from 'shared';
-import { fetchDraft } from '../api';
+import { fetchDraft, reviseDraft } from '../api';
+import SimilarQuotesPanel from './SimilarQuotesPanel';
 
 export default function QuoteDraftPage() {
   const { id } = useParams<{ id: string }>();
@@ -10,6 +11,10 @@ export default function QuoteDraftPage() {
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [revising, setRevising] = useState(false);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
+  const [feedbackValidation, setFeedbackValidation] = useState<string | null>(null);
 
   const loadDraft = useCallback(async () => {
     if (!id) return;
@@ -26,6 +31,25 @@ export default function QuoteDraftPage() {
   }, [id]);
 
   useEffect(() => { loadDraft(); }, [loadDraft]);
+
+  const handleSubmitFeedback = async () => {
+    if (!id || !feedbackText.trim()) {
+      setFeedbackValidation('Please enter feedback before submitting.');
+      return;
+    }
+    setFeedbackValidation(null);
+    setRevisionError(null);
+    setRevising(true);
+    try {
+      const updated = await reviseDraft(id, feedbackText);
+      setDraft(updated);
+      setFeedbackText('');
+    } catch (err) {
+      setRevisionError((err as ErrorResponse).message ?? 'Revision failed. Please try again.');
+    } finally {
+      setRevising(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -53,13 +77,26 @@ export default function QuoteDraftPage() {
     <div style={containerStyle}>
       <button onClick={() => navigate('/quotes')} style={backBtnStyle}>← Back to New Quote</button>
 
-      <h1 style={titleStyle}>Quote Draft</h1>
+      <h1 style={titleStyle}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
 
       {/* Selected template */}
       {draft.selectedTemplateName && (
         <div style={templateBannerStyle}>
           <span style={{ fontWeight: 600 }}>Template:</span> {draft.selectedTemplateName}
         </div>
+      )}
+
+      {/* Original customer request */}
+      {draft.customerRequestText && (
+        <div style={requestSectionStyle}>
+          <h2 style={sectionTitleStyle}>Customer Request</h2>
+          <p style={requestBodyStyle}>{draft.customerRequestText}</p>
+        </div>
+      )}
+
+      {/* Similar past quotes panel — hidden when empty */}
+      {draft.similarQuotes && draft.similarQuotes.length > 0 && (
+        <SimilarQuotesPanel similarQuotes={draft.similarQuotes} />
       )}
 
       {/* Matched line items table */}
@@ -125,6 +162,66 @@ export default function QuoteDraftPage() {
         </div>
       )}
 
+      {/* Feedback input */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitleStyle}>Revise This Quote</h2>
+        <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#666' }}>
+          Describe the changes you want (e.g., "increase drywall to 12 sheets", "remove painting").
+        </p>
+        <textarea
+          value={feedbackText}
+          onChange={(e) => {
+            setFeedbackText(e.target.value);
+            if (feedbackValidation) setFeedbackValidation(null);
+          }}
+          disabled={revising}
+          placeholder="Type your feedback here…"
+          rows={3}
+          style={feedbackInputStyle}
+          aria-label="Feedback for quote revision"
+        />
+        {feedbackValidation && (
+          <p style={validationMsgStyle} role="alert">{feedbackValidation}</p>
+        )}
+        {revisionError && (
+          <div role="alert" style={revisionErrorStyle}>{revisionError}</div>
+        )}
+        <button
+          onClick={handleSubmitFeedback}
+          disabled={!feedbackText.trim() || revising}
+          style={{
+            ...submitBtnStyle,
+            opacity: (!feedbackText.trim() || revising) ? 0.5 : 1,
+            cursor: (!feedbackText.trim() || revising) ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {revising ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={smallSpinnerStyle} /> Revising…
+            </span>
+          ) : (
+            'Submit Feedback'
+          )}
+        </button>
+      </div>
+
+      {/* Revision history */}
+      {draft.revisionHistory && draft.revisionHistory.length > 0 && (
+        <div style={sectionStyle}>
+          <h2 style={sectionTitleStyle}>Revision History</h2>
+          <div style={historyListStyle}>
+            {draft.revisionHistory.map((entry) => (
+              <div key={entry.id} style={historyEntryStyle}>
+                <p style={{ margin: 0, fontSize: '0.9rem' }}>{entry.feedbackText}</p>
+                <span style={historyTimestampStyle}>
+                  {new Date(entry.createdAt).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Draft metadata */}
       <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '1.5rem' }}>
         Created: {new Date(draft.createdAt).toLocaleString()}
@@ -143,7 +240,7 @@ const titleStyle: React.CSSProperties = { margin: '0 0 1rem', fontSize: '1.5rem'
 const backBtnStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',
-  color: '#1976d2',
+  color: '#00a89d',
   cursor: 'pointer',
   fontSize: '0.9rem',
   padding: 0,
@@ -172,18 +269,34 @@ const spinnerStyle: React.CSSProperties = {
   width: 28,
   height: 28,
   border: '3px solid #e0e0e0',
-  borderTopColor: '#1976d2',
+  borderTopColor: '#00a89d',
   borderRadius: '50%',
   animation: 'spin 0.6s linear infinite',
 };
 
 const templateBannerStyle: React.CSSProperties = {
-  background: '#e3f2fd',
-  color: '#1565c0',
+  background: '#e0f7f5',
+  color: '#00a89d',
   padding: '0.6rem 1rem',
   borderRadius: 6,
   marginBottom: '1.25rem',
   fontSize: '0.9rem',
+};
+
+const requestSectionStyle: React.CSSProperties = {
+  background: '#f8f9fa',
+  border: '1px solid #e0e0e0',
+  borderRadius: 8,
+  padding: '1rem 1.25rem',
+  marginBottom: '1rem',
+};
+
+const requestBodyStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  color: '#333',
+  whiteSpace: 'pre-wrap',
+  lineHeight: 1.5,
 };
 
 const sectionStyle: React.CSSProperties = {
@@ -235,8 +348,8 @@ const tdStyle: React.CSSProperties = {
 };
 
 function confidenceBadgeStyle(score: number): React.CSSProperties {
-  const bg = score >= 90 ? '#e8f5e9' : score >= 70 ? '#fff3e0' : '#fdecea';
-  const color = score >= 90 ? '#2e7d32' : score >= 70 ? '#e65100' : '#611a15';
+  const bg = score >= 90 ? '#e0f7f5' : score >= 70 ? '#fff3e0' : '#fdecea';
+  const color = score >= 90 ? '#00a89d' : score >= 70 ? '#e65100' : '#611a15';
   return {
     display: 'inline-block',
     padding: '0.15rem 0.5rem',
@@ -247,3 +360,72 @@ function confidenceBadgeStyle(score: number): React.CSSProperties {
     color,
   };
 }
+
+const feedbackInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.6rem 0.75rem',
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  fontSize: '0.9rem',
+  fontFamily: 'inherit',
+  resize: 'vertical',
+  boxSizing: 'border-box',
+};
+
+const validationMsgStyle: React.CSSProperties = {
+  color: '#d32f2f',
+  fontSize: '0.8rem',
+  margin: '0.25rem 0 0',
+};
+
+const revisionErrorStyle: React.CSSProperties = {
+  background: '#fdecea',
+  color: '#611a15',
+  padding: '0.5rem 0.75rem',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  marginTop: '0.5rem',
+};
+
+const submitBtnStyle: React.CSSProperties = {
+  marginTop: '0.75rem',
+  padding: '0.5rem 1.25rem',
+  background: '#00a89d',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: '0.9rem',
+  fontWeight: 600,
+};
+
+const smallSpinnerStyle: React.CSSProperties = {
+  display: 'inline-block',
+  width: 14,
+  height: 14,
+  border: '2px solid rgba(255,255,255,0.3)',
+  borderTopColor: '#fff',
+  borderRadius: '50%',
+  animation: 'spin 0.6s linear infinite',
+};
+
+const historyListStyle: React.CSSProperties = {
+  maxHeight: 300,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.5rem',
+};
+
+const historyEntryStyle: React.CSSProperties = {
+  padding: '0.5rem 0.75rem',
+  background: '#f9f9f9',
+  borderRadius: 6,
+  border: '1px solid #eee',
+};
+
+const historyTimestampStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  color: '#999',
+  marginTop: '0.25rem',
+  display: 'block',
+};

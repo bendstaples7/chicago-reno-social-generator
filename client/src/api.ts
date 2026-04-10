@@ -4,6 +4,7 @@ import type {
   ChannelConnection, PublishResult, ContentType, UserSettings,
   ActivityLogEntry, AdvisorMode, ContentIdea, QuoteDraft,
   ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
+  JobberCustomerRequest, SimilarQuote, JobberRequestFormData,
 } from 'shared';
 
 const TOKEN_KEY = 'session_token';
@@ -397,6 +398,7 @@ export async function dismissContentIdea(ideaId: string): Promise<{ success: boo
 export async function generateQuote(data: {
   customerText?: string;
   mediaItemIds?: string[];
+  jobberRequestId?: string;
 }): Promise<QuoteDraft> {
   const res = await fetch(API_BASE + '/api/quotes/generate', {
     method: 'POST',
@@ -426,6 +428,15 @@ export async function updateDraft(id: string, updates: QuoteDraftUpdate): Promis
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(updates),
+  });
+  return handleResponse(res);
+}
+
+export async function reviseDraft(draftId: string, feedbackText: string): Promise<QuoteDraft> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + draftId + '/revise', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ feedbackText }),
   });
   return handleResponse(res);
 }
@@ -484,4 +495,45 @@ export async function checkJobberStatus(): Promise<boolean> {
   });
   const data = await handleResponse<{ available: boolean }>(res);
   return data.available;
+}
+
+export async function fetchJobberRequests(): Promise<{ requests: JobberCustomerRequest[]; available: boolean }> {
+  const res = await fetch(API_BASE + '/api/quotes/jobber/requests', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null }> {
+  const res = await fetch(API_BASE + '/api/quotes/jobber/requests/' + requestId + '/form-data', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+// ── Quote Corpus ──
+
+export interface SyncResult {
+  totalFetched: number;
+  newQuotes: number;
+  updatedQuotes: number;
+  unchangedQuotes: number;
+  embeddingsGenerated: number;
+  durationMs: number;
+  error?: string;
+}
+
+export async function syncCorpus(): Promise<SyncResult> {
+  const res = await fetch(API_BASE + '/api/quotes/corpus/sync', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function fetchCorpusStatus(): Promise<{ totalQuotes: number; lastSyncAt: string | null }> {
+  const res = await fetch(API_BASE + '/api/quotes/corpus/status', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
 }

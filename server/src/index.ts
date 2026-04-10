@@ -11,8 +11,15 @@ import channelRoutes from './routes/channels.js';
 import activityLogRoutes from './routes/activity-log.js';
 import contentIdeasRoutes from './routes/content-ideas.js';
 import quoteRoutes from './routes/quotes.js';
+import jobberAuthRoutes from './routes/jobber-auth.js';
+import webhookRoutes from './routes/webhooks.js';
 
 const app = express();
+
+// Webhook routes must be registered BEFORE express.json() middleware
+// because they need access to the raw request body for HMAC verification.
+app.use('/api/webhooks', webhookRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3001;
@@ -35,6 +42,7 @@ app.use('/api/channels', channelRoutes);
 app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/content-ideas', contentIdeasRoutes);
 app.use('/api/quotes', quoteRoutes);
+app.use('/api/jobber', jobberAuthRoutes);
 
 // Error-handling middleware must be registered AFTER all routes
 app.use(errorHandler);

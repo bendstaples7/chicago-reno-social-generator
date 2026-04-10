@@ -33,6 +33,7 @@ export interface QuoteLineItem {
 /** The full quote draft */
 export interface QuoteDraft {
   id: string;
+  draftNumber: number;
   userId: string;
   customerRequestText: string;
   selectedTemplateId: string | null;
@@ -40,9 +41,69 @@ export interface QuoteDraft {
   lineItems: QuoteLineItem[];
   unresolvedItems: QuoteLineItem[];
   catalogSource: 'jobber' | 'manual';
+  jobberRequestId: string | null;
   status: 'draft' | 'finalized';
+  similarQuotes?: SimilarQuote[];
+  revisionHistory?: RevisionHistoryEntry[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Form answer from a Jobber request submission */
+export interface JobberFormAnswer {
+  label: string;
+  value: string | null;
+}
+
+/** Form section from a Jobber request submission */
+export interface JobberFormSection {
+  label: string;
+  sortOrder: number;
+  answers: JobberFormAnswer[];
+}
+
+/** Form data from a Jobber request submission */
+export interface JobberRequestFormData {
+  sections: JobberFormSection[];
+  text: string;
+}
+
+/** A note on a Jobber customer request */
+export interface JobberRequestNote {
+  message: string;
+  createdBy: 'team' | 'client' | 'system';
+  createdAt: string;
+}
+
+/** A customer request from Jobber */
+export interface JobberCustomerRequest {
+  id: string;
+  title: string;
+  clientName: string;
+  description: string;
+  notes: string[];
+  structuredNotes: JobberRequestNote[];
+  imageUrls: string[];
+  jobberWebUri: string;
+  formData?: JobberRequestFormData;
+  createdAt: string;
+}
+
+/** A similar past quote found via embedding similarity search */
+export interface SimilarQuote {
+  jobberQuoteId: string;
+  quoteNumber: string;
+  title: string;
+  message: string;
+  similarityScore: number;
+}
+
+/** A single entry in the revision history for a quote draft */
+export interface RevisionHistoryEntry {
+  id: string;
+  quoteDraftId: string;
+  feedbackText: string;
+  createdAt: Date;
 }
 
 /** Update payload for editing a draft */

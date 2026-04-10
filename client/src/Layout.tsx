@@ -81,17 +81,17 @@ export default function Layout() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {/* Top-level tab bar */}
-      <div style={{ display: 'flex', background: '#0f0f23', borderBottom: '2px solid #1a1a2e' }}>
+      <div style={{ display: 'flex', background: '#061216', borderBottom: '2px solid #0a1e24' }}>
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => handleTabClick(tab.id)}
             style={{
               padding: '0.75rem 1.5rem',
-              background: activeTab === tab.id ? '#1a1a2e' : 'transparent',
-              color: activeTab === tab.id ? '#4fc3f7' : '#888',
+              background: activeTab === tab.id ? '#0a1e24' : 'transparent',
+              color: activeTab === tab.id ? '#00a89d' : '#888',
               border: 'none',
-              borderBottom: activeTab === tab.id ? '2px solid #4fc3f7' : '2px solid transparent',
+              borderBottom: activeTab === tab.id ? '2px solid #00a89d' : '2px solid transparent',
               cursor: 'pointer',
               fontWeight: activeTab === tab.id ? 700 : 400,
               fontSize: '0.95rem',
@@ -105,7 +105,7 @@ export default function Layout() {
 
       {/* Sidebar + content area */}
       <div style={{ display: 'flex', flex: 1 }}>
-        <nav style={{ width: 220, background: '#1a1a2e', color: '#fff', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
+        <nav style={{ width: 220, background: '#0a1e24', color: '#fff', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '2rem' }}>Chicago Reno</div>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, flex: 1 }}>
             {navItems.map((item) => (
@@ -113,12 +113,12 @@ export default function Layout() {
                 <NavLink
                   to={item.to}
                   style={({ isActive }) => ({
-                    color: isActive ? '#4fc3f7' : '#ccc',
+                    color: isActive ? '#00a89d' : '#ccc',
                     textDecoration: 'none',
                     display: 'block',
                     padding: '0.5rem 0.75rem',
                     borderRadius: 4,
-                    background: isActive ? 'rgba(79,195,247,0.1)' : 'transparent',
+                    background: isActive ? 'rgba(0,168,157,0.1)' : 'transparent',
                   })}
                 >
                   {item.label}

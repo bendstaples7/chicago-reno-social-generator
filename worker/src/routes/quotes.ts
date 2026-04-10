@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import {
@@ -9,6 +9,7 @@ import {
   QuoteDraftService,
   ActivityLogService,
 } from '../services/index.js';
+import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -58,6 +59,7 @@ app.post('/generate', async (c) => {
     catalogSource?: 'jobber' | 'manual';
     manualCatalog?: ProductCatalogEntry[];
     manualTemplates?: QuoteTemplate[];
+    jobberRequestId?: string;
   };
 
   if (!body.customerText && (!body.mediaItemIds || body.mediaItemIds.length === 0)) {
@@ -75,6 +77,7 @@ app.post('/generate', async (c) => {
     clientId: c.env.JOBBER_CLIENT_ID || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
     apiUrl: c.env.JOBBER_API_URL || undefined,
   });
   const quoteEngine = new QuoteEngine(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
@@ -112,6 +115,9 @@ app.post('/generate', async (c) => {
     templates,
   );
 
+  if (body.jobberRequestId) {
+    result.draft.jobberRequestId = body.jobberRequestId;
+  }
   const saved = await quoteDraftService.save(result.draft);
   return c.json(saved, 201);
 });
@@ -179,6 +185,7 @@ app.get('/catalog', async (c) => {
     clientId: c.env.JOBBER_CLIENT_ID || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
     apiUrl: c.env.JOBBER_API_URL || undefined,
   });
 
@@ -250,6 +257,7 @@ app.get('/templates', async (c) => {
     clientId: c.env.JOBBER_CLIENT_ID || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
     apiUrl: c.env.JOBBER_API_URL || undefined,
   });
 
@@ -309,18 +317,88 @@ app.post('/templates', async (c) => {
 });
 
 /**
- * GET /jobber/status
- * Check Jobber API availability.
+ * GET /jobber/requests
+ * Fetch customer requests from Jobber, enriched with webhook data.
  */
-app.get('/jobber/status', (c) => {
-  const activityLog = new ActivityLogService(c.env.DB);
+app.get('/jobber/requests', async (c) => {
+  const db = c.env.DB;
+  const activityLog = new ActivityLogService(db);
   const jobberIntegration = new JobberIntegration(activityLog, {
     clientId: c.env.JOBBER_CLIENT_ID || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
     apiUrl: c.env.JOBBER_API_URL || undefined,
   });
-  return c.json({ available: jobberIntegration.isAvailable() });
+
+  let requests: JobberCustomerRequest[] = [];
+  let available = false;
+
+  if (jobberIntegration.isAvailable()) {
+    requests = await jobberIntegration.fetchCustomerRequests();
+    available = jobberIntegration.isAvailable();
+  }
+
+  // Merge webhook data
+  try {
+    const webhookService = new JobberWebhookService(db, activityLog, {
+      accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+      clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    });
+    const webhookRequests = await webhookService.getWebhookRequests();
+    const apiIds = new Set(requests.map((r) => r.id));
+
+    for (const wr of webhookRequests) {
+      if (apiIds.has(wr.id)) {
+        const existing = requests.find((r) => r.id === wr.id)!;
+        if (wr.imageUrls.length > existing.imageUrls.length) {
+          existing.imageUrls = wr.imageUrls;
+        }
+        if (wr.description && (!existing.description || existing.description.length < wr.description.length)) {
+          existing.description = wr.description;
+        }
+        if (wr.structuredNotes.length > existing.structuredNotes.length) {
+          existing.structuredNotes = wr.structuredNotes;
+          existing.notes = wr.structuredNotes.map((n) => n.message);
+        }
+      } else {
+        requests.push(wr);
+      }
+    }
+
+    requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (webhookRequests.length > 0) available = true;
+  } catch {
+    // Webhook enrichment is best-effort
+  }
+
+  return c.json({ requests, available });
+});
+
+/**
+ * GET /jobber/status
+ * Check Jobber API availability.
+ */
+app.get('/jobber/status', async (c) => {
+  const db = c.env.DB;
+  const activityLog = new ActivityLogService(db);
+  const jobberIntegration = new JobberIntegration(activityLog, {
+    clientId: c.env.JOBBER_CLIENT_ID || '',
+    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
+    apiUrl: c.env.JOBBER_API_URL || undefined,
+  });
+
+  let webhookActive = false;
+  try {
+    const result = await db.prepare(
+      `SELECT COUNT(*) as count FROM jobber_webhook_requests WHERE processed_at IS NOT NULL`
+    ).first() as { count: number } | null;
+    webhookActive = (result?.count ?? 0) > 0;
+  } catch { /* table may not exist yet */ }
+
+  return c.json({ available: jobberIntegration.isAvailable() || webhookActive, webhookActive });
 });
 
 export default app;

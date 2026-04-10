@@ -78,6 +78,9 @@ export default function QuoteDraftsListPage() {
                 aria-label={`View draft from ${new Date(draft.createdAt).toLocaleDateString()}`}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.25rem', color: '#061216' }}>
+                    D-{String(draft.draftNumber).padStart(3, '0')}
+                  </div>
                   <p style={requestTextStyle}>
                     {draft.customerRequestText
                       ? draft.customerRequestText.length > 120
@@ -139,7 +142,7 @@ const spinnerStyle: React.CSSProperties = {
   width: 28,
   height: 28,
   border: '3px solid #e0e0e0',
-  borderTopColor: '#1976d2',
+  borderTopColor: '#00a89d',
   borderRadius: '50%',
   animation: 'spin 0.6s linear infinite',
 };
@@ -163,7 +166,7 @@ const emptyStyle: React.CSSProperties = {
 const linkBtnStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',
-  color: '#1976d2',
+  color: '#00a89d',
   cursor: 'pointer',
   fontSize: '0.9rem',
   padding: 0,
@@ -218,8 +221,8 @@ const unresolvedBadgeStyle: React.CSSProperties = {
 function sourceBadgeStyle(source: string): React.CSSProperties {
   return {
     fontSize: '0.75rem',
-    color: source === 'jobber' ? '#1565c0' : '#555',
-    background: source === 'jobber' ? '#e3f2fd' : '#f0f0f0',
+    color: source === 'jobber' ? '#00a89d' : '#555',
+    background: source === 'jobber' ? '#e0f7f5' : '#f0f0f0',
     padding: '0.1rem 0.4rem',
     borderRadius: 10,
   };

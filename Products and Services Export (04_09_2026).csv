@@ -1,0 +1,646 @@
+Name,Description,Category,Unit Price,Bookable,Duration Minutes,Quantity Enabled,Minimum Quantity,Maximum Quantity,Taxable,Active
+Labor,Hourly labor charge,Service,0.0,false,,"","","",true,true
+Materials,"",Service,0.0,false,,"","","",true,true
+Electrical: Run new circuit from panel for microwave outlet,Assumes panel has space and run is no more than 10 ft,Service,300.0,false,,"","","",true,true
+Painting: Patches and painting for outlet run,Hourly labor charge,Service,50.0,false,,"","","",true,true
+Insulation: Insulate One Interior Wall,"",Service,65.0,false,,"","","",true,true
+Debris Removal,"",Service,500.0,false,,"","","",true,true
+Interior Painting,Customer to provide paint,Service,50.0,false,,"","","",true,true
+Electrical: Swap Out Existing Can Light With New,"",Service,150.0,false,,"","","",true,true
+Electrical: Swap out existing switch with dimmer,"",Service,150.0,false,,"","","",true,true
+Misc: Remove Door Stopper,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install new Shower Fixture,"Fixture to be provided by customer
+One valve.  If customer selected multiple diverter fixture will require change order at additional cost (I.E. separate hand held shower head)",Service,600.0,false,,"","","",true,true
+Misc: Re Caulk Shower,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install new garbage disposal,Customer to provide disposal,Service,250.0,false,,"","","",true,true
+Misc,"",Service,65.0,false,,"","","",true,true
+Drywall: Patches from Lighting Install,"",Service,65.0,false,,"","","",true,true
+"Exterior: Drain Tile Installation, One Wall","",Service,65.0,false,,"","","",true,true
+Drywall: Ceiling Repairs,"",Service,65.0,false,,"","","",true,true
+Interior Painting: Ceilings,"",Service,65.0,false,,"","","",true,true
+Demo,"",Service,70.0,false,,"","","",true,true
+Carpentry: Hang New Medicine Cabinet,"Assumes cabinet is no larger than 40"" wide
+Customer to provide medicine cabinet",Service,200.0,false,,"","","",true,true
+Electrical: Install New Vanity Light (existing electrical),"If new wiring or circuit is needed, will require a change order at additional cost
+Customer to provide light fixture",Service,150.0,false,,"","","",true,true
+Plumbing: Redirect stove gas line,"",Service,75.0,false,,"","","",true,true
+"Drywall: Hole Patch Less Than 6""","",Service,150.0,false,,"","","",true,true
+Electrical: Swap Existing Outlet With New,"Will utilize existing wiring.  If new wiring or circuit needs to be run, will require change order at additional cost",Service,150.0,false,,"","","",true,true
+Electrical: Swap Existing Light Fixture with New,"Customer to provide light fixture
+
+If new wiring or circuit is needed, will require a change order at additional cost",Service,250.0,false,,"","","",true,true
+"HVAC: Clean Vents In Apartment, Return and Supply","",Service,30.0,false,,"","","",true,true
+HVAC: Furnace Service,"",Service,150.0,false,,"","","",true,true
+Appliances: Inspect Over Range Hood Vent For Function,"",Service,65.0,false,,"","","",true,true
+Carpentry: Repair MDF Door or Window Frame,"If when windows are removed we find any wood rot or other changes that are needed, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Electrical: Run new circuit from panel for stove,"",Service,300.0,false,,"","","",true,true
+Countertops,"NOT INCLUDED IN ESTIMATE
+Will be quoted once kitchen cabinet layout is finalized and material is selected by customer",Service,0.0,false,,"","","",true,true
+Carpentry: Cabinet Hanging,"Customer to provide cabinets
+Assumes X total cabinets matching existing layout
+If layout changes are made, may require change order at additional cost to adjust for cabinet total and layout complexity
+
+If cabinets selected are 46"" uppers or larger, will require change order for additional complexity of accounting for uneven walls",Service,200.0,false,,"","","",true,true
+Carpentry: Install Baseboard Trim,Customer to provide trim,Service,65.0,false,,"","","",true,true
+Tile: Install Durock Shower Surround,"",Service,65.0,false,,"","","",true,true
+Tile: Waterproof Shower Surround,Redguard waterproofing,Service,65.0,false,,"","","",true,true
+Tile: Install Durock Sub Floor,"",Service,65.0,false,,"","","",true,true
+Tile: Construct Shower Pan,"",Service,1050.0,false,,"","","",true,true
+Plumbing: Toilet Install,"Customer to provide toilet
+Will use existing plumbing.  If significant changes are required to plumbing to facilitate install will require change order at additional cost
+
+Standard toilets only.  Note, if smart toilet is selected with complex installation process, or electrical requirements will require a change order at additional cost",Service,200.0,false,,"","","",true,true
+Plumbing: Kitchen Sink Faucet Install,"Using existing plumbing
+If new rough plumbing is required, will require a change order",Service,120.0,false,,"","","",true,true
+Plumbing: Bathroom Sink Faucet Install,"Using existing plumbing
+If new rough plumbing is required, will require a change order
+
+Customer provided faucets",Service,120.0,false,,"","","",true,true
+Electrical: Install New Can Light,"",Service,250.0,false,,"","","",true,true
+Plumbing: Rough Connection for Dishwasher Hookup,"",Service,200.0,false,,"","","",true,true
+Electrical: Run New Light Switches for Room light,"",Service,200.0,false,,"","","",true,true
+Plumbing: install new wax ring and re seat toilet,"",Service,150.0,false,,"","","",true,true
+Flooring: Install new laminate flooring (Basic),$3 Per Sq Ft,Service,4.0,false,,"","","",true,true
+Carpentry: Install Baseboard Shoe,"",Service,65.0,false,,"","","",true,true
+Condo Coordination,"",Service,1000.0,false,,"","","",true,true
+Drywall: Patches,"Repair, tape, sand, and mud cracks in drywall",Service,65.0,false,,"","","",true,true
+Electrical: Repair light fixture,"",Service,150.0,false,,"","","",true,true
+Carpentry: Remove Baseboard Shoe,"",Service,65.0,false,,"","","",true,true
+Plumbing: Repair Toilet Flange,"",Service,150.0,false,,"","","",true,true
+Carpentry: Install Blocking,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install Fridge Water Line With Shut Off,"",Service,150.0,false,,"","","",true,true
+Electrical: Install New Outlet,"Will draw power from existing power source within 4'.  If nearest power source is farther, will require change order at additional cost",Service,250.0,false,,"","","",true,true
+Tile: Install Tiled Shower Surround,"Includes professional layout, wet cutting of tile as required for proper fit, setting, and grouting of wall tile in shower surround.
+
+Does not include shelves, niches, benches, or decorative inlays. If desired, these require a change order at additional cost.
+
+Customer to provide tile and grout.
+
+Pricing assumes large-format tile approximately 12x12 or 12×24. Smaller format, mosaic, or specialty tile patterns require a change order due to increased labor.",Service,75.0,false,,"","","",true,true
+Plumbing: Install Rough In For Tub,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install New Tub,"Customer to provide tub
+Will utilize existing plumbing.  If plumbing changes are needed will require change order at additional cost",Service,800.0,false,,"","","",true,true
+Carpentry: Install Floating Vanity,"",Service,600.0,false,,"","","",true,true
+Carpentry: Install Recessed Medicine Cabinet,"",Service,500.0,false,,"","","",true,true
+Electrical: Install New Bathroom Vent Fan,"Includes running new vent to exterior of home
+Customer to supply vent fan
+
+Existing electrical will be used, if new electrical needs to be run will require a change order at additional cost",Service,65.0,false,,"","","",true,true
+Carpentry: Front Porch Rebuild,"",Service,65.0,false,,"","","",true,true
+Carpentry: Stairwell Rebuild,"",Service,65.0,false,,"","","",true,true
+Painting: Stain Oak Treads,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install Utility Sink,"",Service,150.0,false,,"","","",true,true
+Electrical: Run new circuit from panel to new outlet,"",Service,150.0,false,,"","","",true,true
+Framing: Install new wall,"",Service,65.0,false,,"","","",true,true
+Carpentry: Build Base for Kitchen Island,"",Service,65.0,false,,"","","",true,true
+Painting: Cabinet Painting,"",Service,50.0,false,,"","","",true,true
+Carpentry: Install Chair Rail Trim,"",Service,65.0,false,,"","","",true,true
+Plumbing: Rough Plumbing to Relocate Sink,Relocate kitchen sink to window area,Service,75.0,false,,"","","",true,true
+Flooring: Cork Underlayment with Mastic Application,450 total sq ft,Service,65.0,false,,"","","",true,true
+Gutter Repair,"",Service,65.0,false,,"","","",true,true
+Garage Hole Repair,"Repair hole in garage
+
+Replace rotted siding 
+Replace rotted wood
+Reframe with new 2x4 and plywood
+
+Color match with new siding will be approximate",Service,65.0,false,,"","","",true,true
+Exterior Painting,"Paint exterior of garage in area with replaced siding
+
+Color match will be approximate",Service,65.0,false,,"","","",true,true
+Carpentry: Install new Exterior Door Slab,"Customer to provide door.  Chicago Reno can facilitate pickup as needed
+
+Assumes door selected will match existing opening.  If substantial re-framing and drywall work is required, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Carpentry: Flooring Repair,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install New Bifold Door,"Customer to provide door.  Chicago Reno can facilitate pickup as needed
+
+Assumes door selected will match existing opening.  If substantial re-framing and drywall work is required, will require change order at additional cost",Service,250.0,false,,"","","",true,true
+Carpentry: Install New Window,"If when windows are removed we find any wood rot or other changes that are needed, will require change order at additional cost
+
+Customer to provide window
+Chicago Reno can take measurements.  If needed additional visit charge will be added",Service,400.0,false,,"","","",true,true
+Carpentry: Install New Door and Window Casing,"If when windows are removed we find any wood rot or other changes that are needed, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Drywall: Installation of New Drywall,"Includes drywall material, mud, tape, and sanding prep for paint
+
+(- Misc drywall fixes from demo of tile, install of vanity, etc) - for bathroom renovation",Service,65.0,false,,"","","",true,true
+Electrical: Replace Bathroom Vent Fan,"Labor only
+Customer to supply vent fan
+Existing electrical will be used, if new electrical needs to be run will require a change order at additional cost
+Assumes no adjustments needed to ceiling from same size and style of vent fan.  If different size or style is desired will require change order at additional cost",Service,150.0,false,,"","","",true,true
+Rough Electrical,"",Service,75.0,false,,"","","",true,true
+Electrical: Recessed Light Install,"Customer to provide recessed lights
+Assumes power can be drawn from no more than 4' away.  If longer, will require change order at additional cost",Service,250.0,false,,"","","",true,true
+Carpentry: Install New Pocket Door,"Customer to provide door
+
+If when walls are opened, electrical, plumbing or other complications arise that need to be adjusted will require change order at additional cost",Service,600.0,false,,"","","",true,true
+Plumbing: Finish Plumbing Installation,"",Service,150.0,false,,"","","",true,true
+Carpentry: Install Double Vanity,"Customer to provide vanity
+
+Will use existing plumbing.  If significant changes are required to plumbing to facilitate install will require change order at additional cost",Service,600.0,false,,"","","",true,true
+Carpentry: Towel Bar Install,"",Service,120.0,false,,"","","",true,true
+Install Glass Shower Doors,"For master bathroom
+Includes labor and materials for fabrication and installation of custom glass shower doors",Service,2000.0,false,,"","","",true,true
+Carpentry: Deck Installation,"",Service,65.0,false,,"","","",true,true
+Electrical: Adjust Vanity Light,"",Service,100.0,false,,"","","",true,true
+Carpentry: Install New Plywood Sub Floor,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install New Prehung Door,"Standard sized doors
+Customer provided
+If significant modifications are needed will require a change order at additional cost",Service,520.0,false,,"","","",true,true
+Carpentry: Framing,"",Service,65.0,false,,"","","",true,true
+Plumbing: Install Built in Dehumidifier,Customer to provide dehumidifier,Service,600.0,false,,"","","",true,true
+Flooring: Install New Hardwood,$5 per sq ft,Service,6.0,false,,"","","",true,true
+Plumbing: Rough Connection for Shower,"Adjustments to re position shower
+Assumes shower will move no more than 3' away from current location on the same wall",Service,600.0,false,,"","","",true,true
+Carpentry: Trim Doors to Size,"",Service,65.0,false,,"","","",true,true
+Interior Painting: Closet Doors,"",Service,65.0,false,,"","","",true,true
+Carpentry: Closet Door Installation,"Customer to provide door.  Chicago Reno can facilitate pickup as needed
+
+Assumes door selected will match existing opening.  If substantial re-framing and drywall work is required, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Flooring: Install Underylament,"",Service,65.0,false,,"","","",true,true
+Carpentry: Repair or replace vanity toe kick,"",Service,65.0,false,,"","","",true,true
+Framing and drywall adjustment for half kitchen wall,"",Service,65.0,false,,"","","",true,true
+Carpentry: Replace Door Hardware,Hardware to be provided by customer,Service,30.0,false,,"","","",true,true
+Carpentry: Build Custom Desk,"",Service,65.0,false,,"","","",true,true
+Plumbing: Rough Connection for Cold Plunge,"",Service,65.0,false,,"","","",true,true
+Electrical: Rough Electrical for Sauna,"",Service,65.0,false,,"","","",true,true
+Carpentry: Reinstall Existing Vanity,"",Service,600.0,false,,"","","",true,true
+Carpentry: Install New Sign,"",Service,65.0,false,,"","","",true,true
+Countertops: Premium Edge,"",Service,0.0,false,,"","","",true,true
+Paint,"Touch up paint near entry door
+Extra paint in furnace closet",Service,0.0,false,,"","","",true,true
+Caulk shower surround,"",Service,0.0,false,,"","","",true,true
+Remove existing shower doors and replacr,"",Service,0.0,false,,"","","",true,true
+Cabinet Paint: Prep,"Cover surrounding area in protective plastic sheathing
+Apply paper roll cover to floor",Service,65.0,false,,"","","",true,true
+Cleaning: Deep Clean Unit Turn,"",Service,0.0,false,,"","","",true,true
+Tile: Shower Ceiling,"Customer to provide tile and grout
+Large format tile 12x12 or 12x24
+If smaller format tile is desired, will require a change order at additional cost",Service,70.0,false,,"","","",true,true
+Tub Reglaze,"",Service,800.0,false,,"","","",true,true
+Sub floor Repair,"",Service,0.0,false,,"","","",true,true
+Cabinet Pull Installation,"",Service,30.0,false,,"","","",true,true
+Tile: Kitchen Backsplash,Customer to provide tile and grout,Service,75.0,false,,"","","",true,true
+Plumbing: Install Water Heater,"",Service,800.0,false,,"","","",true,true
+Plumbing: Install Kitchen Sink,Customer to provide sink,Service,400.0,false,,"","","",true,true
+HVAC: Repair Duct Work,Repair 5 linear feet of duct work,Service,65.0,false,,"","","",true,true
+Framing: LVL Beam,"",Service,65.0,false,,"","","",true,true
+HVAC: Dryer Vent Replacement,"",Service,0.0,false,,"","","",true,true
+HVAC: Furnace Vent,"",Service,0.0,false,,"","","",true,true
+Materials: Framing,"",Service,100.0,false,,"","","",true,true
+Materials: LVL Beam,"",Service,300.0,false,,"","","",true,true
+Materials: Toilet,"",Service,0.0,false,,"","","",true,true
+Materials: Hot Water Heater,"",Service,0.0,false,,"","","",true,true
+Materials: Kitchen Sink,"",Service,0.0,false,,"","","",true,true
+Materials: Garbage Disposal,"",Service,0.0,false,,"","","",true,true
+Materials: Kitchen Sink Faucet,"",Service,0.0,false,,"","","",true,true
+Materials: Bathroom Sink Faucet,"",Service,0.0,false,,"","","",true,true
+Materials: Ductwork,"",Service,0.0,false,,"","","",true,true
+Materials: Dryer Vent,"",Service,0.0,false,,"","","",true,true
+Materials: Furnace Vent,"",Service,0.0,false,,"","","",true,true
+HVAC: AC Unit Install,"",Service,0.0,false,,"","","",true,true
+Materials: AC Units,"",Service,0.0,false,,"","","",true,true
+Electrical: Replacement of Romex with Conduit,"",Service,65.0,false,,"","","",true,true
+Materials: Electrical Romex to Conduit Conversion,"",Service,0.0,false,,"","","",true,true
+Electrical: Panel Repairs,"",Service,0.0,false,,"","","",true,true
+Electrical: Outlet and Switch Replacement,"",Service,0.0,false,,"","","",true,true
+Electrical: GFCI Outlet Install,"",Service,350.0,false,,"","","",true,true
+Electrical: Junction Box Cover Install,"",Service,0.0,false,,"","","",true,true
+Electrical: Swap Existing Light Fixture with Ceiling Fan,"Will use existing electrical.  If new rough electrical is required, will need a change order at additional cost",Service,200.0,false,,"","","",true,true
+Electrical: Install Battery Operated Smoke Detectors,"",Service,30.0,false,,"","","",true,true
+Materials: Smoke Detectors (Battery),"",Service,0.0,false,,"","","",true,true
+Electrical: Install Battery Operated Smoke and CO2 Detectors,"",Service,0.0,false,,"","","",true,true
+Materials: Smoke and CO2 Detectors,"",Service,0.0,false,,"","","",true,true
+Materials: Exterior Paint,"",Service,0.0,false,,"","","",true,true
+Flooring: Install Hardwood Thresholds,"Install thresholds
+
+between the bedroom on the
+
+nd floor of the main building
+and the kitchen.",Service,0.0,false,,"","","",true,true
+Flooring: Refinish Hardwood Floors,"",Service,0.0,false,,"","","",true,true
+Carpentry: Handrail Install,"Customer to provide finish materials
+",Service,65.0,false,,"","","",true,true
+Materials: Basic Wooden Handrail,"",Service,0.0,false,,"","","",true,true
+Materials: Hardwood Floor,Budget $4 per sq,Service,4.0,false,,"","","",true,true
+Install New Concrete Sub Floor ,"",Service,65.0,false,,"","","",true,true
+Install New Stock Shower Doors,"Customer to provide door.  Chicago Reno can facilitate pickup as needed
+
+Assumes door selected will match existing opening.  If substantial re-framing and drywall work is required, will require change order at additional cost",Service,0.0,false,,"","","",true,true
+Carpentry: Install New Mirror,Customer to provide mirror,Service,100.0,false,,"","","",true,true
+Tile: Loose Tile Repair,"",Service,75.0,false,,"","","",true,true
+Carpentry: Balcony Door Repair,"",Service,0.0,false,,"","","",true,true
+Misc: Window Caulk,"",Service,0.0,false,,"","","",true,true
+Misc: Deep Clean Washer Door Gasket,"",Service,0.0,false,,"","","",true,true
+Carpentry: Door Handle Repair,"",Service,0.0,false,,"","","",true,true
+Electrical: Install Proper Outlet Ground,"",Service,150.0,false,,"","","",true,true
+Cement,"",Service,0.0,false,,"","","",true,true
+Tile: Bath Surround,"Includes professional layout, wet cutting of tile as required for proper fit, setting, and grouting of wall tile in shower surround.
+
+Does not include shelves, niches, benches, or decorative inlays. If desired, these require a change order at additional cost.
+
+Customer to provide tile and grout.
+
+Pricing assumes large-format tile approximately 12x12 or 12×24. Smaller format, mosaic, or specialty tile patterns require a change order due to increased labor.",Service,75.0,false,,"","","",true,true
+Plumbing: Install Bath Faucet,"Faucet to be provided by customer
+Will use existing rough plumbing.  If new rough plumbing is needed or changes are required to existing plumbing require change order at additional cost",Service,150.0,false,,"","","",true,true
+Carpentry: Deck Footing Repair,"",Service,0.0,false,,"","","",true,true
+Misc: Weather Stripping,"",Service,65.0,false,,"","","",true,true
+Tenant Coordination,"",Service,25.0,false,,"","","",true,true
+Plumbing: Re-connect Gas Stove,"",Service,120.0,false,,"","","",true,true
+Install New Plywood Subfloor,"",Service,65.0,false,,"","","",true,true
+Tile: Repair Tile Grout,"",Service,65.0,false,,"","","",true,true
+Carpentry: Repair Cabinet,"",Service,65.0,false,,"","","",true,true
+Carpentry: Door Adjustment,"",Service,55.0,false,,"","","",true,true
+Plumbing: Swap hot and cold water line shut off valves,"",Service,0.0,false,,"","","",true,true
+Plumbing: Drain Line Repair,"",Service,0.0,false,,"","","",true,true
+Roofing,"",Service,75.0,false,,"","","",true,true
+Tool Rental,"",Service,500.0,false,,"","","",true,true
+Permit,City permit and coordination fee,Service,1000.0,false,,"","","",true,true
+Carpentry: Install New French Doors,"Labor only
+Customer to provide doors and door hardware",Service,600.0,false,,"","","",true,true
+Carpentry: Closet Kit Installation,"",Service,400.0,false,,"","","",true,true
+Carpentry: Exterior Post Repair,"",Service,65.0,false,,"","","",true,true
+Carpentry: Exterior Temporary Overhang Support Construction,"",Service,65.0,false,,"","","",true,true
+Exterior: Flashing Installation,"",Service,75.0,false,,"","","",true,true
+Carpentry: Replace Fence Board,"",Service,65.0,false,,"","","",true,true
+Plumbing: Shower Mixer Valve Replacement,"",Service,250.0,false,,"","","",true,true
+Caulk Bathroom Sink,"",Service,65.0,false,,"","","",true,true
+Flooring: Hardwood Flooring Repair,"",Service,65.0,false,,"","","",true,true
+Plumbing: Cap Gas Line,"",Service,250.0,false,,"","","",true,true
+Carpentry: TV Mount,"",Service,300.0,false,,"","","",true,true
+Electrical: Install New Junction Box and Outlet,"",Service,250.0,false,,"","","",true,true
+Carpentry: Wainscoting,"",Service,65.0,false,,"","","",true,true
+Electrical: Re-Install Panel Covers,"",Service,50.0,false,,"","","",true,true
+Materials: Panel cover fasteners,"",Service,5.0,false,,"","","",true,true
+Materials: Electrical Panel Covers,"",Service,110.0,false,,"","","",true,true
+Painting: Caulk / touch ups for baseboard shoe,"",Service,65.0,false,,"","","",true,true
+HVAC: Bathroom Vent Fan Ductwork Adjustments,"",Service,65.0,false,,"","","",true,true
+Carpentry: Crown Molding Installation,"",Service,65.0,false,,"","","",true,true
+Tile: Shower Niche,"Install one standard sized shower niche in guest bathroom shower
+If when walls are opened, substantial changes to framing or moving of plumbing / electrical are required to accommodate niche, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Misc: Tree Removal,"",Service,65.0,false,,"","","",true,true
+Misc: Poly Injection,"",Service,65.0,false,,"","","",true,true
+Materials: Footing,"",Service,0.0,false,,"","","",true,true
+Materials: Poly Injection,"",Service,0.0,false,,"","","",true,true
+Concrete: Install new Sidewalk,"",Service,65.0,false,,"","","",true,true
+Materials: Sidewalk,"",Service,0.0,false,,"","","",true,true
+Exterior: French Drain,"",Service,0.0,false,,"","","",true,true
+Materials: French Drain,"",Service,0.0,false,,"","","",true,true
+Masonry: Tuckpointing,"",Service,0.0,false,,"","","",true,true
+Materials: Tuckpointing,"",Service,0.0,false,,"","","",true,true
+Exterior: Siding Repair,"",Service,65.0,false,,"","","",true,true
+Materials: Siding Repair,"",Service,0.0,false,,"","","",true,true
+Exterior: Gutters,"",Service,0.0,false,,"","","",true,true
+Materials: Gutters,"",Service,0.0,false,,"","","",true,true
+Exterior: Facia,"",Service,0.0,false,,"","","",true,true
+Materials: Facia,"",Service,0.0,false,,"","","",true,true
+Exterior: Roofing,"",Service,0.0,false,,"","","",true,true
+Material: Shingles,"",Service,0.0,false,,"","","",true,true
+Materials: Window,"",Service,0.0,false,,"","","",true,true
+Exterior: Guardrail,"",Service,0.0,false,,"","","",true,true
+Materials: Guardrail,"",Service,0.0,false,,"","","",true,true
+Exterior: Fencing,"",Service,0.0,false,,"","","",true,true
+Materials: Fencing,"",Service,0.0,false,,"","","",true,true
+Carpentry: Cabinet Handle Repair,"",Service,0.0,false,,"","","",true,true
+Carpentry: Repair bifold door,"",Service,65.0,false,,"","","",true,true
+Comed Coordination,"",Service,500.0,false,,"","","",true,true
+Exterior: Wood Trim Replacement,"",Service,65.0,false,,"","","",true,true
+Exterior: Caulking,"",Service,65.0,false,,"","","",true,true
+Tile: Long Format Adjustment,"",Service,65.0,false,,"","","",true,true
+Electrical: Outlet Elimination,"",Service,100.0,false,,"","","",true,true
+Plumbing: Drain Flange Adjustment,"",Service,150.0,false,,"","","",true,true
+Carpentry: Window Re-frame,"",Service,65.0,false,,"","","",true,true
+Electrical: Replace Existing Exterior Light Fixture With New,"",Service,65.0,false,,"","","",true,true
+Carpentry: Kitchen Cabinet Repair,"",Service,65.0,false,,"","","",true,true
+Travel Surcharge,"",Service,500.0,false,,"","","",true,true
+Tile: Floor Sealant Application,"",Service,65.0,false,,"","","",true,true
+Walkup Surcharge,"",Service,1000.0,false,,"","","",true,true
+Plumbing: Rough Connection for Shower Drain,"1st floor and master bathroom showers
+Adjust tub drain connection to shower connection",Service,2500.0,false,,"","","",true,true
+Tile: Install and grout new Tile Floor,"Includes professional layout, wet cutting of tile as required for proper fit, setting, and grouting tile.  
+
+Does not include shelves, niches, benches, or decorative inlays. If desired, these require a change order at additional cost.
+
+Customer to provide tile and grout.
+
+Pricing assumes large-format tile approximately 12x12 or 12×24. Smaller format, mosaic, or specialty tile patterns require a change order due to increased labor.",Service,75.0,false,,"","","",true,true
+Carpentry: Towel Bar Set Install,"All 3 bathrooms
+Customer to provide towel bar",Service,120.0,false,,"","","",true,true
+Materials: Laminate Flooring,Budget for customer material selection: $3 / Sq Ft,Service,3.0,false,,"","","",true,true
+Materials: Shoe Trim,Budget for customer material selection: $1 per LF,Service,1.0,false,,"","","",true,true
+Materials: Caulk,"",Service,10.0,false,,"","","",true,true
+Electrical: Extended Electric for Bathroom Vent Fan,"",Service,250.0,false,,"","","",true,true
+Tile: Tile Format Size Adjustment: Mosaic,Installation of mosaic floor instead of standard format bathroom floor,Service,65.0,false,,"","","",true,true
+Exterior: Power Wash and Paint Prep,"",Service,65.0,false,,"","","",true,true
+"Cleaning: Carpeted Stairwell, 3 Stories","",Service,65.0,false,,"","","",true,true
+Materials: Contractor Bags,"",Service,100.0,false,,"","","",true,true
+Materials: Drywall,"Mud
+Tape
+Drywall",Service,100.0,false,,"","","",true,true
+Materials: Fastners,"",Service,100.0,false,,"","","",true,true
+Materials: Paint Supplies,"Brushes
+Rollers
+Tape
+Drop Cloths",Service,100.0,false,,"","","",true,true
+Materials: Baseboard Supplies,"Nails / Fasteners
+Caulk",Service,50.0,false,,"","","",true,true
+Materials: Copper Water Lines,"",Service,200.0,false,,"","","",true,true
+Materials: Durock,"",Service,200.0,false,,"","","",true,true
+Materials: Redgard,"",Service,100.0,false,,"","","",true,true
+Materials: Bathroom Tile Supplies,"Thinset
+Spacers
+Sponges
+etc",Service,250.0,false,,"","","",true,true
+Plumbing: Swap Galvanized with Copper Water Lines,"",Service,500.0,false,,"","","",true,true
+Plumbing: Relocate stove gas line,"",Service,500.0,false,,"","","",true,true
+Flooring: Install new vinyl flooring,Install new vinyl flooring in 770 sq ft of living space,Service,4.5,false,,"","","",true,true
+Materials: Vinyl Flooring,Budget for customer material selection: $3 / Sq Ft,Service,3.0,false,,"","","",true,true
+Swap light bulb,Swap light bulb on second floor back stairwell that is out,Service,25.0,false,,"","","",true,true
+Unit 2 doorbell fix,Unit 2 mentioned doorbell is no longer ringing,Service,55.0,false,,"","","",true,true
+Electrical: Repair Exterior Light Fixture,"",Service,65.0,false,,"","","",true,true
+Materials: Light Fixture Bracket,"",Service,10.0,false,,"","","",true,true
+Plumbing: Two Way Diverter,"",Service,400.0,false,,"","","",true,true
+Carpentry: Reverse Swing of Prehung Door,"",Service,250.0,false,,"","","",true,true
+Materials: 2 Way Diverter Rough Materials,"",Service,40.0,false,,"","","",true,true
+Tile: Tiled Baseboard Trim,"Customer to provide tile and grout
+Large format tile 12x12 or 12x24
+If smaller format tile is desired, will require a change order at additional cost",Service,75.0,false,,"","","",true,true
+Insulation: Insulate One Interior Ceiling,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install Storage Niche in Wall,"",Service,65.0,false,,"","","",true,true
+Carpentry: Finish new height of fireplace,"",Service,65.0,false,,"","","",true,true
+Tile: Install Tiled Steps,"Customer to provide tile and grout
+Large format tile 12x24
+If smaller format tile is desired, will require a change order at additional cost",Service,75.0,false,,"","","",true,true
+Plumbing: Drain and Water Lines for New Vanity Placement,"",Service,70.0,false,,"","","",true,true
+Materials: Tub Rough In,"",Service,200.0,false,,"","","",true,true
+Materials: Rough Plumbing,"Copper, PVC, fittings, etc",Service,400.0,false,,"","","",true,true
+Materials: Misc Electrical,"",Service,100.0,false,,"","","",true,true
+Plumbing: Rough Plumbing for Toilet,Water and drain lines,Service,400.0,false,,"","","",true,true
+Materials: Demo Supplies,"Contractor bags, etc",Service,100.0,false,,"","","",true,true
+Materials: Shower Pan,"",Service,150.0,false,,"","","",true,true
+Plumbing: Rough Plumbing for Vanity,Includes drain and water lines,Service,500.0,false,,"","","",true,true
+Carpentry: Door Threshold Repair,"",Service,65.0,false,,"","","",true,true
+Materials: Door Threshold Repair,"",Service,30.0,false,,"","","",true,true
+Misc: Replace Glass Shower Door Gasket,"",Service,65.0,false,,"","","",true,true
+Materials: Shower Door Gasket,"",Service,20.0,false,,"","","",true,true
+HVAC: Repair Loose Air Vent,"",Service,65.0,false,,"","","",true,true
+Materials: Grout,"",Service,50.0,false,,"","","",true,true
+Framing: Frame out Closet,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install Heated Towel Rack,"",Service,65.0,false,,"","","",true,true
+Carpentry: Picture Hanging (Large),"",Service,100.0,false,,"","","",true,true
+Electrical: Install New Light Fixture,"Customer to provide light fixture
+Will use existing electrical.  If substantial updates are needed will require a change order at additional cost",Service,350.0,false,,"","","",true,true
+Electrical: Run New Light Switch for Room light,"",Service,200.0,false,,"","","",true,true
+Carpentry: Install Electric Fireplace,Customer to provide fireplace,Service,400.0,false,,"","","",true,true
+Electrical: Switch Rewiring,"",Service,250.0,false,,"","","",true,true
+Tile: Small format tile surcharge,"",Service,65.0,false,,"","","",true,true
+Materials: Cabinets,"",Service,350.0,false,,"","","",true,true
+Materials: Cabinet Pulls,"",Service,10.0,false,,"","","",true,true
+Materials: Interior Paint,"Paint
+Primer",Service,100.0,false,,"","","",true,true
+Materials: Baseboard Trim and Shoe,"Budget: 
+$3 per LF of baseboard
+$1 per LF of shoe
+",Service,6.0,false,,"","","",true,true
+Materials: Recessed Lights,Budget: $15 per light,Service,20.0,false,,"","","",true,true
+Materials: Outlet,"",Service,10.0,false,,"","","",true,true
+Electrical: Install New Light Switch,"",Service,250.0,false,,"","","",true,true
+Materials: Light Switch,"",Service,10.0,false,,"","","",true,true
+Tile: Install Half Wall Tile,"Customer to provide tile and grout
+Large format tile 12x24
+If smaller format tile is desired, will require a change order at additional cost",Service,75.0,false,,"","","",true,true
+Handyman Surcharge,"",Service,150.0,false,,"","","",true,true
+Appliance: Dishwasher Repair,"",Service,65.0,false,,"","","",true,true
+Plumbing: Hot Water Heater Corrosion Repair,"",Service,75.0,false,,"","","",true,true
+Materials: Cedar Plank Fence Board,"",Service,25.0,false,,"","","",true,true
+Plumbing: Condo Water Shutoff Coordination,"",Service,500.0,false,,"","","",true,true
+Appliance: Hood Vent Repair,"",Service,65.0,false,,"","","",true,true
+Electrical: Relocate Light Fixture,"",Service,250.0,false,,"","","",true,true
+Exteior caulk,"",Service,65.0,false,,"","","",true,true
+Shopping time,"",Service,130.0,false,,"","","",true,true
+Flooring: Install new laminate flooring (Complex),$4 per sq ft,Service,5.0,false,,"","","",true,true
+Electrical: Run LED Strip Lighting,"",Service,75.0,false,,"","","",true,true
+Carpentry: Picture Frame Wall Molding Installation,"",Service,65.0,false,,"","","",true,true
+Materials: Molding Supplies,"Caulk
+Finish nails
+Liquid nails
+Etc",Service,50.0,false,,"","","",true,true
+Misc: Wallpaper Hanging,Customer to provide wallpaper,Service,65.0,false,,"","","",true,true
+Framing: Kitchen Island,"",Service,65.0,false,,"","","",true,true
+Electrical: Under Cabinet Lighting Install,Customer to provide lighting fixture,Service,1000.0,false,,"","","",true,true
+Materials: Backsplash Tile Supplies,"Thinset
+Spacers
+Sponges
+etc",Service,250.0,false,,"","","",true,true
+Materials: Wallpaper Supplies,"",Service,200.0,false,,"","","",true,true
+Materials: Concrete,"",Service,500.0,false,,"","","",true,true
+Materials: Kitchen Tile Supplies,"Thinset
+Spacers
+Sponges
+etc",Service,250.0,false,,"","","",true,true
+Pour new concrete subfloor,"After rough plumbing install
+
+",Service,65.0,false,,"","","",true,true
+Materials: Toilet Flange,"",Service,50.0,false,,"","","",true,true
+Carpentry: Access Panel Installation,"",Service,65.0,false,,"","","",true,true
+Materials: Access Panel,"Plywood
+Finish trim",Service,0.0,false,,"","","",true,true
+Carpentry: Cabinet Patching,Patch open area over newly installed stove with finish trim,Service,65.0,false,,"","","",true,true
+Materials: Cabinet Patch,"",Service,50.0,false,,"","","",true,true
+Materials: Vanity,"",Service,0.0,false,,"","","",true,true
+Glass Half Shower Wall,Includes Labor and Materials,Service,1000.0,false,,"","","",true,true
+Materials: Shower Fixture,$X budget,Service,0.0,false,,"","","",true,true
+Materials: Bathroom Floor Tile,Customer Material Budget: $x per LF,Service,0.0,false,,"","","",true,true
+Materials: Bathroom Floor Grout,"",Service,100.0,false,,"","","",true,true
+Materials: Shower Wall Tile,Customer Material Budget: $X per LF,Service,0.0,false,,"","","",true,true
+Materials: Mosaic Shower Floor Tile,Customer Material Budget: $X per LF,Service,0.0,false,,"","","",true,true
+Appliance: Wine Fridge Install,"",Service,0.0,false,,"","","",true,true
+Materials: Prehung Door,"",Service,0.0,false,,"","","",true,true
+Carpentry: Install Door Hardware,Customer to provide hardware,Service,0.0,false,,"","","",true,true
+Materials: Door Hardware,Customer Budget: $X per door,Service,0.0,false,,"","","",true,true
+Carpentry: Door Casing Trim,"Install new customer provided door casing 
+
+",Service,65.0,false,,"","","",true,true
+Materials: Door Casing,"",Service,0.0,false,,"","","",true,true
+Materials: Towel bar Set,"Customer Budget $X per set
+",Service,0.0,false,,"","","",true,true
+Materials: Bathroom Mirror,Customer Budget: $X,Service,0.0,false,,"","","",true,true
+Materials: Shower Curb Topper,"",Service,0.0,false,,"","","",true,true
+Materials: Shower Edging,"",Service,0.0,false,,"","","",true,true
+Carpentry: Wire Shelving Installation,"",Service,65.0,false,,"","","",true,true
+Carpentry: Stain Baseboard Trim,"",Service,65.0,false,,"","","",true,true
+Carpentry: Bifold Door Stain,"",Service,65.0,false,,"","","",true,true
+Carpentry: Deck Post Repair,"",Service,100.0,false,,"","","",true,true
+Misc: Baseboard Caulk,"",Service,65.0,false,,"","","",true,true
+Misc: Removal of Basketball Hoop,"",Service,65.0,false,,"","","",true,true
+Carpentry: Custom Cabinet Topper,"",Service,65.0,false,,"","","",true,true
+Misc: Install Basketball Hoop,"",Service,65.0,false,,"","","",true,true
+Electric: Move Chandelier ,"",Service,250.0,false,,"","","",true,true
+Flooring: Install new outdoor flooring on patio,"",Service,65.0,false,,"","","",true,true
+Materials: Cabinet Door,"",Service,100.0,false,,"","","",true,true
+Materials: Large Format Backsplash Tile,Budget 1 case @$50,Service,50.0,false,,"","","",true,true
+Carpentry: Wall Paneling,"",Service,65.0,false,,"","","",true,true
+Electrical: LED Light Installation,"",Service,150.0,false,,"","","",true,true
+Carpentry: Roofing,"",Service,75.0,false,,"","","",true,true
+Carpentry: Screen Framing and Installation,"",Service,65.0,false,,"","","",true,true
+Materials: Roofing,"",Service,0.0,false,,"","","",true,true
+Materials: Screen Framing,"",Service,0.0,false,,"","","",true,true
+Materials: Finish Carpentry,"",Service,0.0,false,,"","","",true,true
+Rough Plumbing: Washer Dryer Hookup Adjustment,"",Service,400.0,false,,"","","",true,true
+Electrical: Relocate Outlet,"Assumes move will be no farther than 4'
+If farther will require change order at additional cost",Service,250.0,false,,"","","",true,true
+Plumbing: Rough in for Washer Dryer Hookups,"Hot and cold water lines
+Drain line",Service,400.0,false,,"","","",true,true
+Electrical: Run New Circuit from Panel For Dryer,"",Service,400.0,false,,"","","",true,true
+Electrical: Upgrade Electric Panel,"",Service,3000.0,false,,"","","",true,true
+Electrical: Replace Light Switch,"Replace existing light switch with new
+Will utilize existing wiring
+If wiring changes are needed will require change order at additional cost",Service,150.0,false,,"","","",true,true
+Architectural Plans,"",Service,0.0,false,,"","","",true,true
+Carpentry: Structural Beam Installation,"",Service,0.0,false,,"","","",true,true
+Materials: Structural Roof Deck Beams,"",Service,0.0,false,,"","","",true,true
+Materials: Composite Decking,"",Service,0.0,false,,"","","",true,true
+Materials: Deck Railings,"",Service,0.0,false,,"","","",true,true
+Materials: Stairs,"",Service,0.0,false,,"","","",true,true
+Electrical: Basic Outdoor Light Fixture,"",Service,350.0,false,,"","","",true,true
+Parking Expenses,"",Service,40.0,false,,"","","",true,true
+Flooring: Install Vinyl Flooring Step,"",Service,130.0,false,,"","","",true,true
+Materials: Plywood,"",Service,100.0,false,,"","","",true,true
+Materials: Misc Carpentry,"",Service,100.0,false,,"","","",true,true
+Carpentry: Install New Single Vanity,"Single bowl vanity
+
+Customer to provide vanity
+
+Max vanity size is 36""
+If larger vanity selected will require change order at additional cost
+Will use existing plumbing.  If significant changes are required to plumbing to facilitate install will require change order at additional cost",Service,400.0,false,,"","","",true,true
+Carpentry: Install New Large Scale Mirror,Customer to provide large mirror,Service,400.0,false,,"","","",true,true
+Carpentry: Closet Door Hinge Repair,"Repair broken closet door hinge
+
+",Service,65.0,false,,"","","",true,true
+Materials: Toilet Mechanism,"",Service,30.0,false,,"","","",true,true
+Plumbing: Sink Unclog,"",Service,120.0,false,,"","","",true,true
+Materials: Vapor Barrier,"",Service,100.0,false,,"","","",true,true
+Materials: Toilet Wax Ring,"",Service,20.0,false,,"","","",true,true
+Plumbing: Fixture Repair,"",Service,250.0,false,,"","","",true,true
+Materials: Window Screen Repair,"",Service,50.0,false,,"","","",true,true
+Electrical: Replace Broken Outlet Cover,"",Service,50.0,false,,"","","",true,true
+Materials: Stainless Steel Laundry Hoses,"",Service,200.0,false,,"","","",true,true
+Misc: Toilet Seat Cover Repair,"",Service,150.0,false,,"","","",true,true
+Misc: Mold Remediation,"",Service,65.0,false,,"","","",true,true
+Materials: Mold Remediation,"",Service,200.0,false,,"","","",true,true
+Carpentry: Door Seal Replacement,"",Service,65.0,false,,"","","",true,true
+Materials: Door seal,"",Service,50.0,false,,"","","",true,true
+Materials: Floor Sealant,"",Service,200.0,false,,"","","",true,true
+Spam Request Administration Fee,"Per website quote submission form:
+
+""Note to Solicitors: This form is strictly for homeowners and property owners seeking remodeling or renovation services. Sales solicitations submitted through this form may be subject to a $100 administrative handling fee.""",Service,100.0,false,,"","","",true,true
+Carpentry: Banquette‑Style Bench Installation,Custom built 5' long banquette style bench installation in eating area Customer to provide all finish materials: labor only,Service,75.0,false,,"","","",true,true
+Framing: LVP Beam,"",Service,65.0,false,,"","","",true,true
+Materials: LVP Beam,"",Service,0.0,false,,"","","",true,true
+Electrical: Install Bathroom Exhaust Fan,"Replace existing vent fan with new
+Customer to supply vent fan
+
+Existing electrical and ductwork will be used, if new electrical or ductwork needs to be run will require a change order at additional cost
+If substantial opening changes are needed to fit newly selected vent fan, will require change order at additional cost",Service,65.0,false,,"","","",true,true
+Plumbing: Leak Repair,"",Service,800.0,false,,"","","",true,true
+Material: Fiberglass Bat Insulation,"",Service,100.0,false,,"","","",true,true
+HVAC: Install New Ductwork for Over the Range Hood Vent,"No more than 6' travel distance from hood to exterior of home
+If longer will require change order at additional cost",Service,500.0,false,,"","","",true,true
+Carpentry: Install Oak Treads and White Painted Risers on Staircase,"",Service,100.0,false,,"","","",true,true
+Tile: Wall Tile Sealant Application,"",Service,65.0,false,,"","","",true,true
+Materials: Wall Tile Sealant,"",Service,200.0,false,,"","","",true,true
+Tile: Install Shower Bench,"",Service,75.0,false,,"","","",true,true
+HVAC: Install new Laundry Vent,"",Service,800.0,false,,"","","",true,true
+Materials: Insulation,Bat insulation,Service,100.0,false,,"","","",true,true
+Carpentry: Subfloor Installation,"",Service,65.0,false,,"","","",true,true
+Flooring: Underlayment Installation,"",Service,65.0,false,,"","","",true,true
+Materials: Shower Niche,"",Service,100.0,false,,"","","",true,true
+materials: Self Leveling Cement,"",Service,300.0,false,,"","","",true,true
+Room Design: Full Design with Renderings,"Design package includes Floorplan, Moodboard, Rendered Image (before & after photo), Document with all links, notes and recommendations, and a Video Call Design Presentation
+
+Includes renderings",Service,1000.0,false,,"","","",true,true
+Carpentry: Install Baseboard Trim and Shoe,Customer to provide trim,Service,65.0,false,,"","","",true,true
+Coordination Charge,"",Service,500.0,false,,"","","",true,true
+Insulation: Insulate One Exterior Wall,"",Service,65.0,false,,"","","",true,true
+Plumbing: Shower Valve Two Way Diverter,"",Service,400.0,false,,"","","",true,true
+Plumbing: Certified Plumbing Inspection,"",Service,500.0,false,,"","","",true,true
+Tile: Install Mosaic Tiled Shower Floor,"Tile and grout to be provided by customer
+",Service,75.0,false,,"","","",true,true
+Carpentry: Install Banister,Customer to provide banister,Service,0.0,false,,"","","",true,true
+Carpentry: Build Base for Kitchen Peninsula,"",Service,65.0,false,,"","","",true,true
+Materials: Kitchen Peninsula Framing,"",Service,65.0,false,,"","","",true,true
+Appliance: Install Over Range Vent,"",Service,250.0,false,,"","","",true,true
+Carpentry: Custom Shelving Installation,"",Service,65.0,false,,"","","",true,true
+Painting: Handrail Stain,"",Service,65.0,false,,"","","",true,true
+Tile: Regrout,"",Service,65.0,false,,"","","",true,true
+Tile: Individual Replacement,"",Service,75.0,false,,"","","",true,true
+Misc: Install Non Custom Over Tub Sliding Glass Shower Doors,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install Balusters,"Customer to provide finish materials
+
+",Service,65.0,false,,"","","",true,true
+Materials: Plumbing Shut Off Valve,"",Service,20.0,false,,"","","",true,true
+Materials: Carpet Shampoo,"",Service,50.0,false,,"","","",true,true
+Materials: Window Casing,"",Service,50.0,false,,"","","",true,true
+Carpentry: Convert mortice to cylindrical locks,"",Service,250.0,false,,"","","",true,true
+Carpentry: Hang Blinds,"",Service,65.0,false,,"","","",true,true
+Carpentry: Built in Drawer Runner Installation,"",Service,65.0,false,,"","","",true,true
+Carpentry: Radiator cover install,"",Service,65.0,false,,"","","",true,true
+HVAC: Radiator Maintenance,"Swap air valves and turn valves as needed, ensure proper leveling across 6x radiators",Service,0.0,false,,"","","",true,true
+Materials: Radiator Supplies,"",Service,50.0,false,,"","","",true,true
+Carpentry: Toilet Paper Holder,"",Service,120.0,false,,"","","",true,true
+Materials: Schluter Tile Edge Trim,"",Service,300.0,false,,"","","",true,true
+Tile: Schluter Tile Edge Trim,Install customer provided schluter edge trim around all finished edges of installed tile,Service,65.0,false,,"","","",true,true
+Electrical: Schluter,"Customer to provide
+
+- For heated floors",Service,500.0,false,,"","","",true,true
+Framing: Shower Bench Creation,Frame out standard sized shower bench for tiled shower installation ,Service,65.0,false,,"","","",true,true
+HVAC: Kitchen Hood Vent Exterior Hole Creation,"",Service,65.0,false,,"","","",true,true
+Electrical: Radiant Flooring Install,"",Service,1000.0,false,,"","","",true,true
+Electrical: Light Fixture Elimination,"",Service,100.0,false,,"","","",true,true
+Materials: GFCI Outlet,"",Service,20.0,false,,"","","",true,true
+Plumbing: Gas Line Cancellation,"",Service,400.0,false,,"","","",true,true
+Plumbing: Ejector Pit Install,"",Service,6500.0,false,,"","","",true,true
+Tile: Install new Tiled Tub Surround,"Includes professional layout, wet cutting of tile as required for proper fit, setting, and grouting of wall tile in shower surround.
+
+Does not include shelves, niches, benches, or decorative inlays. If desired, these require a change order at additional cost.
+
+Customer to provide tile and grout.
+
+Pricing assumes large-format tile approximately 12x12 or 12×24. Smaller format, mosaic, or specialty tile patterns require a change order due to increased labor.
+",Service,75.0,false,,"","","",true,true
+Electrical: Light Switch Relocation,"",Service,250.0,false,,"","","",true,true
+Electrical: Breaker Installation,"",Service,250.0,false,,"","","",true,true
+Tile: Shower Height Adjustment,"",Service,75.0,false,,"","","",true,true
+Electrical: Install New Pendant Light,"Customer to provide light fixture
+Will use existing electrical.  If substantial updates are needed will require a change order at additional cost
+",Service,350.0,false,,"","","",true,true
+Carpentry: Oak Tread Installation,"",Service,250.0,false,,"","","",true,true
+Tile: Install New Fireplace Mantel,Install new customer provided mantel in fireplace,Service,0.0,false,,"","","",true,true
+Tile: Install New Tile Around Fireplace Mantel,Install customer provided tile around mantel of fireplace,Service,65.0,false,,"","","",true,true
+Electrical: Cord Tunnel Conduit Install,"",Service,65.0,false,,"","","",true,true
+Carpentry: Toe Kick Installation,"",Service,65.0,false,,"","","",true,true
+Countertops: Size Adjustment,"",Service,200.0,false,,"","","",true,true
+Materials: Rough Electric,"Conduit, wiring, boxes required",Service,100.0,false,,"","","",true,true
+Electrical: Light fixture cancellation,Removal of existing recessed lights in kitchen and living room. 6 total lights.,Service,100.0,false,,"","","",true,true
+carpentry: Install New Treads,"",Service,0.0,false,,"","","",true,true
+Floor Deep Clean,Flooring will be deep cleaned before installation of shoe and custom toe kick.,Service,0.0,false,,"","","",true,true
+Carpentry: Carpet Installation,"",Service,0.0,false,,"","","",true,true
+Appliances: Re Install Microwave,"",Service,150.0,false,,"","","",true,true
+Appliances: Re Install Dishwasher,"",Service,150.0,false,,"","","",true,true
+Masonry: Brick Repair,"",Service,65.0,false,,"","","",true,true
+Carpentry: Hang Curtain Rod,Customer to Provide Curtain Rod,Service,0.0,false,,"","","",true,true
+Misc: Handyman Work,"",Service,65.0,false,,"","","",true,true
+Carpentry: Install new Sliding Glass Exterior Door,"Customer to provide door
+Assumes standard opening
+If substantial adjustments are needed will require change order at additional cost",Service,800.0,false,,"","","",true,true
+Framing: Header Installation,"",Service,400.0,false,,"","","",true,true
+Materials: Header,"",Service,200.0,false,,"","","",true,true
+Materials: Brick Repair Supplies,"Mortar, buckets, sponges, etc",Service,100.0,false,,"","","",true,true
+Plumbing: Misc Rough,Remove and replace cracked cast iron in kitchen sink drain line,Service,400.0,false,,"","","",true,true
+Carpentry: Install New Handrail,"",Service,65.0,false,,"","","",true,true
+Materials: Wainscotting,"",Service,100.0,false,,"","","",true,true
+Plumbing: Gas Line Install,"",Service,0.0,false,,"","","",true,true
+HVAC: Install Thermostat,"",Service,0.0,false,,"","","",true,true
+Plumbing: Install Hot Water Heater,"",Service,0.0,false,,"","","",true,true
+Framing: Soffit,"",Service,0.0,false,,"","","",true,true

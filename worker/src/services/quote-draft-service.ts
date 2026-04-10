@@ -1,0 +1,259 @@
+import { PlatformError } from '../errors/index.js';
+import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem } from 'shared';
+
+export class QuoteDraftService {
+  private readonly db: D1Database;
+
+  constructor(db: D1Database) {
+    this.db = db;
+  }
+
+  /**
+   * Save a new quote draft with its line items.
+   */
+  async save(draft: QuoteDraft): Promise<QuoteDraft> {
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(
+        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(
+        draft.id,
+        draft.userId,
+        draft.customerRequestText,
+        draft.selectedTemplateId,
+        draft.selectedTemplateName,
+        draft.catalogSource,
+        draft.status,
+        draft.jobberRequestId ?? null,
+      ),
+    ];
+
+    const allItems = [
+      ...draft.lineItems.map((item, i) => ({ ...item, resolved: true, displayOrder: i })),
+      ...draft.unresolvedItems.map((item, i) => ({ ...item, resolved: false, displayOrder: i })),
+    ];
+
+    for (const item of allItems) {
+      statements.push(
+        this.db.prepare(
+          "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(
+          item.id,
+          draft.id,
+          item.productCatalogEntryId,
+          item.productName,
+          item.quantity,
+          item.unitPrice,
+          item.confidenceScore,
+          item.originalText,
+          item.resolved ? 1 : 0,
+          item.unmatchedReason ?? null,
+          item.displayOrder,
+        ),
+      );
+    }
+
+    await this.db.batch(statements);
+
+    const row = await this.db.prepare(
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+    ).bind(draft.id).first() as any;
+
+    return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems);
+  }
+
+  /**
+   * Get a single quote draft by ID, scoped to the user.
+   */
+  async getById(draftId: string, userId: string): Promise<QuoteDraft> {
+    const row = await this.db.prepare(
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
+    ).bind(draftId, userId).first() as any;
+
+    if (!row) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteDraftService',
+        operation: 'getById',
+        description: 'The quote draft was not found or you do not have permission to view it.',
+        recommendedActions: ['Verify the draft exists in your quotes list'],
+      });
+    }
+
+    const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
+    return this.mapDraftRow(row, lineItems, unresolvedItems);
+  }
+
+  /**
+   * List all quote drafts for a user, sorted by creation date descending (newest first).
+   */
+  async list(userId: string): Promise<QuoteDraft[]> {
+    const result = await this.db.prepare(
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
+    ).bind(userId).all();
+
+    const drafts: QuoteDraft[] = [];
+    for (const row of result.results as any[]) {
+      const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
+      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems));
+    }
+    return drafts;
+  }
+
+  /**
+   * Update a quote draft.
+   */
+  async update(draftId: string, userId: string, updates: QuoteDraftUpdate): Promise<QuoteDraft> {
+    // Verify the draft exists and belongs to the user
+    await this.getById(draftId, userId);
+
+    const setClauses: string[] = ["updated_at = datetime('now')"];
+    const values: unknown[] = [];
+
+    if (updates.selectedTemplateId !== undefined) {
+      setClauses.push('selected_template_id = ?');
+      values.push(updates.selectedTemplateId);
+    }
+    if (updates.status !== undefined) {
+      setClauses.push('status = ?');
+      values.push(updates.status);
+    }
+
+    values.push(draftId, userId);
+
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(
+        'UPDATE quote_drafts SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?'
+      ).bind(...values),
+    ];
+
+    // Replace line items if provided
+    if (updates.lineItems !== undefined || updates.unresolvedItems !== undefined) {
+      statements.push(
+        this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
+      );
+
+      const resolvedItems = (updates.lineItems ?? []) as QuoteLineItem[];
+      const unresolvedItemsList = (updates.unresolvedItems ?? []) as QuoteLineItem[];
+
+      const allItems = [
+        ...resolvedItems.map((item, i) => ({ ...item, resolved: true, displayOrder: i })),
+        ...unresolvedItemsList.map((item, i) => ({ ...item, resolved: false, displayOrder: i })),
+      ];
+
+      for (const item of allItems) {
+        statements.push(
+          this.db.prepare(
+            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          ).bind(
+            item.id,
+            draftId,
+            item.productCatalogEntryId ?? null,
+            item.productName,
+            item.quantity,
+            item.unitPrice,
+            item.confidenceScore,
+            item.originalText,
+            item.resolved ? 1 : 0,
+            item.unmatchedReason ?? null,
+            item.displayOrder,
+          ),
+        );
+      }
+    }
+
+    await this.db.batch(statements);
+
+    const row = await this.db.prepare(
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+    ).bind(draftId).first() as any;
+
+    const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
+    return this.mapDraftRow(row, lineItems, unresolvedItems);
+  }
+
+  /**
+   * Delete a quote draft and its associated line items (via CASCADE).
+   */
+  async delete(draftId: string, userId: string): Promise<boolean> {
+    // D1 doesn't support CASCADE reliably in all cases, so delete line items first
+    await this.db.batch([
+      this.db.prepare('DELETE FROM quote_media WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_drafts WHERE id = ? AND user_id = ?').bind(draftId, userId),
+    ]);
+
+    // Verify deletion
+    const check = await this.db.prepare(
+      'SELECT id FROM quote_drafts WHERE id = ? AND user_id = ?'
+    ).bind(draftId, userId).first();
+
+    if (check) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteDraftService',
+        operation: 'delete',
+        description: 'The quote draft was not found or you do not have permission to delete it.',
+        recommendedActions: ['Verify the draft exists in your quotes list'],
+      });
+    }
+
+    return true;
+  }
+
+  // ── Private helpers ──────────────────────────────────────────
+
+  private async fetchLineItems(draftId: string): Promise<{ lineItems: QuoteLineItem[]; unresolvedItems: QuoteLineItem[] }> {
+    const result = await this.db.prepare(
+      'SELECT id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order FROM quote_line_items WHERE quote_draft_id = ? ORDER BY display_order ASC'
+    ).bind(draftId).all();
+
+    const lineItems: QuoteLineItem[] = [];
+    const unresolvedItems: QuoteLineItem[] = [];
+
+    for (const row of result.results as any[]) {
+      const item = this.mapLineItemRow(row);
+      if (item.resolved) {
+        lineItems.push(item);
+      } else {
+        unresolvedItems.push(item);
+      }
+    }
+
+    return { lineItems, unresolvedItems };
+  }
+
+  private mapLineItemRow(row: Record<string, unknown>): QuoteLineItem {
+    return {
+      id: row.id as string,
+      productCatalogEntryId: (row.product_catalog_entry_id as string) ?? null,
+      productName: row.product_name as string,
+      quantity: Number(row.quantity),
+      unitPrice: Number(row.unit_price),
+      confidenceScore: row.confidence_score as number,
+      originalText: row.original_text as string,
+      resolved: row.resolved === 1 || row.resolved === true,
+      unmatchedReason: (row.unmatched_reason as string) ?? undefined,
+    };
+  }
+
+  private mapDraftRow(
+    row: Record<string, unknown>,
+    lineItems: QuoteLineItem[],
+    unresolvedItems: QuoteLineItem[],
+  ): QuoteDraft {
+    return {
+      id: row.id as string,
+      userId: row.user_id as string,
+      customerRequestText: row.customer_request_text as string,
+      selectedTemplateId: (row.selected_template_id as string) ?? null,
+      selectedTemplateName: (row.selected_template_name as string) ?? null,
+      lineItems,
+      unresolvedItems,
+      catalogSource: row.catalog_source as QuoteDraft['catalogSource'],
+      jobberRequestId: (row.jobber_request_id as string) ?? null,
+      status: row.status as QuoteDraft['status'],
+      createdAt: new Date(row.created_at as string),
+      updatedAt: new Date(row.updated_at as string),
+    };
+  }
+}

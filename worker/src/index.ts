@@ -13,8 +13,13 @@ import contentRoutes from './routes/content.js';
 import settingsRoutes from './routes/settings.js';
 import activityLogRoutes from './routes/activity-log.js';
 import contentIdeasRoutes from './routes/content-ideas.js';
+import quoteRoutes from './routes/quotes.js';
+import webhookRoutes from './routes/webhooks.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Webhook routes — no CORS or auth, verified via HMAC signature
+app.route('/api/webhooks', webhookRoutes);
 
 // CORS – allow the Pages frontend to call the Worker API
 app.use('*', cors({
@@ -41,6 +46,7 @@ app.route('/api', contentRoutes);
 app.route('/api', settingsRoutes);
 app.route('/api/activity-log', activityLogRoutes);
 app.route('/api/content-ideas', contentIdeasRoutes);
+app.route('/api/quotes', quoteRoutes);
 
 // Error handler (must be registered after routes)
 app.onError(errorHandler);

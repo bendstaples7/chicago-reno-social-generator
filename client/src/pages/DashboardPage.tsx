@@ -45,20 +45,20 @@ export default function DashboardPage() {
     {
       title: '⚡ Quick Post',
       desc: 'Create a post in under 60 seconds with smart defaults',
-      color: '#4fc3f7',
-      onClick: () => navigate('/posts/quick'),
+      color: '#00a89d',
+      onClick: () => navigate('/social/posts/quick'),
     },
     {
       title: '🖼️ Media Library',
       desc: 'Upload photos, generate AI images, and manage your media',
       color: '#ffb74d',
-      onClick: () => navigate('/media'),
+      onClick: () => navigate('/social/media'),
     },
     {
       title: '⚙️ Settings',
       desc: 'Content Advisor mode, Instagram connection, and approval settings',
       color: '#ce93d8',
-      onClick: () => navigate('/settings'),
+      onClick: () => navigate('/social/settings'),
     },
   ];
 
@@ -72,7 +72,7 @@ export default function DashboardPage() {
       {/* Stats row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
         <div style={statBox}>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#1a1a2e' }}>{loading ? '–' : posts.length}</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0a1e24' }}>{loading ? '–' : posts.length}</div>
           <div style={{ fontSize: '0.85rem', color: '#888' }}>Total Posts</div>
         </div>
         <div style={statBox}>
@@ -101,7 +101,7 @@ export default function DashboardPage() {
             <strong>{channels.some((c) => c.status === 'expired') ? 'Instagram token expired.' : 'No channels connected.'}</strong>{' '}
             <span style={{ color: '#666' }}>
               Head to{' '}
-              <a href="/settings" onClick={(e) => { e.preventDefault(); navigate('/settings'); }} style={{ color: '#e65100' }}>
+              <a href="/social/settings" onClick={(e) => { e.preventDefault(); navigate('/social/settings'); }} style={{ color: '#e65100' }}>
                 Settings
               </a>{' '}
               to {channels.some((c) => c.status === 'expired') ? 'reconnect' : 'connect'} your Instagram account before publishing.
@@ -146,8 +146,8 @@ export default function DashboardPage() {
               role="button"
               tabIndex={0}
               style={cardStyle}
-              onClick={() => navigate(`/posts/${p.id}`)}
-              onKeyDown={(e) => e.key === 'Enter' && navigate(`/posts/${p.id}`)}
+              onClick={() => navigate(`/social/posts/${p.id}`)}
+              onKeyDown={(e) => e.key === 'Enter' && navigate(`/social/posts/${p.id}`)}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.12)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)'; }}
             >
@@ -175,10 +175,10 @@ export default function DashboardPage() {
 
 const statusColors: Record<string, { bg: string; fg: string }> = {
   draft: { bg: '#fff3e0', fg: '#e65100' },
-  awaiting_approval: { bg: '#e3f2fd', fg: '#1565c0' },
-  approved: { bg: '#e8f5e9', fg: '#2e7d32' },
-  publishing: { bg: '#e3f2fd', fg: '#1565c0' },
-  published: { bg: '#e8f5e9', fg: '#2e7d32' },
+  awaiting_approval: { bg: '#e0f7f5', fg: '#00a89d' },
+  approved: { bg: '#e0f7f5', fg: '#00a89d' },
+  publishing: { bg: '#e0f7f5', fg: '#00a89d' },
+  published: { bg: '#e0f7f5', fg: '#00a89d' },
   failed: { bg: '#ffebee', fg: '#c62828' },
 };
 

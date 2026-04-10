@@ -27,3 +27,10 @@ npm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Wrangler local state
+worker/.wrangler/
+
+# Kiro local config
+.kiro/hooks/
+.kiro/settings/

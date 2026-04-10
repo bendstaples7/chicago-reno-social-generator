@@ -270,12 +270,11 @@ export class QuoteEngine {
     });
 
     let selectedTemplateId = parsed.selectedTemplateId ?? null;
-    let selectedTemplateName = parsed.selectedTemplateName ?? null;
+    let selectedTemplateName: string | null = null;
     if (selectedTemplateId) {
       const matchedTemplate = templates.find(t => t.id === selectedTemplateId);
       if (!matchedTemplate) {
         selectedTemplateId = null;
-        selectedTemplateName = null;
       } else {
         selectedTemplateName = matchedTemplate.name;
       }

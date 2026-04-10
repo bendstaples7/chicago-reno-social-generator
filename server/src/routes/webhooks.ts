@@ -20,7 +20,7 @@ function rawBodyCapture(req: Request, _res: Response, next: NextFunction): void 
     try {
       req.body = JSON.parse(data);
     } catch (e) {
-      console.warn('Webhook rawBodyCapture: malformed JSON payload:', e instanceof Error ? e.message : e, 'body:', data.substring(0, 200));
+      console.warn('Webhook rawBodyCapture: malformed JSON payload:', e instanceof Error ? e.message : e);
       req.body = {};
     }
     next();

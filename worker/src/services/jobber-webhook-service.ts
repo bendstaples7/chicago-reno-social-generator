@@ -225,15 +225,19 @@ export class JobberWebhookService {
   }
 
   async getWebhookRequests(): Promise<JobberCustomerRequest[]> {
+    // Include all webhook requests, preferring rows with full detail (processed_at IS NOT NULL)
+    // but falling back to unprocessed rows so new requests aren't lost.
     const result = await this.db.prepare(
       `SELECT w.jobber_request_id, w.title, w.client_name, w.description, w.image_urls, w.request_body, w.received_at
        FROM jobber_webhook_requests w
        INNER JOIN (
-         SELECT jobber_request_id, MAX(received_at) as max_received
+         SELECT jobber_request_id,
+           MAX(CASE WHEN processed_at IS NOT NULL THEN received_at ELSE NULL END) as best_received,
+           MAX(received_at) as any_received
          FROM jobber_webhook_requests
-         WHERE processed_at IS NOT NULL
          GROUP BY jobber_request_id
-       ) latest ON w.jobber_request_id = latest.jobber_request_id AND w.received_at = latest.max_received
+       ) latest ON w.jobber_request_id = latest.jobber_request_id
+         AND w.received_at = COALESCE(latest.best_received, latest.any_received)
        ORDER BY w.received_at DESC`
     ).all();
 
@@ -245,9 +249,14 @@ export class JobberWebhookService {
         imageUrls = JSON.parse(row.image_urls || '[]');
       } catch { imageUrls = []; }
 
+      // Parse the stored request body to extract notes and the original Jobber createdAt
+      let jobberCreatedAt: string | null = null;
+      let jobberWebUri = '';
       if (row.request_body) {
         try {
           const detail = JSON.parse(row.request_body) as RequestDetail;
+          jobberCreatedAt = detail.createdAt ?? null;
+          jobberWebUri = detail.jobberWebUri ?? '';
           structuredNotes = detail.notes.edges
             .filter((e) => e.node?.message)
             .map((e) => {
@@ -272,8 +281,8 @@ export class JobberWebhookService {
         notes: structuredNotes.map((n) => n.message),
         structuredNotes,
         imageUrls,
-        jobberWebUri: '',
-        createdAt: row.received_at as string,
+        jobberWebUri,
+        createdAt: jobberCreatedAt ?? (row.received_at as string),
       };
     });
   }

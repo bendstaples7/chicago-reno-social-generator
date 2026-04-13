@@ -116,29 +116,38 @@ export class InstagramSyncService {
     const connectionId = conn.id as string;
     const igUserId = conn.external_account_id as string;
 
-    // Decrypt the access token
+    // Decrypt the access token — or use it directly if stored in plain text
+    // (direct-token mode stores the FB_PAGE_ACCESS_TOKEN as-is, not encrypted)
     let accessToken: string;
-    try {
-      const crypto = await import('node:crypto');
-      const encryptedText = conn.access_token_encrypted as string;
-      const parts = encryptedText.split(':');
-      const key = process.env.CHANNEL_ENCRYPTION_KEY;
-      if (!key) throw new Error('No encryption key');
-      const keyBuf = Buffer.from(key, 'hex');
-      const iv = Buffer.from(parts[0], 'hex');
-      const authTag = Buffer.from(parts[1], 'hex');
-      const encrypted = Buffer.from(parts[2], 'hex');
-      const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
-      decipher.setAuthTag(authTag);
-      accessToken = decipher.update(encrypted, undefined, 'utf8') + decipher.final('utf8');
-    } catch {
-      throw new PlatformError({
-        severity: 'error',
-        component: 'InstagramSyncService',
-        operation: 'syncRecentPosts',
-        description: 'Failed to decrypt Instagram access token.',
-        recommendedActions: ['Reconnect your Instagram account in Settings'],
-      });
+    const rawToken = conn.access_token_encrypted as string;
+    const colonCount = (rawToken.match(/:/g) || []).length;
+
+    if (colonCount === 2) {
+      // Encrypted format: iv:authTag:ciphertext
+      try {
+        const crypto = await import('node:crypto');
+        const key = process.env.CHANNEL_ENCRYPTION_KEY;
+        if (!key) throw new Error('No encryption key');
+        const parts = rawToken.split(':');
+        const keyBuf = Buffer.from(key, 'hex');
+        const iv = Buffer.from(parts[0], 'hex');
+        const authTag = Buffer.from(parts[1], 'hex');
+        const encrypted = Buffer.from(parts[2], 'hex');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
+        decipher.setAuthTag(authTag);
+        accessToken = decipher.update(encrypted, undefined, 'utf8') + decipher.final('utf8');
+      } catch {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'InstagramSyncService',
+          operation: 'syncRecentPosts',
+          description: 'Failed to decrypt Instagram access token.',
+          recommendedActions: ['Reconnect your Instagram account in Settings'],
+        });
+      }
+    } else {
+      // Plain text token (direct-token mode)
+      accessToken = rawToken;
     }
 
     // Fetch recent media from Instagram

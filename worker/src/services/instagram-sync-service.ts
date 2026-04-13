@@ -108,16 +108,25 @@ export class InstagramSyncService {
     const igUserId = conn.external_account_id as string;
 
     let accessToken: string;
-    try {
-      accessToken = await decryptToken(conn.access_token_encrypted as string, this.encryptionKey);
-    } catch {
-      throw new PlatformError({
-        severity: 'error',
-        component: 'InstagramSyncService',
-        operation: 'syncRecentPosts',
-        description: 'Failed to decrypt Instagram access token.',
-        recommendedActions: ['Reconnect your Instagram account in Settings'],
-      });
+    const rawToken = conn.access_token_encrypted as string;
+    const colonCount = (rawToken.match(/:/g) || []).length;
+
+    if (colonCount === 1 && rawToken.length > 50) {
+      // Encrypted format (Web Crypto): iv:ciphertext
+      try {
+        accessToken = await decryptToken(rawToken, this.encryptionKey);
+      } catch {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'InstagramSyncService',
+          operation: 'syncRecentPosts',
+          description: 'Failed to decrypt Instagram access token.',
+          recommendedActions: ['Reconnect your Instagram account in Settings'],
+        });
+      }
+    } else {
+      // Plain text token (direct-token mode)
+      accessToken = rawToken;
     }
 
     const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}&access_token=${accessToken}`;

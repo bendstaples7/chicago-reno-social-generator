@@ -64,8 +64,9 @@ router.post('/quick-start', async (req, res, next) => {
   try {
     const userId = req.user!.id;
 
-    // Fire-and-forget Instagram sync so the advisor has up-to-date post history.
-    // This runs in the background — errors are silently ignored.
+    // Fire-and-forget Instagram sync so the advisor has up-to-date post history
+    // on subsequent visits. The sync won't complete before this response returns,
+    // but new posts will be available next time. Rate-limited to once per 5 minutes.
     import('../services/instagram-sync-service.js')
       .then(({ InstagramSyncService }) => new InstagramSyncService().syncRecentPosts(userId))
       .catch(() => {});

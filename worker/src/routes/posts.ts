@@ -41,7 +41,7 @@ app.post('/quick-start', async (c) => {
   const userId = c.get('user').id;
   const db = c.env.DB;
 
-  // Fire-and-forget Instagram sync — errors silently ignored
+  // Fire-and-forget Instagram sync — rate-limited, errors silently ignored
   import('../services/instagram-sync-service.js')
     .then(({ InstagramSyncService }) => new InstagramSyncService(db, c.env.CHANNEL_ENCRYPTION_KEY).syncRecentPosts(userId))
     .catch(() => {});

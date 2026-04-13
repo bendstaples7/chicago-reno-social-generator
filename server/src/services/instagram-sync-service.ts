@@ -1,7 +1,6 @@
 import { query } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
 import { ContentType } from 'shared';
-import type { Post } from 'shared';
 
 const INSTAGRAM_GRAPH_URL = 'https://graph.facebook.com/v25.0';
 
@@ -65,10 +64,12 @@ function classifyContentType(caption: string): ContentType {
 
   // Seasonal Event — holiday/seasonal language
   const seasonalKeywords = [
-    'happy holidays', 'merry christmas', 'happy new year', 'spring',
-    'summer', 'fall', 'winter', 'thanksgiving', 'memorial day',
-    'labor day', '4th of july', 'fourth of july', 'valentine',
-    'mother\'s day', 'father\'s day', 'seasonal',
+    'happy holidays', 'merry christmas', 'happy new year',
+    'spring cleaning', 'spring project', 'summer project',
+    'fall project', 'winter project', 'thanksgiving',
+    'memorial day', 'labor day', '4th of july', 'fourth of july',
+    'valentine', 'mother\'s day', 'father\'s day', 'seasonal',
+    'new year', 'holiday season',
   ];
   if (seasonalKeywords.some((kw) => lower.includes(kw))) {
     return ContentType.SeasonalEvent;
@@ -87,12 +88,23 @@ function extractHashtags(caption: string): string[] {
 }
 
 export class InstagramSyncService {
+  /** Minimum interval between syncs per user (5 minutes) */
+  private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+  private static lastSyncByUser = new Map<string, number>();
+
   /**
    * Sync recent Instagram posts into the local posts table.
    * Fetches media from the Instagram Graph API, skips posts already synced
    * (matched by external_post_id), and inserts new ones.
+   * Skips if the last sync for this user was less than 5 minutes ago.
    */
   async syncRecentPosts(userId: string): Promise<SyncResult> {
+    const now = Date.now();
+    const lastSync = InstagramSyncService.lastSyncByUser.get(userId) ?? 0;
+    if (now - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+      return { synced: 0, skipped: 0, errors: [] };
+    }
+    InstagramSyncService.lastSyncByUser.set(userId, now);
     // Get the active Instagram connection for this user
     const connResult = await query(
       `SELECT id, access_token_encrypted, external_account_id
@@ -151,8 +163,10 @@ export class InstagramSyncService {
     }
 
     // Fetch recent media from Instagram
-    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}&access_token=${accessToken}`;
-    const response = await fetch(url);
+    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
     if (!response.ok) {
       const body = await response.text();

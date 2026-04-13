@@ -45,10 +45,12 @@ function classifyContentType(caption: string): ContentType {
   if (personalBrandKeywords.some((kw) => lower.includes(kw))) return ContentType.PersonalBrand;
 
   const seasonalKeywords = [
-    'happy holidays', 'merry christmas', 'happy new year', 'spring',
-    'summer', 'fall', 'winter', 'thanksgiving', 'memorial day',
-    'labor day', '4th of july', 'fourth of july', 'valentine',
-    "mother's day", "father's day", 'seasonal',
+    'happy holidays', 'merry christmas', 'happy new year',
+    'spring cleaning', 'spring project', 'summer project',
+    'fall project', 'winter project', 'thanksgiving',
+    'memorial day', 'labor day', '4th of july', 'fourth of july',
+    'valentine', "mother's day", "father's day", 'seasonal',
+    'new year', 'holiday season',
   ];
   if (seasonalKeywords.some((kw) => lower.includes(kw))) return ContentType.SeasonalEvent;
 
@@ -81,6 +83,9 @@ async function decryptToken(encryptedText: string, keyHex: string): Promise<stri
 }
 
 export class InstagramSyncService {
+  private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+  private static lastSyncByUser = new Map<string, number>();
+
   private readonly db: D1Database;
   private readonly encryptionKey: string;
 
@@ -90,6 +95,12 @@ export class InstagramSyncService {
   }
 
   async syncRecentPosts(userId: string): Promise<SyncResult> {
+    const now = Date.now();
+    const lastSync = InstagramSyncService.lastSyncByUser.get(userId) ?? 0;
+    if (now - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+      return { synced: 0, skipped: 0, errors: [] };
+    }
+    InstagramSyncService.lastSyncByUser.set(userId, now);
     const conn = await this.db.prepare(
       "SELECT id, access_token_encrypted, external_account_id FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram' AND status = 'connected' LIMIT 1"
     ).bind(userId).first() as any;
@@ -129,8 +140,10 @@ export class InstagramSyncService {
       accessToken = rawToken;
     }
 
-    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}&access_token=${accessToken}`;
-    const response = await fetch(url);
+    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
     if (!response.ok) {
       const body = await response.text();

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Investigate Don't Assume",
+  "description": "Prompts the agent to dig deeper and verify facts when using vague assumption words like \"likely\", \"most likely\", \"probably\", \"might\", \"seems\", etc.",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "If you used uncertain language (likely/most likely/probably/might/seems/appears), please investigate and verify what actually happened. Use available tools to check files, run commands, or gather concrete evidence before drawing conclusions."
+  }
+}

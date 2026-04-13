@@ -91,7 +91,7 @@ app.post('/', async (c) => {
   };
 
   // Validate contentType
-  const validContentTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+  const validContentTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event', 'before_after'];
   if (!body.contentType || !validContentTypes.includes(body.contentType)) {
     return c.json({
       severity: 'warning',

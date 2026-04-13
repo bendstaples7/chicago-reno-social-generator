@@ -11,6 +11,7 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   testimonial: 'Customer reviews, testimonials, and success stories about renovation projects',
   personal_brand: 'Team member spotlights, behind-the-scenes, and company culture content',
   seasonal_event: 'Content tied to seasons, holidays, or timely events related to home renovation',
+  before_after: 'Project transformation showcases with before and after photos of renovation work',
 };
 
 export class ContentIdeasService {

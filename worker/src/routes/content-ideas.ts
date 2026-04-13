@@ -5,7 +5,7 @@ import { sessionMiddleware } from '../middleware/session.js';
 import { ContentIdeasService } from '../services/content-ideas-service.js';
 import { PlatformError } from '../errors/index.js';
 
-const VALID_CONTENT_TYPES = ['education', 'testimonial', 'personal_brand', 'seasonal_event'];
+const VALID_CONTENT_TYPES = ['education', 'testimonial', 'personal_brand', 'seasonal_event', 'before_after'];
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 

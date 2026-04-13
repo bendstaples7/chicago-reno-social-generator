@@ -4,6 +4,7 @@ import type { UserSettings, ChannelConnection, ErrorResponse } from 'shared';
 import {
   fetchSettings, updateSettings, fetchChannels,
   connectInstagram, disconnectChannel, refreshInstagramToken,
+  syncInstagramPosts,
 } from '../api';
 import CorpusStatusIndicator from './CorpusStatusIndicator';
 
@@ -21,6 +22,8 @@ export default function SettingsPage() {
   const [channelError, setChannelError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ synced: number; skipped: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -118,6 +121,24 @@ export default function SettingsPage() {
       } catch { /* best-effort */ }
     } finally {
       setRefreshing(null);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setChannelError(null);
+    setSyncResult(null);
+    try {
+      const result = await syncInstagramPosts();
+      setSyncResult({ synced: result.synced, skipped: result.skipped });
+      if (result.errors.length > 0) {
+        setChannelError('Some posts failed to sync: ' + result.errors[0]);
+      }
+    } catch (err) {
+      const e = err as ErrorResponse;
+      setChannelError(e.message || 'Instagram sync failed.');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -226,6 +247,15 @@ export default function SettingsPage() {
                     {refreshing === ch.id ? 'Refreshing…' : 'Refresh Token'}
                   </button>
                 )}
+                {ch.status === 'connected' && (
+                  <button
+                    onClick={handleSync}
+                    disabled={syncing}
+                    style={{ background: '#fff', color: '#1976d2', border: '1px solid #1976d2', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
+                  >
+                    {syncing ? 'Syncing…' : '🔄 Sync Posts'}
+                  </button>
+                )}
                 {ch.status === 'expired' && (
                   <button
                     onClick={handleConnect}
@@ -244,6 +274,12 @@ export default function SettingsPage() {
               </div>
             </div>
           ))
+        )}
+        {syncResult && (
+          <div style={{ marginTop: '0.75rem', padding: '0.6rem 0.75rem', background: '#e8f5e9', color: '#2e7d32', borderRadius: 6, fontSize: '0.85rem' }}>
+            Synced {syncResult.synced} new post{syncResult.synced !== 1 ? 's' : ''} from Instagram.
+            {syncResult.skipped > 0 && ` ${syncResult.skipped} already in database.`}
+          </div>
         )}
       </section>
     </div>

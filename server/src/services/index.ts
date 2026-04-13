@@ -26,3 +26,4 @@ export { QuoteSyncService, buildSearchableText } from './quote-sync-service.js';
 export type { SyncResult } from './quote-sync-service.js';
 export { JobberWebhookService } from './jobber-webhook-service.js';
 export type { JobberWebhookPayload } from './jobber-webhook-service.js';
+export { InstagramSyncService } from './instagram-sync-service.js';

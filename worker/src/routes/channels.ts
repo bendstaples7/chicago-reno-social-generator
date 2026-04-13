@@ -292,4 +292,15 @@ app.delete('/:id', async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * POST /instagram/sync
+ * Sync recent Instagram posts into the local database.
+ */
+app.post('/instagram/sync', async (c) => {
+  const { InstagramSyncService } = await import('../services/instagram-sync-service.js');
+  const syncService = new InstagramSyncService(c.env.DB, c.env.CHANNEL_ENCRYPTION_KEY);
+  const result = await syncService.syncRecentPosts(c.get('user').id);
+  return c.json(result);
+});
+
 export default app;

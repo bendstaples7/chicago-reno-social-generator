@@ -357,6 +357,14 @@ export async function refreshInstagramToken(id: string): Promise<{ channel: Chan
   return handleResponse(res);
 }
 
+export async function syncInstagramPosts(): Promise<{ synced: number; skipped: number; errors: string[] }> {
+  const res = await fetch(API_BASE + '/api/channels/instagram/sync', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Activity Log ──
 
 export async function fetchActivityLog(page = 1, limit = 20): Promise<{ entries: ActivityLogEntry[]; page: number; limit: number }> {

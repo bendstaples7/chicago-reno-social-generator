@@ -5,13 +5,14 @@ import type {
   ChannelConnection, ErrorResponse, ContentType,
   GeneratedImage, ImageStyle, ContentIdea,
 } from 'shared';
+import { AdvisorMode } from 'shared';
 import {
   quickStart, fetchContentTypes, fetchChannels,
+  fetchSettings, updateSettings,
   createPost, generateContent, approvePost, publishPost,
   generateImages, saveGeneratedImage, updatePost,
   fetchContentIdeas, generateContentIdeas, useContentIdea, dismissContentIdea,
 } from '../api';
-import type { QuickStartResponse } from '../api';
 
 type Step = 'loading' | 'content-type' | 'ideas' | 'generating' | 'image' | 'preview' | 'done';
 
@@ -21,13 +22,15 @@ const MAX_HASHTAGS = 30;
 export default function QuickPostPage() {
   const navigate = useNavigate();
 
-  const [quickData, setQuickData] = useState<QuickStartResponse | null>(null);
   const [templates, setTemplates] = useState<ContentTypeTemplate[]>([]);
   const [channels, setChannels] = useState<ChannelConnection[]>([]);
 
   const [step, setStep] = useState<Step>('loading');
   const [selectedContentType, setSelectedContentType] = useState<ContentType | ''>('');
   const [suggestion, setSuggestion] = useState<ContentSuggestion | null>(null);
+  const [advisorEnabled, setAdvisorEnabled] = useState(true);
+  const [advisorMode, setAdvisorMode] = useState<AdvisorMode>(AdvisorMode.Smart);
+  const [advisorSaving, setAdvisorSaving] = useState(false);
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [savedPostId, setSavedPostId] = useState<string | null>(null);
@@ -57,14 +60,37 @@ export default function QuickPostPage() {
 
   const loadData = useCallback(async () => {
     try {
+      // Settings fetch is non-critical and runs concurrently
+      const settingsPromise = fetchSettings().catch(() => null);
+
       const [qs, typesRes, channelsRes] = await Promise.all([
         quickStart(), fetchContentTypes(), fetchChannels(),
       ]);
-      setQuickData(qs);
       setTemplates(typesRes.contentTypes);
       setChannels(channelsRes.channels);
       setSuggestion(qs.suggestion);
-      if (qs.defaults.contentType) setSelectedContentType(qs.defaults.contentType);
+
+      const settingsRes = await settingsPromise;
+      if (settingsRes) {
+        const mode = settingsRes.settings.advisorMode;
+        setAdvisorMode(mode);
+        const isEnabled = mode !== AdvisorMode.Manual;
+        setAdvisorEnabled(isEnabled);
+
+        if (isEnabled && qs.suggestion) {
+          setSelectedContentType(qs.suggestion.contentType);
+        } else if (qs.defaults.contentType) {
+          setSelectedContentType(qs.defaults.contentType);
+        }
+      } else {
+        // Settings unavailable — default to advisor enabled with suggestion if available
+        if (qs.suggestion) {
+          setSelectedContentType(qs.suggestion.contentType);
+        } else if (qs.defaults.contentType) {
+          setSelectedContentType(qs.defaults.contentType);
+        }
+      }
+
       setStep('content-type');
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to initialize.');
@@ -204,7 +230,7 @@ export default function QuickPostPage() {
         setStep('done');
       } else {
         setError(result.error ?? 'Publishing failed.');
-        navigate('/posts/' + savedPostId);
+        navigate('/social/posts/' + savedPostId);
       }
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to publish.');
@@ -243,8 +269,8 @@ export default function QuickPostPage() {
           const isActive = i <= currentIdx;
           return (
             <div key={label} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ ...stepDotStyle, background: isActive ? '#1976d2' : '#e0e0e0', color: isActive ? '#fff' : '#888' }}>{i + 1}</div>
-              <div style={{ fontSize: '0.75rem', color: isActive ? '#1976d2' : '#888', marginTop: 4 }}>{label}</div>
+              <div style={{ ...stepDotStyle, background: isActive ? '#00a89d' : '#e0e0e0', color: isActive ? '#fff' : '#888' }}>{i + 1}</div>
+              <div style={{ fontSize: '0.75rem', color: isActive ? '#00a89d' : '#888', marginTop: 4 }}>{label}</div>
             </div>
           );
         })}
@@ -255,19 +281,71 @@ export default function QuickPostPage() {
       {/* Step 1: Content Type */}
       {step === 'content-type' && (
         <div>
-          {suggestion && (
-            <div style={suggestionBannerStyle}>
-              <div style={{ flex: 1 }}>
-                <strong>Suggested:</strong>{' '}
-                {suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                <span style={{ color: '#666', marginLeft: '0.5rem' }}>— {suggestion.reason}</span>
+          {/* Content Advisor Section */}
+          <div style={advisorSectionStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: advisorEnabled ? '0.75rem' : 0 }}>
+              <div>
+                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Content Advisor</span>
+                <span style={{ color: '#666', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
+                  {advisorEnabled ? (advisorMode === AdvisorMode.Smart ? 'Smart mode' : 'Random mode') : 'Off'}
+                </span>
               </div>
-              <button onClick={() => { setSelectedContentType(suggestion.contentType); loadIdeas(suggestion.contentType); setStep('ideas'); }} style={btnStyle}>
-                Accept &amp; Continue
-              </button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                <span style={{ color: '#666' }}>{advisorEnabled ? 'On' : 'Off'}</span>
+                <div
+                  role="switch"
+                  aria-checked={advisorEnabled}
+                  tabIndex={0}
+                  onClick={async () => {
+                    if (advisorSaving) return;
+                    const next = !advisorEnabled;
+                    setAdvisorSaving(true);
+                    try {
+                      const newMode = next ? AdvisorMode.Smart : AdvisorMode.Manual;
+                      await updateSettings({ advisorMode: newMode });
+                      setAdvisorMode(newMode);
+                      setAdvisorEnabled(next);
+                      if (next && suggestion) {
+                        setSelectedContentType(suggestion.contentType);
+                      }
+                    } catch {
+                      // Revert — leave advisorEnabled unchanged
+                    } finally {
+                      setAdvisorSaving(false);
+                    }
+                  }}
+                  onKeyDown={(e) => { if (advisorSaving) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
+                  style={{
+                    width: 40, height: 22, borderRadius: 11, position: 'relative',
+                    background: advisorEnabled ? '#4caf50' : '#ccc', transition: 'background 0.2s',
+                    opacity: advisorSaving ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{
+                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    position: 'absolute', top: 2, left: advisorEnabled ? 20 : 2,
+                    transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                  }} />
+                </div>
+              </label>
             </div>
-          )}
-          <p style={{ margin: '0 0 0.75rem', fontWeight: 500 }}>Select a content type:</p>
+            {advisorEnabled && suggestion && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#e0f7f5', border: '1px solid #80d4ce', borderRadius: 6, padding: '0.6rem 0.75rem' }}>
+                <span style={{ fontSize: '1.1rem' }}>💡</span>
+                <div style={{ flex: 1, fontSize: '0.85rem' }}>
+                  Recommended: <strong>{suggestion.contentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</strong>
+                  <span style={{ color: '#666', marginLeft: '0.5rem' }}>— {suggestion.reason}</span>
+                </div>
+              </div>
+            )}
+            {advisorEnabled && !suggestion && (
+              <div style={{ fontSize: '0.85rem', color: '#888' }}>No suggestion available right now. Pick a content type below.</div>
+            )}
+          </div>
+
+          <p style={{ margin: '0 0 0.75rem', fontWeight: 500 }}>
+            {advisorEnabled && suggestion ? 'Content type pre-selected by advisor. You can override it:' : 'Select a content type:'}
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
             {templates.map((t) => {
               const isSelected = selectedContentType === t.contentType;
@@ -275,7 +353,7 @@ export default function QuickPostPage() {
                 <div key={t.contentType} onClick={() => setSelectedContentType(t.contentType)} role="button" tabIndex={0} aria-pressed={isSelected}
                   aria-label={'Select ' + t.displayName}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedContentType(t.contentType); } }}
-                  style={{ ...cardStyle, border: isSelected ? '2px solid #1976d2' : '1px solid #e0e0e0', cursor: 'pointer' }}>
+                  style={{ ...cardStyle, border: isSelected ? '2px solid #00a89d' : '1px solid #e0e0e0', cursor: 'pointer' }}>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.displayName}</div>
                   <div style={{ fontSize: '0.8rem', color: '#666' }}>{t.description}</div>
                 </div>
@@ -286,7 +364,7 @@ export default function QuickPostPage() {
             disabled={!selectedContentType} style={{ ...btnStyle, opacity: selectedContentType ? 1 : 0.5 }}>
             Next: Pick an Idea →
           </button>
-          <button onClick={() => navigate('/posts/new')} style={{ ...btnOutlineStyle, marginLeft: '0.75rem' }}>Full Editor</button>
+
         </div>
       )}
 
@@ -314,7 +392,7 @@ export default function QuickPostPage() {
                     <button onClick={(e) => handleDismissIdea(e, idea)} title="Dismiss idea"
                       style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem', lineHeight: 1 }}
                       aria-label="Dismiss idea">✕</button>
-                    <span style={{ color: '#1976d2', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>Use this →</span>
+                    <span style={{ color: '#00a89d', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>Use this →</span>
                   </div>
                 ))}
               </div>
@@ -375,10 +453,10 @@ export default function QuickPostPage() {
             {generatedImages.length > 0 && (
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
                 {generatedImages.map((img, i) => (
-                  <div key={i} style={{ width: 200, borderRadius: 8, overflow: 'hidden', border: '2px solid #a5d6a7' }}>
+                  <div key={i} style={{ width: 200, borderRadius: 8, overflow: 'hidden', border: '2px solid #80d4ce' }}>
                     <img src={img.url} alt={img.description} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
                     <button onClick={() => handleSaveGenerated(img)} disabled={actionLoading}
-                      style={{ width: '100%', padding: '0.5rem', border: 'none', background: '#2e7d32', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}>
+                      style={{ width: '100%', padding: '0.5rem', border: 'none', background: '#00a89d', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}>
                       {actionLoading ? 'Saving...' : 'Use This Image'}
                     </button>
                   </div>
@@ -387,9 +465,9 @@ export default function QuickPostPage() {
             )}
           </div>
           {selectedImage && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e0f7f5', border: '1px solid #80d4ce', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <img src={selectedImage.thumbnailUrl} alt="Selected" style={{ width: 60, height: 60, borderRadius: 6, objectFit: 'cover' }} />
-              <span style={{ fontSize: '0.85rem', color: '#2e7d32', fontWeight: 500 }}>Image attached to post</span>
+              <span style={{ fontSize: '0.85rem', color: '#00a89d', fontWeight: 500 }}>Image attached to post</span>
             </div>
           )}
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
@@ -437,7 +515,7 @@ export default function QuickPostPage() {
                 style={{ ...publishBtnStyle, opacity: (actionLoading || !channel) ? 0.5 : 1 }}>
                 {actionLoading ? 'Publishing…' : 'Approve & Publish'}
               </button>
-              <button onClick={() => savedPostId && navigate('/posts/' + savedPostId)} style={btnOutlineStyle}>Edit in Full Editor</button>
+
             </div>
           </div>
           <div style={{ width: 320, flexShrink: 0 }}>
@@ -445,7 +523,7 @@ export default function QuickPostPage() {
               <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>Instagram Preview</h3>
               <div style={previewCardStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem', gap: '0.5rem' }}>
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1a1a2e' }} />
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#0a1e24' }} />
                   <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>chicago_reno</span>
                 </div>
                 <div style={{ background: '#e0e0e0', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -474,7 +552,7 @@ export default function QuickPostPage() {
           <h2 style={{ margin: '0 0 0.5rem' }}>Published!</h2>
           <p style={{ color: '#666', marginBottom: '1rem' }}>Your post was created and published in {elapsed} seconds.</p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
-            <button onClick={() => navigate('/dashboard')} style={btnStyle}>Go to Dashboard</button>
+            <button onClick={() => navigate('/social/dashboard')} style={btnStyle}>Go to Dashboard</button>
             <button onClick={() => window.location.reload()} style={btnOutlineStyle}>Create Another</button>
           </div>
         </div>
@@ -491,17 +569,17 @@ const timerStyle: React.CSSProperties = { fontSize: '0.85rem', color: '#888', fo
 const stepBarStyle: React.CSSProperties = { display: 'flex', marginBottom: '1.5rem', padding: '0.75rem 0', borderBottom: '1px solid #e0e0e0' };
 const stepDotStyle: React.CSSProperties = { width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, margin: '0 auto' };
 
-const btnStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: '#1976d2', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
-const btnOutlineStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #1976d2', background: 'transparent', color: '#1976d2', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
-const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border: '1px solid #2e7d32', background: '#2e7d32', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500 };
-const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', fontSize: '0.85rem' };
+const btnStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #00a89d', background: '#00a89d', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const btnOutlineStyle: React.CSSProperties = { padding: '0.5rem 1rem', border: '1px solid #00a89d', background: 'transparent', color: '#00a89d', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' };
+const publishBtnStyle: React.CSSProperties = { padding: '0.6rem 1.25rem', border: '1px solid #00a89d', background: '#00a89d', color: '#fff', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500 };
+const linkBtnStyle: React.CSSProperties = { background: 'none', border: 'none', color: '#00a89d', cursor: 'pointer', fontSize: '0.85rem' };
 
 const alertStyle: React.CSSProperties = { background: '#fdecea', color: '#611a15', padding: '0.75rem 1rem', borderRadius: 4, marginBottom: '1rem' };
-const suggestionBannerStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '1rem', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, padding: '0.75rem 1rem', marginBottom: '1rem' };
+const advisorSectionStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem' };
 const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 8, padding: '1rem' };
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', fontWeight: 500 };
 const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem', boxSizing: 'border-box' };
-const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e3f2fd', color: '#1565c0', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
+const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e0f7f5', color: '#00a89d', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
 
 const ideaCardStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', padding: '0.75rem 1rem', background: '#fff',
@@ -512,6 +590,6 @@ const ideaCardStyle: React.CSSProperties = {
 const aiGenSectionStyle: React.CSSProperties = { background: '#f5f5f5', border: '1px solid #e0e0e0', borderRadius: 8, padding: '0.75rem', marginBottom: '0.5rem' };
 const previewPanelStyle: React.CSSProperties = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', position: 'sticky', top: '1.5rem' };
 const previewCardStyle: React.CSSProperties = { border: '1px solid #dbdbdb', borderRadius: 6, overflow: 'hidden', background: '#fff' };
-const spinnerStyle: React.CSSProperties = { width: 40, height: 40, border: '4px solid #e0e0e0', borderTopColor: '#1976d2', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' };
+const spinnerStyle: React.CSSProperties = { width: 40, height: 40, border: '4px solid #e0e0e0', borderTopColor: '#00a89d', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto' };
 const progressBarContainerStyle: React.CSSProperties = { width: '60%', margin: '1rem auto', height: 6, background: '#e0e0e0', borderRadius: 3, overflow: 'hidden' };
-const progressBarFillStyle: React.CSSProperties = { height: '100%', background: '#1976d2', borderRadius: 3, transition: 'width 0.3s ease' };
+const progressBarFillStyle: React.CSSProperties = { height: '100%', background: '#00a89d', borderRadius: 3, transition: 'width 0.3s ease' };

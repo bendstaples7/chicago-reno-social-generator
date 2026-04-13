@@ -3,8 +3,9 @@ import { AdvisorMode } from 'shared';
 import type { UserSettings, ChannelConnection, ErrorResponse } from 'shared';
 import {
   fetchSettings, updateSettings, fetchChannels,
-  connectInstagram, disconnectChannel,
+  connectInstagram, disconnectChannel, refreshInstagramToken,
 } from '../api';
+import CorpusStatusIndicator from './CorpusStatusIndicator';
 
 const advisorModes: { value: AdvisorMode; label: string; description: string }[] = [
   { value: AdvisorMode.Smart, label: 'Smart', description: 'Analyzes your post history to recommend the optimal content type' },
@@ -19,6 +20,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +102,25 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRefresh = async (id: string) => {
+    setRefreshing(id);
+    setChannelError(null);
+    try {
+      const result = await refreshInstagramToken(id);
+      setChannels((prev) => prev.map((c) => c.id === id ? result.channel : c));
+    } catch (err) {
+      const e = err as ErrorResponse;
+      setChannelError(e.message || 'Token refresh failed.');
+      // Refetch channels to sync any server-side status changes (e.g., token marked expired)
+      try {
+        const res = await fetchChannels();
+        setChannels(res.channels);
+      } catch { /* best-effort */ }
+    } finally {
+      setRefreshing(null);
+    }
+  };
+
   if (loading) return <p>Loading settings…</p>;
 
   const instagramChannels = channels.filter((c) => c.channelType === 'instagram');
@@ -118,7 +139,7 @@ export default function SettingsPage() {
               style={{
                 display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
                 padding: '0.75rem', borderRadius: 6, cursor: 'pointer',
-                border: settings?.advisorMode === m.value ? '2px solid #4fc3f7' : '2px solid #e0e0e0',
+                border: settings?.advisorMode === m.value ? '2px solid #00a89d' : '2px solid #e0e0e0',
                 background: settings?.advisorMode === m.value ? 'rgba(79,195,247,0.05)' : 'transparent',
                 opacity: saving ? 0.6 : 1,
               }}
@@ -145,10 +166,10 @@ export default function SettingsPage() {
       <section style={{ marginBottom: '2rem', background: '#fff', borderRadius: 8, padding: '1.25rem', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
         <h2 style={{ margin: '0 0 0.75rem', fontSize: '1.1rem' }}>Publish Approval</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <div style={{ padding: '0.75rem', borderRadius: 6, border: '2px solid #4fc3f7', background: 'rgba(79,195,247,0.05)' }}>
+          <div style={{ padding: '0.75rem', borderRadius: 6, border: '2px solid #00a89d', background: 'rgba(79,195,247,0.05)' }}>
             <div style={{ fontWeight: 600 }}>Manual Review</div>
             <div style={{ fontSize: '0.85rem', color: '#666' }}>Every post requires your approval before publishing</div>
-            <span style={{ display: 'inline-block', marginTop: 4, fontSize: '0.75rem', background: '#4fc3f7', color: '#fff', padding: '2px 8px', borderRadius: 10 }}>Active</span>
+            <span style={{ display: 'inline-block', marginTop: 4, fontSize: '0.75rem', background: '#00a89d', color: '#fff', padding: '2px 8px', borderRadius: 10 }}>Active</span>
           </div>
           <div style={{ padding: '0.75rem', borderRadius: 6, border: '2px solid #e0e0e0', opacity: 0.5 }}>
             <div style={{ fontWeight: 600 }}>Auto Publish</div>
@@ -156,6 +177,11 @@ export default function SettingsPage() {
             <span style={{ display: 'inline-block', marginTop: 4, fontSize: '0.75rem', background: '#999', color: '#fff', padding: '2px 8px', borderRadius: 10 }}>Coming Soon</span>
           </div>
         </div>
+      </section>
+
+      {/* Quote Corpus Status */}
+      <section style={{ marginBottom: '2rem' }}>
+        <CorpusStatusIndicator />
       </section>
 
       {/* Instagram Channel Connection */}
@@ -182,16 +208,40 @@ export default function SettingsPage() {
               <div>
                 <div style={{ fontWeight: 600 }}>{ch.externalAccountName || 'Instagram Account'}</div>
                 <div style={{ fontSize: '0.85rem', color: '#666' }}>
-                  Status: <span style={{ color: ch.status === 'connected' ? '#2e7d32' : '#b71c1c' }}>{ch.status}</span>
+                  Status: <span style={{ color: ch.status === 'connected' ? '#00a89d' : '#b71c1c' }}>{ch.status}</span>
                 </div>
+                {ch.status === 'expired' && (
+                  <div style={{ fontSize: '0.8rem', color: '#e65100', marginTop: 4 }}>
+                    Your Instagram token has expired. Please reconnect your account.
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => handleDisconnect(ch.id)}
-                disabled={disconnecting === ch.id}
-                style={{ background: '#fff', color: '#b71c1c', border: '1px solid #b71c1c', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
-              >
-                {disconnecting === ch.id ? 'Disconnecting…' : 'Disconnect'}
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {ch.status === 'connected' && (
+                  <button
+                    onClick={() => handleRefresh(ch.id)}
+                    disabled={refreshing === ch.id}
+                    style={{ background: '#fff', color: '#00a89d', border: '1px solid #00a89d', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
+                  >
+                    {refreshing === ch.id ? 'Refreshing…' : 'Refresh Token'}
+                  </button>
+                )}
+                {ch.status === 'expired' && (
+                  <button
+                    onClick={handleConnect}
+                    style={{ background: '#e1306c', color: '#fff', border: 'none', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    Reconnect
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDisconnect(ch.id)}
+                  disabled={disconnecting === ch.id}
+                  style={{ background: '#fff', color: '#b71c1c', border: '1px solid #b71c1c', padding: '0.4rem 1rem', borderRadius: 6, cursor: 'pointer' }}
+                >
+                  {disconnecting === ch.id ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+              </div>
             </div>
           ))
         )}

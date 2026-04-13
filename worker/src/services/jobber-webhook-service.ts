@@ -1,0 +1,400 @@
+import { ActivityLogService } from './activity-log-service.js';
+import type { JobberCustomerRequest } from 'shared';
+
+const JOBBER_GRAPHQL_URL = 'https://api.getjobber.com/api/graphql';
+
+export interface JobberWebhookPayload {
+  data: {
+    webHookEvent: {
+      topic: string;
+      appId: string;
+      accountId: string;
+      itemId: string;
+      occurredAt: string;
+    };
+  };
+}
+
+interface RequestDetail {
+  id: string;
+  title: string | null;
+  companyName: string | null;
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  requestStatus: string;
+  createdAt: string;
+  jobberWebUri: string;
+  notes: {
+    edges: Array<{
+      node: {
+        message?: string;
+        createdAt?: string;
+        createdBy?: { __typename: string };
+      };
+    }>;
+  };
+  noteAttachments: {
+    edges: Array<{
+      node: { url: string; fileName: string; contentType: string };
+    }>;
+  };
+}
+
+const REQUEST_DETAIL_QUERY = `
+  query FetchRequestDetail($id: EncodedId!) {
+    request(id: $id) {
+      id
+      title
+      companyName
+      contactName
+      phone
+      email
+      requestStatus
+      createdAt
+      jobberWebUri
+      client { id firstName lastName companyName }
+      notes(first: 20) {
+        edges {
+          node {
+            ... on RequestNote {
+              message
+              createdAt
+              createdBy {
+                __typename
+              }
+            }
+          }
+        }
+      }
+      noteAttachments(first: 20) {
+        edges {
+          node {
+            url
+            fileName
+            contentType
+          }
+        }
+      }
+    }
+  }
+`;
+
+export class JobberWebhookService {
+  private db: D1Database;
+  private activityLog: ActivityLogService;
+  private accessToken: string;
+  private clientSecret: string;
+
+  constructor(db: D1Database, activityLog: ActivityLogService, opts: { accessToken: string; clientSecret: string }) {
+    this.db = db;
+    this.activityLog = activityLog;
+    this.accessToken = opts.accessToken;
+    this.clientSecret = opts.clientSecret;
+  }
+
+  /**
+   * Verify the HMAC signature on an incoming Jobber webhook.
+   * Uses the Web Crypto API (available in Workers).
+   */
+  async verifySignature(rawBody: string, signature: string): Promise<boolean> {
+    if (!this.clientSecret) return false;
+
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(this.clientSecret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody));
+    const calculated = btoa(String.fromCharCode(...new Uint8Array(sig)));
+
+    // Constant-time comparison
+    if (calculated.length !== signature.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < calculated.length; i++) {
+      mismatch |= calculated.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    return mismatch === 0;
+  }
+
+  async processWebhook(payload: JobberWebhookPayload): Promise<void> {
+    const { topic, itemId, accountId } = payload.data.webHookEvent;
+    if (!topic.startsWith('REQUEST_')) return;
+
+    try {
+      const detail = await this.fetchRequestDetail(itemId);
+
+      if (!detail) {
+        await this.storeWebhookData(itemId, topic, accountId, null, payload);
+        return;
+      }
+
+      const imageUrls = (detail.noteAttachments?.edges ?? [])
+        .filter((e) => e.node.contentType.startsWith('image/'))
+        .map((e) => e.node.url);
+
+      const description = detail.notes.edges
+        .map((e) => e.node?.message)
+        .filter((m): m is string => !!m)
+        .join('\n\n');
+
+      const clientDetail = (detail as any).client;
+      const clientName = detail.companyName
+        || detail.contactName
+        || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+        || null;
+
+      await this.storeWebhookData(itemId, topic, accountId, {
+        title: detail.title,
+        clientName,
+        description,
+        imageUrls,
+        detail,
+      }, payload);
+    } catch (err) {
+      console.error('Webhook processing error:', err);
+    }
+  }
+
+  private async fetchRequestDetail(requestId: string): Promise<RequestDetail | null> {
+    if (!this.accessToken) return null;
+
+    try {
+      const res = await fetch(JOBBER_GRAPHQL_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.accessToken}`,
+          'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
+        },
+        body: JSON.stringify({
+          query: REQUEST_DETAIL_QUERY,
+          variables: { id: requestId },
+        }),
+      });
+
+      if (!res.ok) return null;
+      const json = await res.json() as { data?: { request?: RequestDetail } };
+      return json.data?.request ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async storeWebhookData(
+    jobberRequestId: string,
+    topic: string,
+    accountId: string,
+    detail: {
+      title: string | null;
+      clientName: string | null;
+      description: string;
+      imageUrls: string[];
+      detail: RequestDetail;
+    } | null,
+    rawPayload: JobberWebhookPayload,
+  ): Promise<void> {
+    await this.db.prepare(
+      `INSERT INTO jobber_webhook_requests
+        (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+         title = excluded.title,
+         client_name = excluded.client_name,
+         description = excluded.description,
+         request_body = excluded.request_body,
+         image_urls = excluded.image_urls,
+         raw_payload = excluded.raw_payload,
+         processed_at = excluded.processed_at`
+    ).bind(
+      crypto.randomUUID(),
+      jobberRequestId,
+      topic,
+      accountId,
+      detail?.title ?? null,
+      detail?.clientName ?? null,
+      detail?.description ?? null,
+      detail ? JSON.stringify(detail.detail) : null,
+      detail ? JSON.stringify(detail.imageUrls) : '[]',
+      JSON.stringify(rawPayload),
+      detail ? new Date().toISOString() : null,
+    ).run();
+  }
+
+  async getWebhookRequests(): Promise<JobberCustomerRequest[]> {
+    const result = await this.db.prepare(
+      `SELECT w.jobber_request_id, w.title, w.client_name, w.description, w.image_urls, w.request_body, w.received_at
+       FROM jobber_webhook_requests w
+       INNER JOIN (
+         SELECT jobber_request_id, MAX(received_at) as max_received
+         FROM jobber_webhook_requests
+         WHERE processed_at IS NOT NULL
+         GROUP BY jobber_request_id
+       ) latest ON w.jobber_request_id = latest.jobber_request_id AND w.received_at = latest.max_received
+       ORDER BY w.received_at DESC`
+    ).all();
+
+    return (result.results as any[]).map((row) => {
+      let structuredNotes: { message: string; createdBy: 'team' | 'client' | 'system'; createdAt: string }[] = [];
+      let imageUrls: string[] = [];
+
+      try {
+        imageUrls = JSON.parse(row.image_urls || '[]');
+      } catch { imageUrls = []; }
+
+      if (row.request_body) {
+        try {
+          const detail = JSON.parse(row.request_body) as RequestDetail;
+          structuredNotes = detail.notes.edges
+            .filter((e) => e.node?.message)
+            .map((e) => {
+              const typeName = e.node.createdBy?.__typename ?? '';
+              let createdBy: 'team' | 'client' | 'system' = 'system';
+              if (typeName === 'User') createdBy = 'team';
+              else if (typeName === 'Client') createdBy = 'client';
+              return {
+                message: e.node.message!,
+                createdBy,
+                createdAt: e.node.createdAt ?? row.received_at,
+              };
+            });
+        } catch { /* ignore */ }
+      }
+
+      return {
+        id: row.jobber_request_id as string,
+        title: (row.title as string) || 'Untitled Request',
+        clientName: (row.client_name as string) || 'Unknown',
+        description: (row.description as string) || '',
+        notes: structuredNotes.map((n) => n.message),
+        structuredNotes,
+        imageUrls,
+        jobberWebUri: '',
+        createdAt: row.received_at as string,
+      };
+    });
+  }
+
+  /**
+   * Backfill: fetch full details for all requests directly from the API
+   * and store them in the webhook table.
+   */
+  async backfillFromApi(accessToken: string): Promise<{ processed: number; failed: number; total: number; lastError?: string }> {
+    let processed = 0;
+    let failed = 0;
+    let total = 0;
+    let lastError: string | undefined;
+    let after: string | null = null;
+    let hasMore = true;
+
+    while (hasMore) {
+      let edges: any[];
+      let pageInfo: { hasNextPage: boolean; endCursor: string | null };
+
+      try {
+        const res = await fetch(JOBBER_GRAPHQL_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+            'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
+          },
+          body: JSON.stringify({
+            query: `query($first: Int!, $after: String) {
+              requests(first: $first, after: $after) {
+                edges {
+                  node {
+                    id
+                    title
+                    companyName
+                    contactName
+                    requestStatus
+                    createdAt
+                    jobberWebUri
+                    client { id firstName lastName companyName }
+                    notes(first: 20) {
+                      edges {
+                        node {
+                          ... on RequestNote {
+                            message
+                            createdAt
+                            createdBy { __typename }
+                          }
+                        }
+                      }
+                    }
+                    noteAttachments(first: 20) {
+                      edges {
+                        node { url fileName contentType }
+                      }
+                    }
+                  }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }`,
+            variables: { first: 25, after },
+          }),
+        });
+
+        if (!res.ok) { failed++; break; }
+        const json = await res.json() as any;
+        edges = json?.data?.requests?.edges ?? [];
+        pageInfo = json?.data?.requests?.pageInfo ?? { hasNextPage: false, endCursor: null };
+      } catch {
+        break;
+      }
+
+      for (const edge of edges) {
+        total++;
+        const node = edge.node;
+        try {
+          // Check if already stored
+          const existing = await this.db.prepare(
+            'SELECT id FROM jobber_webhook_requests WHERE jobber_request_id = ? AND processed_at IS NOT NULL LIMIT 1'
+          ).bind(node.id).first();
+          if (existing) { processed++; continue; }
+
+          const imageUrls = (node.noteAttachments?.edges ?? [])
+            .filter((e: any) => e.node.contentType.startsWith('image/'))
+            .map((e: any) => e.node.url);
+
+          const description = (node.notes?.edges ?? [])
+            .map((e: any) => e.node?.message)
+            .filter((m: any): m is string => !!m)
+            .join('\n\n');
+
+          await this.db.prepare(
+            `INSERT INTO jobber_webhook_requests
+              (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            crypto.randomUUID(),
+            node.id,
+            'BACKFILL',
+            '',
+            node.title ?? null,
+            node.companyName || node.contactName || (node.client ? `${node.client.firstName || ''} ${node.client.lastName || ''}`.trim() || node.client.companyName : null) || null,
+            description,
+            JSON.stringify(node),
+            JSON.stringify(imageUrls),
+            JSON.stringify({ backfill: true }),
+            new Date().toISOString(),
+          ).run();
+          processed++;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
+          failed++;
+        }
+      }
+
+      hasMore = pageInfo.hasNextPage && !!pageInfo.endCursor;
+      after = pageInfo.endCursor;
+    }
+
+    return { processed, failed, total, lastError };
+  }
+}

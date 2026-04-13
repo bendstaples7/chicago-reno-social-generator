@@ -5,13 +5,13 @@ import { fetchActivityLog } from '../api';
 const severityColors: Record<string, string> = {
   error: '#b71c1c',
   warning: '#e65100',
-  info: '#1565c0',
+  info: '#00a89d',
 };
 
 const severityBg: Record<string, string> = {
   error: '#fdecea',
   warning: '#fff3e0',
-  info: '#e3f2fd',
+  info: '#e0f7f5',
 };
 
 export default function ActivityLogPage() {
@@ -75,7 +75,7 @@ export default function ActivityLogPage() {
                 </div>
                 <p style={{ margin: '0.25rem 0', fontSize: '0.9rem' }}>{entry.description}</p>
                 {entry.recommendedAction && (
-                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#1565c0' }}>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#00a89d' }}>
                     Recommended: {entry.recommendedAction}
                   </p>
                 )}

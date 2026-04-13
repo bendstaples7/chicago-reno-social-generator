@@ -14,29 +14,69 @@ router.use(sessionMiddleware);
 /**
  * GET /channels
  * List connected channels for the authenticated user.
+ * Checks token expiry and auto-refreshes tokens nearing expiration.
  */
 router.get('/', async (req, res, next) => {
   try {
+    const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
     const result = await query(
       `SELECT id, user_id, channel_type, external_account_id, external_account_name,
-              access_token_encrypted, token_expires_at, status, created_at, updated_at
+              token_expires_at, status, created_at, updated_at
        FROM channel_connections
        WHERE user_id = $1`,
       [req.user!.id],
     );
 
-    const channels: ChannelConnection[] = result.rows.map((row: Record<string, unknown>) => ({
-      id: row.id as string,
-      userId: row.user_id as string,
-      channelType: row.channel_type as string,
-      externalAccountId: row.external_account_id as string,
-      externalAccountName: row.external_account_name as string,
-      accessTokenEncrypted: row.access_token_encrypted as string,
-      tokenExpiresAt: new Date(row.token_expires_at as string),
-      status: row.status as ChannelConnection['status'],
-      createdAt: new Date(row.created_at as string),
-      updatedAt: new Date(row.updated_at as string),
-    }));
+    const channels: Array<Record<string, unknown>> = [];
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      let status = row.status as string;
+
+      if (status === 'connected' && row.token_expires_at) {
+        const expiresAt = new Date(row.token_expires_at as string).getTime();
+        const now = Date.now();
+
+        if (expiresAt < now) {
+          await query(
+            `UPDATE channel_connections SET status = 'expired', updated_at = NOW() WHERE id = $1`,
+            [row.id],
+          );
+          status = 'expired';
+        } else if (expiresAt - now < REFRESH_THRESHOLD_MS && row.channel_type === 'instagram') {
+          try {
+            const refreshed = await instagramChannel.refreshToken(row.id as string);
+            if (refreshed) {
+              channels.push({
+                id: refreshed.id,
+                userId: refreshed.userId,
+                channelType: refreshed.channelType,
+                externalAccountId: refreshed.externalAccountId,
+                externalAccountName: refreshed.externalAccountName,
+                tokenExpiresAt: refreshed.tokenExpiresAt,
+                status: refreshed.status,
+                createdAt: refreshed.createdAt,
+                updatedAt: refreshed.updatedAt,
+              });
+              continue;
+            }
+          } catch {
+            // Refresh failed — still show current status
+          }
+        }
+      }
+
+      channels.push({
+        id: row.id as string,
+        userId: row.user_id as string,
+        channelType: row.channel_type as string,
+        externalAccountId: row.external_account_id as string,
+        externalAccountName: row.external_account_name as string,
+        tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at as string) : null,
+        status,
+        createdAt: new Date(row.created_at as string),
+        updatedAt: new Date(row.updated_at as string),
+      });
+    }
 
     res.json({ channels });
   } catch (err) {
@@ -129,6 +169,54 @@ router.get('/instagram/callback', async (req, res, next) => {
     const state = req.query.state as string;
     const connection = await instagramChannel.handleAuthCallback(code, req.user!.id);
     res.json(connection);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /channels/instagram/refresh/:id
+ * Manually refresh an Instagram token.
+ */
+router.post('/instagram/refresh/:id', async (req, res, next) => {
+  try {
+    const check = await query(
+      `SELECT id, access_token_encrypted FROM channel_connections WHERE id = $1 AND user_id = $2 AND channel_type = 'instagram'`,
+      [req.params.id, req.user!.id],
+    );
+    if (check.rows.length === 0) {
+      res.status(404).json({ error: 'Channel not found' });
+      return;
+    }
+
+    // In direct-token mode the stored token is plain text (not encrypted via our
+    // AES-GCM scheme), so refreshToken() will fail on decrypt. Detect this by
+    // checking if the token lacks the encrypted format (iv:authTag:ciphertext).
+    const storedToken = check.rows[0].access_token_encrypted as string | null;
+    if (storedToken && storedToken.split(':').length !== 3) {
+      res.status(400).json({ error: 'Token refresh is not available for direct-token connections. Update FB_PAGE_ACCESS_TOKEN in your .env to rotate the token.' });
+      return;
+    }
+
+    const refreshed = await instagramChannel.refreshToken(req.params.id);
+    if (!refreshed) {
+      res.status(400).json({ error: 'Token refresh failed. Please reconnect your Instagram account.' });
+      return;
+    }
+
+    res.json({
+      channel: {
+        id: refreshed.id,
+        userId: refreshed.userId,
+        channelType: refreshed.channelType,
+        externalAccountId: refreshed.externalAccountId,
+        externalAccountName: refreshed.externalAccountName,
+        tokenExpiresAt: refreshed.tokenExpiresAt,
+        status: refreshed.status,
+        createdAt: refreshed.createdAt,
+        updatedAt: refreshed.updatedAt,
+      },
+    });
   } catch (err) {
     next(err);
   }

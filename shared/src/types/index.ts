@@ -7,3 +7,4 @@ export * from './post';
 export * from './channel';
 export * from './content';
 export * from './activity-log';
+export * from './quote';

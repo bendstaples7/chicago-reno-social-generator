@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   ContentTypeTemplate, ContentSuggestion, MediaItem,
@@ -10,7 +10,7 @@ import {
   quickStart, fetchContentTypes, fetchChannels,
   fetchSettings, updateSettings, fetchAdvisorSuggestion,
   createPost, generateContent, approvePost, publishPost,
-  generateImages, saveGeneratedImage, updatePost,
+  generateImages, saveGeneratedImage, updatePost, uploadMedia,
   fetchContentIdeas, generateContentIdeas, useContentIdea, dismissContentIdea,
 } from '../api';
 
@@ -45,6 +45,14 @@ export default function QuickPostPage() {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<MediaItem | null>(null);
+
+  // Preview image upload state
+  const previewFileInputRef = useRef<HTMLInputElement>(null);
+  const [previewUploading, setPreviewUploading] = useState(false);
+
+  // Hashtag editing state
+  const [newHashtag, setNewHashtag] = useState('');
+  const [hashtagGenerating, setHashtagGenerating] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -175,6 +183,9 @@ export default function QuickPostPage() {
       setStep('generating');
       setError(null);
       setGenProgress(10);
+      // Clear any leftover state from a previous post
+      clearSelectedImage();
+      setGeneratedImages([]);
 
       const post = await createPost({
         channelConnectionId: channel?.id ?? '',
@@ -219,6 +230,10 @@ export default function QuickPostPage() {
       const saved = await saveGeneratedImage(image);
       // Keep the DALL-E URL for preview since thumbnailUrl may not be servable
       saved.thumbnailUrl = image.url;
+      // Revoke previous blob URL if replacing an uploaded image
+      if (selectedImage?.thumbnailUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedImage.thumbnailUrl);
+      }
       setSelectedImage(saved);
       setGeneratedImages([]);
       if (savedPostId) await updatePost(savedPostId, { mediaItemIds: [saved.id] });
@@ -233,9 +248,19 @@ export default function QuickPostPage() {
 
   const handleApproveAndPublish = async () => {
     if (!savedPostId) return;
+    if (previewUploading || hashtagGenerating) {
+      setError('Please wait for the current upload or hashtag generation to finish.');
+      return;
+    }
     try {
       setActionLoading(true);
       setError(null);
+      // Save latest caption, hashtags, and image before publishing
+      await updatePost(savedPostId, {
+        caption,
+        hashtags,
+        mediaItemIds: selectedImage ? [selectedImage.id] : [],
+      });
       await approvePost(savedPostId);
       const result = await publishPost(savedPostId);
       if (result.success) {
@@ -248,6 +273,93 @@ export default function QuickPostPage() {
       setError((err as ErrorResponse).message ?? 'Failed to publish.');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // ── Preview image upload handler ──
+  const handlePreviewImageUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const allowed = ['image/jpeg', 'image/png'];
+    if (!allowed.includes(file.type)) {
+      setError('Please upload a JPEG or PNG image.');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setError('File exceeds the 50 MB size limit.');
+      return;
+    }
+    try {
+      setPreviewUploading(true);
+      setError(null);
+      const item = await uploadMedia(file);
+      // Revoke previous blob URL if one exists to avoid memory leak
+      if (selectedImage?.thumbnailUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedImage.thumbnailUrl);
+      }
+      // The server thumbnailUrl isn't directly servable in dev, so use a local
+      // object URL for the preview image.
+      item.thumbnailUrl = URL.createObjectURL(file);
+      setSelectedImage(item);
+      if (savedPostId) await updatePost(savedPostId, { mediaItemIds: [item.id] });
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Upload failed.');
+    } finally {
+      setPreviewUploading(false);
+      // Reset the input so re-uploading the same file triggers onChange
+      if (previewFileInputRef.current) previewFileInputRef.current.value = '';
+    }
+  };
+
+  const clearSelectedImage = () => {
+    if (selectedImage?.thumbnailUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedImage.thumbnailUrl);
+    }
+    setSelectedImage(null);
+  };
+
+  // ── Hashtag editing handlers ──
+  const handleRemoveHashtag = (tag: string) => {
+    setHashtags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const handleAddHashtag = () => {
+    const cleaned = newHashtag.trim().replace(/^#/, '').replace(/\s+/g, '');
+    if (!cleaned) return;
+    if (hashtags.includes(cleaned)) { setNewHashtag(''); return; }
+    if (hashtags.length >= MAX_HASHTAGS) { setError('Maximum ' + MAX_HASHTAGS + ' hashtags allowed.'); return; }
+    setHashtags((prev) => [...prev, cleaned]);
+    setNewHashtag('');
+  };
+
+  const handleGenerateMoreHashtags = async () => {
+    if (!savedPostId) return;
+    try {
+      setHashtagGenerating(true);
+      setError(null);
+      const result = await generateContent(savedPostId, { context: caption.substring(0, 200) });
+      const freshTags = result.hashtags || [];
+      // Use functional updater to merge against latest hashtags state
+      let mergedHashtags: string[] = [];
+      setHashtags((prev) => {
+        const existing = new Set(prev);
+        const newOnes = freshTags.filter((t: string) => !existing.has(t));
+        mergedHashtags = [...prev, ...newOnes].slice(0, MAX_HASHTAGS);
+        return mergedHashtags;
+      });
+      // generateContent overwrites the post caption on the server,
+      // so restore the user's current caption + merged hashtags.
+      // Use a callback to read latest caption via setState no-op trick,
+      // but simpler: just persist what we have — the updatePost in
+      // handleApproveAndPublish will send the final state before publish.
+      setCaption((currentCaption) => {
+        updatePost(savedPostId!, { caption: currentCaption, hashtags: mergedHashtags }).catch(() => {});
+        return currentCaption;
+      });
+    } catch (err) {
+      setError((err as ErrorResponse).message ?? 'Failed to generate hashtags.');
+    } finally {
+      setHashtagGenerating(false);
     }
   };
 
@@ -487,10 +599,33 @@ export default function QuickPostPage() {
               </div>
             )}
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0.75rem 0' }}>
+            <div style={{ flex: 1, height: 1, background: '#e0e0e0' }} />
+            <span style={{ fontSize: '0.8rem', color: '#888' }}>or</span>
+            <div style={{ flex: 1, height: 1, background: '#e0e0e0' }} />
+          </div>
+          <input
+            ref={previewFileInputRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            style={{ display: 'none' }}
+            onChange={(e) => handlePreviewImageUpload(e.target.files)}
+          />
+          <button
+            onClick={() => previewFileInputRef.current?.click()}
+            disabled={previewUploading}
+            style={{ ...btnOutlineStyle, width: '100%', opacity: previewUploading ? 0.5 : 1 }}
+          >
+            {previewUploading ? 'Uploading…' : '📁 Upload Image from Device'}
+          </button>
           {selectedImage && (
             <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#e0f7f5', border: '1px solid #80d4ce', borderRadius: 8, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <img src={selectedImage.thumbnailUrl} alt="Selected" style={{ width: 60, height: 60, borderRadius: 6, objectFit: 'cover' }} />
-              <span style={{ fontSize: '0.85rem', color: '#00a89d', fontWeight: 500 }}>Image attached to post</span>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: '0.85rem', color: '#00a89d', fontWeight: 500 }}>Image attached to post</span>
+              </div>
+              <button onClick={() => { clearSelectedImage(); setGeneratedImages([]); }}
+                style={{ background: 'none', border: 'none', color: '#d32f2f', cursor: 'pointer', fontSize: '0.85rem' }}>✕ Remove</button>
             </div>
           )}
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
@@ -518,15 +653,81 @@ export default function QuickPostPage() {
               <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={6}
                 style={{ ...inputStyle, borderColor: caption.length > MAX_CAPTION ? '#d32f2f' : '#ccc' }} />
             </label>
+
+            {/* ── Image upload section ── */}
+            <div style={{ marginBottom: '1rem' }}>
+              <span style={{ fontWeight: 500, fontSize: '0.9rem', display: 'block', marginBottom: '0.5rem' }}>Image</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {selectedImage ? (
+                  <img src={selectedImage.thumbnailUrl} alt="Selected" style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '1px solid #e0e0e0' }} />
+                ) : (
+                  <div style={{ width: 80, height: 80, borderRadius: 8, background: '#f5f5f5', border: '1px dashed #ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: '0.75rem' }}>No image</div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <input
+                    ref={previewFileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png"
+                    style={{ display: 'none' }}
+                    onChange={(e) => handlePreviewImageUpload(e.target.files)}
+                  />
+                  <button
+                    onClick={() => previewFileInputRef.current?.click()}
+                    disabled={previewUploading}
+                    style={{ ...btnOutlineStyle, fontSize: '0.8rem', padding: '0.35rem 0.75rem', opacity: previewUploading ? 0.5 : 1 }}
+                  >
+                    {previewUploading ? 'Uploading…' : '📁 Upload from Device'}
+                  </button>
+                  {selectedImage && (
+                    <button
+                      onClick={() => clearSelectedImage()}
+                      style={{ ...linkBtnStyle, fontSize: '0.8rem', textAlign: 'left', color: '#d32f2f' }}
+                    >
+                      ✕ Remove image
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Hashtag editing section ── */}
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                 <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>Hashtags</span>
                 <span style={{ fontSize: '0.8rem', color: hashtags.length > MAX_HASHTAGS ? '#d32f2f' : '#888' }}>{hashtags.length}/{MAX_HASHTAGS}</span>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                {hashtags.map((tag) => (<span key={tag} style={hashtagChipStyle}>#{tag}</span>))}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
+                {hashtags.map((tag) => (
+                  <span key={tag} style={hashtagChipEditableStyle}>
+                    #{tag}
+                    <button
+                      onClick={() => handleRemoveHashtag(tag)}
+                      title={'Remove #' + tag}
+                      aria-label={'Remove hashtag ' + tag}
+                      style={{ background: 'none', border: 'none', color: '#00897b', cursor: 'pointer', fontSize: '0.85rem', marginLeft: '0.25rem', padding: 0, lineHeight: 1 }}
+                    >✕</button>
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newHashtag}
+                  onChange={(e) => setNewHashtag(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddHashtag(); } }}
+                  placeholder="Add a hashtag…"
+                  style={{ ...inputStyle, marginTop: 0, flex: 1 }}
+                  aria-label="Add a hashtag"
+                />
+                <button onClick={handleAddHashtag} disabled={!newHashtag.trim()} style={{ ...btnOutlineStyle, fontSize: '0.8rem', padding: '0.4rem 0.75rem', whiteSpace: 'nowrap', opacity: newHashtag.trim() ? 1 : 0.5 }}>
+                  + Add
+                </button>
+                <button onClick={handleGenerateMoreHashtags} disabled={hashtagGenerating} style={{ ...btnOutlineStyle, fontSize: '0.8rem', padding: '0.4rem 0.75rem', whiteSpace: 'nowrap', opacity: hashtagGenerating ? 0.5 : 1 }}>
+                  {hashtagGenerating ? 'Generating…' : '✨ Generate More'}
+                </button>
               </div>
             </div>
+
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
               {!channel && (
                 <div style={{ width: '100%', background: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: 4, padding: '0.5rem 0.75rem', marginBottom: '0.5rem', fontSize: '0.85rem', color: '#e65100' }}>
@@ -534,8 +735,8 @@ export default function QuickPostPage() {
                 </div>
               )}
               <button onClick={handleApproveAndPublish}
-                disabled={actionLoading || !channel || caption.length > MAX_CAPTION || hashtags.length > MAX_HASHTAGS}
-                style={{ ...publishBtnStyle, opacity: (actionLoading || !channel) ? 0.5 : 1 }}>
+                disabled={actionLoading || previewUploading || hashtagGenerating || !channel || caption.length > MAX_CAPTION || hashtags.length > MAX_HASHTAGS}
+                style={{ ...publishBtnStyle, opacity: (actionLoading || previewUploading || hashtagGenerating || !channel) ? 0.5 : 1 }}>
                 {actionLoading ? 'Publishing…' : 'Approve & Publish'}
               </button>
 
@@ -602,7 +803,7 @@ const advisorSectionStyle: React.CSSProperties = { background: '#fff', border: '
 const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 8, padding: '1rem' };
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem', fontWeight: 500 };
 const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem', boxSizing: 'border-box' };
-const hashtagChipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e0f7f5', color: '#00a89d', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem' };
+const hashtagChipEditableStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', background: '#e0f7f5', color: '#00a89d', padding: '0.2rem 0.5rem', borderRadius: 12, fontSize: '0.8rem', gap: '0.15rem' };
 
 const ideaCardStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', padding: '0.75rem 1rem', background: '#fff',

@@ -58,10 +58,17 @@ router.get('/:id', async (req, res, next) => {
  * POST /posts/quick-start
  * Initialize the quick-post workflow. Returns content advisor suggestion,
  * media thumbnails, and smart defaults in a single response.
+ * Also triggers a non-blocking Instagram sync so the advisor has fresh data.
  */
 router.post('/quick-start', async (req, res, next) => {
   try {
     const userId = req.user!.id;
+
+    // Fire-and-forget Instagram sync so the advisor has up-to-date post history.
+    // This runs in the background — errors are silently ignored.
+    import('../services/instagram-sync-service.js')
+      .then(({ InstagramSyncService }) => new InstagramSyncService().syncRecentPosts(userId))
+      .catch(() => {});
 
     // Fetch user settings to determine advisor mode
     const settings = await userSettingsService.getSettings(userId);

@@ -35,10 +35,16 @@ app.get('/', async (c) => {
 /**
  * POST /quick-start
  * Initialize the quick-post workflow.
+ * Also triggers a non-blocking Instagram sync so the advisor has fresh data.
  */
 app.post('/quick-start', async (c) => {
   const userId = c.get('user').id;
   const db = c.env.DB;
+
+  // Fire-and-forget Instagram sync — errors silently ignored
+  import('../services/instagram-sync-service.js')
+    .then(({ InstagramSyncService }) => new InstagramSyncService(db, c.env.CHANNEL_ENCRYPTION_KEY).syncRecentPosts(userId))
+    .catch(() => {});
 
   const userSettingsService = new UserSettingsService(db);
   const settings = await userSettingsService.getSettings(userId);

@@ -230,6 +230,10 @@ export default function QuickPostPage() {
       const saved = await saveGeneratedImage(image);
       // Keep the DALL-E URL for preview since thumbnailUrl may not be servable
       saved.thumbnailUrl = image.url;
+      // Revoke previous blob URL if replacing an uploaded image
+      if (selectedImage?.thumbnailUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedImage.thumbnailUrl);
+      }
       setSelectedImage(saved);
       setGeneratedImages([]);
       if (savedPostId) await updatePost(savedPostId, { mediaItemIds: [saved.id] });
@@ -244,6 +248,10 @@ export default function QuickPostPage() {
 
   const handleApproveAndPublish = async () => {
     if (!savedPostId) return;
+    if (previewUploading || hashtagGenerating) {
+      setError('Please wait for the current upload or hashtag generation to finish.');
+      return;
+    }
     try {
       setActionLoading(true);
       setError(null);
@@ -330,13 +338,24 @@ export default function QuickPostPage() {
       setHashtagGenerating(true);
       setError(null);
       const result = await generateContent(savedPostId, { context: caption.substring(0, 200) });
-      // Merge new hashtags, avoiding duplicates, up to MAX_HASHTAGS
-      const existing = new Set(hashtags);
-      const fresh = (result.hashtags || []).filter((t: string) => !existing.has(t));
-      setHashtags((prev) => [...prev, ...fresh].slice(0, MAX_HASHTAGS));
-      // generateContent also overwrites the post caption on the server,
-      // so restore the user's current caption + merged hashtags
-      await updatePost(savedPostId, { caption, hashtags: [...hashtags, ...fresh].slice(0, MAX_HASHTAGS) });
+      const freshTags = result.hashtags || [];
+      // Use functional updater to merge against latest hashtags state
+      let mergedHashtags: string[] = [];
+      setHashtags((prev) => {
+        const existing = new Set(prev);
+        const newOnes = freshTags.filter((t: string) => !existing.has(t));
+        mergedHashtags = [...prev, ...newOnes].slice(0, MAX_HASHTAGS);
+        return mergedHashtags;
+      });
+      // generateContent overwrites the post caption on the server,
+      // so restore the user's current caption + merged hashtags.
+      // Use a callback to read latest caption via setState no-op trick,
+      // but simpler: just persist what we have — the updatePost in
+      // handleApproveAndPublish will send the final state before publish.
+      setCaption((currentCaption) => {
+        updatePost(savedPostId!, { caption: currentCaption, hashtags: mergedHashtags }).catch(() => {});
+        return currentCaption;
+      });
     } catch (err) {
       setError((err as ErrorResponse).message ?? 'Failed to generate hashtags.');
     } finally {
@@ -716,8 +735,8 @@ export default function QuickPostPage() {
                 </div>
               )}
               <button onClick={handleApproveAndPublish}
-                disabled={actionLoading || !channel || caption.length > MAX_CAPTION || hashtags.length > MAX_HASHTAGS}
-                style={{ ...publishBtnStyle, opacity: (actionLoading || !channel) ? 0.5 : 1 }}>
+                disabled={actionLoading || previewUploading || hashtagGenerating || !channel || caption.length > MAX_CAPTION || hashtags.length > MAX_HASHTAGS}
+                style={{ ...publishBtnStyle, opacity: (actionLoading || previewUploading || hashtagGenerating || !channel) ? 0.5 : 1 }}>
                 {actionLoading ? 'Publishing…' : 'Approve & Publish'}
               </button>
 

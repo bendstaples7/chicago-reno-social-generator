@@ -8,7 +8,7 @@ import type {
 import { AdvisorMode } from 'shared';
 import {
   quickStart, fetchContentTypes, fetchChannels,
-  fetchSettings, updateSettings,
+  fetchSettings, updateSettings, fetchAdvisorSuggestion,
   createPost, generateContent, approvePost, publishPost,
   generateImages, saveGeneratedImage, updatePost,
   fetchContentIdeas, generateContentIdeas, useContentIdea, dismissContentIdea,
@@ -60,35 +60,47 @@ export default function QuickPostPage() {
 
   const loadData = useCallback(async () => {
     try {
-      // Settings fetch is non-critical and runs concurrently
-      const settingsPromise = fetchSettings().catch(() => null);
-
-      const [qs, typesRes, channelsRes] = await Promise.all([
-        quickStart(), fetchContentTypes(), fetchChannels(),
+      // Fetch settings, content types, and channels in parallel.
+      // quickStart and fetchSettings both need user settings — run them concurrently.
+      // Each call is individually caught so one failure doesn't block the others.
+      const [settingsRes, typesRes, channelsRes, qsRes] = await Promise.all([
+        fetchSettings().catch(() => null),
+        fetchContentTypes().catch(() => null),
+        fetchChannels().catch(() => null),
+        quickStart().catch(() => null),
       ]);
-      setTemplates(typesRes.contentTypes);
-      setChannels(channelsRes.channels);
-      setSuggestion(qs.suggestion);
 
-      const settingsRes = await settingsPromise;
+      if (typesRes) setTemplates(typesRes.contentTypes);
+      if (channelsRes) setChannels(channelsRes.channels);
+
+      // Determine advisor mode from settings
+      let mode = AdvisorMode.Smart;
       if (settingsRes) {
-        const mode = settingsRes.settings.advisorMode;
+        mode = settingsRes.settings.advisorMode;
         setAdvisorMode(mode);
-        const isEnabled = mode !== AdvisorMode.Manual;
-        setAdvisorEnabled(isEnabled);
+        setAdvisorEnabled(mode !== AdvisorMode.Manual);
+      }
 
-        if (isEnabled && qs.suggestion) {
-          setSelectedContentType(qs.suggestion.contentType);
-        } else if (qs.defaults.contentType) {
-          setSelectedContentType(qs.defaults.contentType);
+      // Use suggestion from quickStart if available
+      let activeSuggestion = qsRes?.suggestion ?? null;
+
+      // If quickStart didn't return a suggestion but advisor is enabled,
+      // try the dedicated suggest endpoint as a fallback
+      if (!activeSuggestion && mode !== AdvisorMode.Manual) {
+        try {
+          const suggestRes = await fetchAdvisorSuggestion();
+          activeSuggestion = suggestRes.suggestion;
+        } catch {
+          // Advisor unavailable — continue without suggestion
         }
-      } else {
-        // Settings unavailable — default to advisor enabled with suggestion if available
-        if (qs.suggestion) {
-          setSelectedContentType(qs.suggestion.contentType);
-        } else if (qs.defaults.contentType) {
-          setSelectedContentType(qs.defaults.contentType);
-        }
+      }
+
+      setSuggestion(activeSuggestion);
+
+      if (mode !== AdvisorMode.Manual && activeSuggestion) {
+        setSelectedContentType(activeSuggestion.contentType);
+      } else if (qsRes?.defaults.contentType) {
+        setSelectedContentType(qsRes.defaults.contentType);
       }
 
       setStep('content-type');
@@ -305,8 +317,19 @@ export default function QuickPostPage() {
                       await updateSettings({ advisorMode: newMode });
                       setAdvisorMode(newMode);
                       setAdvisorEnabled(next);
-                      if (next && suggestion) {
-                        setSelectedContentType(suggestion.contentType);
+                      if (next) {
+                        // Fetch a fresh suggestion when enabling the advisor
+                        try {
+                          const res = await fetchAdvisorSuggestion();
+                          if (res.suggestion) {
+                            setSuggestion(res.suggestion);
+                            setSelectedContentType(res.suggestion.contentType);
+                          }
+                        } catch {
+                          // Suggestion fetch failed — advisor is on but no suggestion
+                        }
+                      } else {
+                        setSuggestion(null);
                       }
                     } catch {
                       // Revert — leave advisorEnabled unchanged

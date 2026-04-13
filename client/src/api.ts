@@ -304,6 +304,13 @@ export async function quickStart(): Promise<QuickStartResponse> {
   return handleResponse(res);
 }
 
+export async function fetchAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
+  const res = await fetch(API_BASE + '/api/content-advisor/suggest', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Settings ──
 
 export async function fetchSettings(): Promise<{ settings: UserSettings }> {

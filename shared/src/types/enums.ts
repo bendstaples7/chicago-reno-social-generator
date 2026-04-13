@@ -1,9 +1,10 @@
-/** The four content types supported in v1 */
+/** Content types supported by the platform */
 export enum ContentType {
   Education = 'education',
   Testimonial = 'testimonial',
   PersonalBrand = 'personal_brand',
   SeasonalEvent = 'seasonal_event',
+  BeforeAfter = 'before_after',
 }
 
 /** Content Advisor operating modes */

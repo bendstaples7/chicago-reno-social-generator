@@ -244,4 +244,20 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * POST /channels/instagram/sync
+ * Sync recent Instagram posts into the local database so the content advisor
+ * can factor in posts made outside this tool.
+ */
+router.post('/instagram/sync', async (req, res, next) => {
+  try {
+    const { InstagramSyncService } = await import('../services/instagram-sync-service.js');
+    const syncService = new InstagramSyncService();
+    const result = await syncService.syncRecentPosts(req.user!.id);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

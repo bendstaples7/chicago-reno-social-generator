@@ -126,12 +126,43 @@ const seasonalEventTemplate: ContentTypeTemplate = {
   },
 };
 
+const beforeAfterTemplate: ContentTypeTemplate = {
+  contentType: ContentType.BeforeAfter,
+  displayName: 'Before & After',
+  description: 'Project transformation showcases with before and after photos of Chicago Reno renovation work.',
+  fields: [
+    { name: 'project_type', label: 'Project Type', type: 'text', required: true, placeholder: 'e.g. Kitchen Remodel, Bathroom Renovation' },
+    { name: 'scope_summary', label: 'Scope of Work', type: 'textarea', required: true, placeholder: 'Brief description of what was done' },
+    { name: 'standout_detail', label: 'Standout Detail', type: 'text', required: false, placeholder: 'e.g. Custom tile work, open-concept layout' },
+  ],
+  promptTemplate: [
+    'Write a before-and-after project showcase Instagram caption for Chicago Reno, a professional and approachable home renovation company.',
+    'Project type: {{project_type}}',
+    'Scope of work: {{scope_summary}}',
+    '{{#standout_detail}}Standout detail: {{standout_detail}}{{/standout_detail}}',
+    '{{#context}}Additional context: {{context}}{{/context}}',
+    'The caption should:',
+    '- Open with a hook that highlights the transformation',
+    '- Briefly describe the scope of work and key changes',
+    '- Emphasize the visual impact and craftsmanship',
+    '- End with a call to action (e.g. ready for your transformation?)',
+    '- Use a proud, results-driven tone',
+    'Generate relevant renovation transformation and project showcase hashtags.',
+  ].join('\n'),
+  layoutGuidance: {
+    suggestedMediaCount: 2,
+    captionStructure: 'Transformation hook → Scope of work → Standout detail → CTA',
+    hashtagFocus: 'Before and after, renovation transformation, project showcase',
+  },
+};
+
 /** Map of all content type templates keyed by ContentType */
 export const CONTENT_TEMPLATES: ReadonlyMap<ContentType, ContentTypeTemplate> = new Map([
   [ContentType.Education, educationTemplate],
   [ContentType.Testimonial, testimonialTemplate],
   [ContentType.PersonalBrand, personalBrandTemplate],
   [ContentType.SeasonalEvent, seasonalEventTemplate],
+  [ContentType.BeforeAfter, beforeAfterTemplate],
 ]);
 
 /** Get the template for a given content type. Throws if not found. */

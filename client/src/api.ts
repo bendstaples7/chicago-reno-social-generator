@@ -304,6 +304,13 @@ export async function quickStart(): Promise<QuickStartResponse> {
   return handleResponse(res);
 }
 
+export async function fetchAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
+  const res = await fetch(API_BASE + '/api/content-advisor/suggest', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Settings ──
 
 export async function fetchSettings(): Promise<{ settings: UserSettings }> {
@@ -344,6 +351,14 @@ export async function disconnectChannel(id: string): Promise<{ success: boolean 
 
 export async function refreshInstagramToken(id: string): Promise<{ channel: ChannelConnection }> {
   const res = await fetch(API_BASE + '/api/channels/instagram/refresh/' + id, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function syncInstagramPosts(): Promise<{ synced: number; skipped: number; errors: string[] }> {
+  const res = await fetch(API_BASE + '/api/channels/instagram/sync', {
     method: 'POST',
     headers: { ...authHeaders() },
   });

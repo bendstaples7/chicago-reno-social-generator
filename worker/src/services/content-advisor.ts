@@ -7,6 +7,7 @@ const ALL_CONTENT_TYPES: ContentType[] = [
   ContentType.Testimonial,
   ContentType.PersonalBrand,
   ContentType.SeasonalEvent,
+  ContentType.BeforeAfter,
 ];
 
 export class ContentAdvisor {
@@ -114,6 +115,7 @@ export class ContentAdvisor {
       case ContentType.Testimonial: return 'Testimonial';
       case ContentType.PersonalBrand: return 'Personal Brand';
       case ContentType.SeasonalEvent: return 'Seasonal Event';
+      case ContentType.BeforeAfter: return 'Before & After';
       default: return ct;
     }
   }

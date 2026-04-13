@@ -46,7 +46,7 @@ function encrypt(text: string): string {
   return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
 }
 
-function decrypt(encryptedText: string): string {
+export function decrypt(encryptedText: string): string {
   const key = getEncryptionKey();
   const [ivHex, authTagHex, encrypted] = encryptedText.split(':');
   const iv = Buffer.from(ivHex, 'hex');

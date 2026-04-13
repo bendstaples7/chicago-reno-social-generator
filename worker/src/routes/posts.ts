@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, PostStatus, ContentType } from 'shared';
+import { ContentType } from 'shared';
+import type { User, PostStatus } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import {
   PostService,
@@ -41,10 +42,12 @@ app.post('/quick-start', async (c) => {
   const userId = c.get('user').id;
   const db = c.env.DB;
 
-  // Fire-and-forget Instagram sync — rate-limited, errors silently ignored
-  import('../services/instagram-sync-service.js')
+  // Background Instagram sync via waitUntil so it completes even after response is sent.
+  // Rate-limited to once per 5 minutes, failures logged.
+  const syncPromise = import('../services/instagram-sync-service.js')
     .then(({ InstagramSyncService }) => new InstagramSyncService(db, c.env.CHANNEL_ENCRYPTION_KEY).syncRecentPosts(userId))
-    .catch(() => {});
+    .catch((err) => console.error('[InstagramSync] Background sync failed for user %s:', userId, err));
+  c.executionCtx.waitUntil(syncPromise);
 
   const userSettingsService = new UserSettingsService(db);
   const settings = await userSettingsService.getSettings(userId);
@@ -97,7 +100,7 @@ app.post('/', async (c) => {
   };
 
   // Validate contentType
-  const validContentTypes = ['education', 'testimonial', 'personal_brand', 'seasonal_event', 'before_after'];
+  const validContentTypes = Object.values(ContentType);
   if (!body.contentType || !validContentTypes.includes(body.contentType)) {
     return c.json({
       severity: 'warning',

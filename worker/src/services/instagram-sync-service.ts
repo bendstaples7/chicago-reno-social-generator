@@ -1,9 +1,10 @@
 import { PlatformError } from '../errors/index.js';
-import { ContentType } from 'shared';
+import { ContentType, classifyContentType, extractHashtags } from 'shared';
 
 const INSTAGRAM_GRAPH_URL = 'https://graph.facebook.com/v25.0';
 const MEDIA_FIELDS = 'id,caption,media_type,timestamp,permalink,thumbnail_url,media_url';
 const SYNC_LIMIT = 50;
+const SYNC_TIMEOUT_MS = 10_000;
 
 interface InstagramMediaItem {
   id: string;
@@ -21,47 +22,6 @@ interface SyncResult {
   errors: string[];
 }
 
-function classifyContentType(caption: string): ContentType {
-  const lower = (caption || '').toLowerCase();
-
-  const beforeAfterKeywords = [
-    'before and after', 'before & after', 'transformation',
-    'the before', 'the after', 'swipe to see', 'what a difference',
-    'from this to this', 'project reveal', 'reveal day',
-  ];
-  if (beforeAfterKeywords.some((kw) => lower.includes(kw))) return ContentType.BeforeAfter;
-
-  const testimonialKeywords = [
-    'review', 'testimonial', 'feedback', 'thank you for the kind words',
-    'what our client', 'client said', 'customer said', '⭐', 'stars',
-    'happy client', 'happy customer', 'loved working with',
-  ];
-  if (testimonialKeywords.some((kw) => lower.includes(kw))) return ContentType.Testimonial;
-
-  const personalBrandKeywords = [
-    'meet the team', 'team member', 'behind the scenes', 'our crew',
-    'employee spotlight', 'team spotlight', 'day in the life',
-  ];
-  if (personalBrandKeywords.some((kw) => lower.includes(kw))) return ContentType.PersonalBrand;
-
-  const seasonalKeywords = [
-    'happy holidays', 'merry christmas', 'happy new year',
-    'spring cleaning', 'spring project', 'summer project',
-    'fall project', 'winter project', 'thanksgiving',
-    'memorial day', 'labor day', '4th of july', 'fourth of july',
-    'valentine', "mother's day", "father's day", 'seasonal',
-    'new year', 'holiday season',
-  ];
-  if (seasonalKeywords.some((kw) => lower.includes(kw))) return ContentType.SeasonalEvent;
-
-  return ContentType.Education;
-}
-
-function extractHashtags(caption: string): string[] {
-  const matches = (caption || '').match(/#[\w]+/g);
-  return matches ? matches.map((tag) => tag.slice(1)) : [];
-}
-
 // Web Crypto decrypt helper (matches instagram-channel.ts)
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
@@ -73,9 +33,26 @@ function hexToBytes(hex: string): Uint8Array {
 
 async function decryptToken(encryptedText: string, keyHex: string): Promise<string> {
   const parts = encryptedText.split(':');
-  if (parts.length !== 2) throw new Error('Invalid encrypted format');
-  const iv = hexToBytes(parts[0]);
-  const ciphertext = hexToBytes(parts[1]);
+  let iv: Uint8Array;
+  let ciphertext: Uint8Array;
+
+  if (parts.length === 2) {
+    // Worker format: iv:ciphertext (authTag appended to ciphertext by Web Crypto)
+    iv = hexToBytes(parts[0]);
+    ciphertext = hexToBytes(parts[1]);
+  } else if (parts.length === 3) {
+    // Server format: iv:authTag:ciphertext (authTag separate)
+    iv = hexToBytes(parts[0]);
+    const authTag = hexToBytes(parts[1]);
+    const encrypted = hexToBytes(parts[2]);
+    // Concatenate ciphertext + authTag for Web Crypto (expects them combined)
+    ciphertext = new Uint8Array(encrypted.length + authTag.length);
+    ciphertext.set(encrypted);
+    ciphertext.set(authTag, encrypted.length);
+  } else {
+    throw new Error('Invalid encrypted format');
+  }
+
   const keyBytes = hexToBytes(keyHex);
   const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
   const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
@@ -84,7 +61,6 @@ async function decryptToken(encryptedText: string, keyHex: string): Promise<stri
 
 export class InstagramSyncService {
   private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
-  private static lastSyncByUser = new Map<string, number>();
 
   private readonly db: D1Database;
   private readonly encryptionKey: string;
@@ -95,12 +71,16 @@ export class InstagramSyncService {
   }
 
   async syncRecentPosts(userId: string): Promise<SyncResult> {
-    const now = Date.now();
-    const lastSync = InstagramSyncService.lastSyncByUser.get(userId) ?? 0;
-    if (now - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+    // Check cooldown using the most recent instagram_sync post timestamp
+    const cooldownRow = await this.db.prepare(
+      "SELECT MAX(created_at) AS last_sync FROM posts WHERE user_id = ? AND source = 'instagram_sync'"
+    ).bind(userId).first() as any;
+    const lastSync = cooldownRow?.last_sync
+      ? new Date(cooldownRow.last_sync as string).getTime()
+      : 0;
+    if (Date.now() - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
       return { synced: 0, skipped: 0, errors: [] };
     }
-    InstagramSyncService.lastSyncByUser.set(userId, now);
     const conn = await this.db.prepare(
       "SELECT id, access_token_encrypted, external_account_id FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram' AND status = 'connected' LIMIT 1"
     ).bind(userId).first() as any;
@@ -122,8 +102,8 @@ export class InstagramSyncService {
     const rawToken = conn.access_token_encrypted as string;
     const colonCount = (rawToken.match(/:/g) || []).length;
 
-    if (colonCount === 1 && rawToken.length > 50) {
-      // Encrypted format (Web Crypto): iv:ciphertext
+    if ((colonCount === 1 || colonCount === 2) && rawToken.length > 50) {
+      // Encrypted format: iv:ciphertext (worker) or iv:authTag:ciphertext (server)
       try {
         accessToken = await decryptToken(rawToken, this.encryptionKey);
       } catch {
@@ -140,10 +120,29 @@ export class InstagramSyncService {
       accessToken = rawToken;
     }
 
-    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
+    let response: Response;
+    try {
+      const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if ((err as Error).name === 'AbortError') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'InstagramSyncService',
+          operation: 'syncRecentPosts',
+          description: `Instagram API request timed out after ${SYNC_TIMEOUT_MS / 1000}s.`,
+          recommendedActions: ['Try again later', 'Check your network connection'],
+        });
+      }
+      throw err;
+    }
+    clearTimeout(timer);
 
     if (!response.ok) {
       const body = await response.text();
@@ -164,7 +163,7 @@ export class InstagramSyncService {
     }
 
     const existingResult = await this.db.prepare(
-      "SELECT external_post_id FROM posts WHERE user_id = ? AND source = 'instagram_sync' AND external_post_id IS NOT NULL"
+      "SELECT external_post_id FROM posts WHERE user_id = ? AND external_post_id IS NOT NULL"
     ).bind(userId).all();
     const existingIds = new Set((existingResult.results as any[]).map((r) => r.external_post_id as string));
 

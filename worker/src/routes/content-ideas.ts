@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ContentType } from 'shared';
+import { ContentType } from 'shared';
+import type { User } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { ContentIdeasService } from '../services/content-ideas-service.js';
 import { PlatformError } from '../errors/index.js';
 
-const VALID_CONTENT_TYPES = ['education', 'testimonial', 'personal_brand', 'seasonal_event', 'before_after'];
+const VALID_CONTENT_TYPES = Object.values(ContentType);
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 

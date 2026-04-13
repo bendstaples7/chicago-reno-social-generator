@@ -1,18 +1,11 @@
 import { query } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
+import { CONTENT_TYPE_LABELS } from 'shared';
 import type { ContentIdea, ContentType } from 'shared';
 
 const BATCH_SIZE = 10;
 const GENERATION_TIMEOUT_MS = 30_000;
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
-
-const CONTENT_TYPE_LABELS: Record<string, string> = {
-  education: 'Educational content about renovation topics, materials, techniques, or home improvement advice',
-  testimonial: 'Customer reviews, testimonials, and success stories about renovation projects',
-  personal_brand: 'Team member spotlights, behind-the-scenes, and company culture content',
-  seasonal_event: 'Content tied to seasons, holidays, or timely events related to home renovation',
-  before_after: 'Project transformation showcases with before and after photos of renovation work',
-};
 
 export class ContentIdeasService {
   /** Get unused ideas for a content type */

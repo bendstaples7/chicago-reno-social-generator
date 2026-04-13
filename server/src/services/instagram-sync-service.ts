@@ -1,6 +1,6 @@
 import { query } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
-import { ContentType } from 'shared';
+import { ContentType, classifyContentType, extractHashtags } from 'shared';
 
 const INSTAGRAM_GRAPH_URL = 'https://graph.facebook.com/v25.0';
 
@@ -9,6 +9,9 @@ const MEDIA_FIELDS = 'id,caption,media_type,timestamp,permalink,thumbnail_url,me
 
 /** Maximum posts to fetch per sync */
 const SYNC_LIMIT = 50;
+
+/** Timeout for Instagram API requests */
+const SYNC_TIMEOUT_MS = 10_000;
 
 interface InstagramMediaItem {
   id: string;
@@ -26,71 +29,9 @@ interface SyncResult {
   errors: string[];
 }
 
-/**
- * Classifies an Instagram post caption into a ContentType using keyword heuristics.
- * Falls back to Education as the most generic type.
- */
-function classifyContentType(caption: string): ContentType {
-  const lower = (caption || '').toLowerCase();
-
-  // Before & After — transformation language
-  const beforeAfterKeywords = [
-    'before and after', 'before & after', 'transformation',
-    'the before', 'the after', 'swipe to see', 'what a difference',
-    'from this to this', 'project reveal', 'reveal day',
-  ];
-  if (beforeAfterKeywords.some((kw) => lower.includes(kw))) {
-    return ContentType.BeforeAfter;
-  }
-
-  // Testimonial — review/feedback language
-  const testimonialKeywords = [
-    'review', 'testimonial', 'feedback', 'thank you for the kind words',
-    'what our client', 'client said', 'customer said', '⭐', 'stars',
-    'happy client', 'happy customer', 'loved working with',
-  ];
-  if (testimonialKeywords.some((kw) => lower.includes(kw))) {
-    return ContentType.Testimonial;
-  }
-
-  // Personal Brand — team/people language
-  const personalBrandKeywords = [
-    'meet the team', 'team member', 'behind the scenes', 'our crew',
-    'employee spotlight', 'team spotlight', 'day in the life',
-  ];
-  if (personalBrandKeywords.some((kw) => lower.includes(kw))) {
-    return ContentType.PersonalBrand;
-  }
-
-  // Seasonal Event — holiday/seasonal language
-  const seasonalKeywords = [
-    'happy holidays', 'merry christmas', 'happy new year',
-    'spring cleaning', 'spring project', 'summer project',
-    'fall project', 'winter project', 'thanksgiving',
-    'memorial day', 'labor day', '4th of july', 'fourth of july',
-    'valentine', 'mother\'s day', 'father\'s day', 'seasonal',
-    'new year', 'holiday season',
-  ];
-  if (seasonalKeywords.some((kw) => lower.includes(kw))) {
-    return ContentType.SeasonalEvent;
-  }
-
-  // Default to Education (tips, how-to, informational)
-  return ContentType.Education;
-}
-
-/**
- * Extract hashtags from a caption string.
- */
-function extractHashtags(caption: string): string[] {
-  const matches = (caption || '').match(/#[\w]+/g);
-  return matches ? matches.map((tag) => tag.slice(1)) : [];
-}
-
 export class InstagramSyncService {
   /** Minimum interval between syncs per user (5 minutes) */
   private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
-  private static lastSyncByUser = new Map<string, number>();
 
   /**
    * Sync recent Instagram posts into the local posts table.
@@ -99,12 +40,17 @@ export class InstagramSyncService {
    * Skips if the last sync for this user was less than 5 minutes ago.
    */
   async syncRecentPosts(userId: string): Promise<SyncResult> {
-    const now = Date.now();
-    const lastSync = InstagramSyncService.lastSyncByUser.get(userId) ?? 0;
-    if (now - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+    // Check cooldown using the most recent instagram_sync post timestamp
+    const cooldownResult = await query(
+      `SELECT MAX(created_at) AS last_sync FROM posts WHERE user_id = $1 AND source = 'instagram_sync'`,
+      [userId],
+    );
+    const lastSync = cooldownResult.rows[0]?.last_sync
+      ? new Date(cooldownResult.rows[0].last_sync as string).getTime()
+      : 0;
+    if (Date.now() - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
       return { synced: 0, skipped: 0, errors: [] };
     }
-    InstagramSyncService.lastSyncByUser.set(userId, now);
     // Get the active Instagram connection for this user
     const connResult = await query(
       `SELECT id, access_token_encrypted, external_account_id
@@ -137,17 +83,8 @@ export class InstagramSyncService {
     if (colonCount === 2) {
       // Encrypted format: iv:authTag:ciphertext
       try {
-        const crypto = await import('node:crypto');
-        const key = process.env.CHANNEL_ENCRYPTION_KEY;
-        if (!key) throw new Error('No encryption key');
-        const parts = rawToken.split(':');
-        const keyBuf = Buffer.from(key, 'hex');
-        const iv = Buffer.from(parts[0], 'hex');
-        const authTag = Buffer.from(parts[1], 'hex');
-        const encrypted = Buffer.from(parts[2], 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
-        decipher.setAuthTag(authTag);
-        accessToken = decipher.update(encrypted, undefined, 'utf8') + decipher.final('utf8');
+        const { decrypt } = await import('./instagram-channel.js');
+        accessToken = decrypt(rawToken);
       } catch {
         throw new PlatformError({
           severity: 'error',
@@ -162,11 +99,30 @@ export class InstagramSyncService {
       accessToken = rawToken;
     }
 
-    // Fetch recent media from Instagram
-    const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    // Fetch recent media from Instagram (with timeout)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
+    let response: Response;
+    try {
+      const url = `${INSTAGRAM_GRAPH_URL}/${igUserId}/media?fields=${MEDIA_FIELDS}&limit=${SYNC_LIMIT}`;
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if ((err as Error).name === 'AbortError') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'InstagramSyncService',
+          operation: 'syncRecentPosts',
+          description: `Instagram API request timed out after ${SYNC_TIMEOUT_MS / 1000}s.`,
+          recommendedActions: ['Try again later', 'Check your network connection'],
+        });
+      }
+      throw err;
+    }
+    clearTimeout(timer);
 
     if (!response.ok) {
       const body = await response.text();
@@ -189,7 +145,7 @@ export class InstagramSyncService {
     // Get existing external_post_ids to skip duplicates
     const existingResult = await query(
       `SELECT external_post_id FROM posts
-       WHERE user_id = $1 AND source = 'instagram_sync' AND external_post_id IS NOT NULL`,
+       WHERE user_id = $1 AND external_post_id IS NOT NULL`,
       [userId],
     );
     const existingIds = new Set(existingResult.rows.map((r) => r.external_post_id as string));

@@ -91,7 +91,7 @@ export class InstagramSyncService {
 
   async syncRecentPosts(userId: string): Promise<SyncResult> {
     const conn = await this.db.prepare(
-      "SELECT id, access_token_encrypted, platform_user_id FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram' AND status = 'connected' LIMIT 1"
+      "SELECT id, access_token_encrypted, external_account_id FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram' AND status = 'connected' LIMIT 1"
     ).bind(userId).first() as any;
 
     if (!conn) {
@@ -105,7 +105,7 @@ export class InstagramSyncService {
     }
 
     const connectionId = conn.id as string;
-    const igUserId = conn.platform_user_id as string;
+    const igUserId = conn.external_account_id as string;
 
     let accessToken: string;
     try {

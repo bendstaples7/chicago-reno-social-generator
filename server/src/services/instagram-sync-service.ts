@@ -95,7 +95,7 @@ export class InstagramSyncService {
   async syncRecentPosts(userId: string): Promise<SyncResult> {
     // Get the active Instagram connection for this user
     const connResult = await query(
-      `SELECT id, access_token_encrypted, platform_user_id
+      `SELECT id, access_token_encrypted, external_account_id
        FROM channel_connections
        WHERE user_id = $1 AND channel_type = 'instagram' AND status = 'connected'
        LIMIT 1`,
@@ -114,7 +114,7 @@ export class InstagramSyncService {
 
     const conn = connResult.rows[0];
     const connectionId = conn.id as string;
-    const igUserId = conn.platform_user_id as string;
+    const igUserId = conn.external_account_id as string;
 
     // Decrypt the access token
     let accessToken: string;

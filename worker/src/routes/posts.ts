@@ -46,7 +46,10 @@ app.post('/quick-start', async (c) => {
   // Rate-limited to once per 5 minutes, failures logged.
   const syncPromise = import('../services/instagram-sync-service.js')
     .then(({ InstagramSyncService }) => new InstagramSyncService(db, c.env.CHANNEL_ENCRYPTION_KEY).syncRecentPosts(userId))
-    .catch((err) => console.error('[InstagramSync] Background sync failed for user %s:', userId, err));
+    .catch((err) => {
+      if (err && err.severity === 'warning') return;
+      console.error('[InstagramSync] Background sync failed for user %s:', userId, err);
+    });
   c.executionCtx.waitUntil(syncPromise);
 
   const userSettingsService = new UserSettingsService(db);

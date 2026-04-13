@@ -61,6 +61,8 @@ async function decryptToken(encryptedText: string, keyHex: string): Promise<stri
 
 export class InstagramSyncService {
   private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+  /** In-memory record of last sync attempt per user (covers no-new-posts case) */
+  private static lastAttemptByUser = new Map<string, number>();
 
   private readonly db: D1Database;
   private readonly encryptionKey: string;
@@ -71,16 +73,12 @@ export class InstagramSyncService {
   }
 
   async syncRecentPosts(userId: string): Promise<SyncResult> {
-    // Check cooldown using the most recent instagram_sync post timestamp
-    const cooldownRow = await this.db.prepare(
-      "SELECT MAX(created_at) AS last_sync FROM posts WHERE user_id = ? AND source = 'instagram_sync'"
-    ).bind(userId).first() as any;
-    const lastSync = cooldownRow?.last_sync
-      ? new Date(cooldownRow.last_sync as string).getTime()
-      : 0;
-    if (Date.now() - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+    const now = Date.now();
+    const lastAttempt = InstagramSyncService.lastAttemptByUser.get(userId) ?? 0;
+    if (now - lastAttempt < InstagramSyncService.SYNC_COOLDOWN_MS) {
       return { synced: 0, skipped: 0, errors: [] };
     }
+    InstagramSyncService.lastAttemptByUser.set(userId, now);
     const conn = await this.db.prepare(
       "SELECT id, access_token_encrypted, external_account_id FROM channel_connections WHERE user_id = ? AND channel_type = 'instagram' AND status = 'connected' LIMIT 1"
     ).bind(userId).first() as any;

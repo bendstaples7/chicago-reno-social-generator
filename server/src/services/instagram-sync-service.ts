@@ -32,25 +32,24 @@ interface SyncResult {
 export class InstagramSyncService {
   /** Minimum interval between syncs per user (5 minutes) */
   private static readonly SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+  /** In-memory record of last sync attempt per user (covers no-new-posts case) */
+  private static lastAttemptByUser = new Map<string, number>();
 
   /**
    * Sync recent Instagram posts into the local posts table.
    * Fetches media from the Instagram Graph API, skips posts already synced
    * (matched by external_post_id), and inserts new ones.
-   * Skips if the last sync for this user was less than 5 minutes ago.
+   * Skips if the last sync attempt for this user was less than 5 minutes ago.
    */
   async syncRecentPosts(userId: string): Promise<SyncResult> {
-    // Check cooldown using the most recent instagram_sync post timestamp
-    const cooldownResult = await query(
-      `SELECT MAX(created_at) AS last_sync FROM posts WHERE user_id = $1 AND source = 'instagram_sync'`,
-      [userId],
-    );
-    const lastSync = cooldownResult.rows[0]?.last_sync
-      ? new Date(cooldownResult.rows[0].last_sync as string).getTime()
-      : 0;
-    if (Date.now() - lastSync < InstagramSyncService.SYNC_COOLDOWN_MS) {
+    // In-memory gate: skip if we already attempted a sync recently.
+    // This covers the case where a sync finds 0 new posts (no DB rows inserted).
+    const now = Date.now();
+    const lastAttempt = InstagramSyncService.lastAttemptByUser.get(userId) ?? 0;
+    if (now - lastAttempt < InstagramSyncService.SYNC_COOLDOWN_MS) {
       return { synced: 0, skipped: 0, errors: [] };
     }
+    InstagramSyncService.lastAttemptByUser.set(userId, now);
     // Get the active Instagram connection for this user
     const connResult = await query(
       `SELECT id, access_token_encrypted, external_account_id

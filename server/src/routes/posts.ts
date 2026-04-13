@@ -69,7 +69,11 @@ router.post('/quick-start', async (req, res, next) => {
     // but new posts will be available next time. Rate-limited to once per 5 minutes.
     import('../services/instagram-sync-service.js')
       .then(({ InstagramSyncService }) => new InstagramSyncService().syncRecentPosts(userId))
-      .catch((err) => console.error('[InstagramSync] Background sync failed for user %s:', userId, err));
+      .catch((err) => {
+        // Don't log expected warnings (e.g., no Instagram account connected) as errors
+        if (err && err.severity === 'warning') return;
+        console.error('[InstagramSync] Background sync failed for user %s:', userId, err);
+      });
 
     // Fetch user settings to determine advisor mode
     const settings = await userSettingsService.getSettings(userId);

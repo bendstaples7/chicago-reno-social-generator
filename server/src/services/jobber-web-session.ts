@@ -80,6 +80,14 @@ export class JobberWebSession {
   }
 
   /**
+   * Returns true only if we have a currently valid cached session.
+   * Does NOT trigger the Auth0 login flow.
+   */
+  hasValidSession(): boolean {
+    return !!(this.session && Date.now() < this.session.expiresAt);
+  }
+
+  /**
    * Set session cookies manually (from browser DevTools).
    * This bypasses the Auth0 login flow entirely.
    */
@@ -102,9 +110,10 @@ export class JobberWebSession {
   /**
    * Fetch the form submission data for a Jobber request.
    * Returns null if web session is not configured or the request has no form data.
+   * Only uses an existing valid session — does NOT trigger the Auth0 login flow.
    */
   async fetchRequestFormData(requestId: string): Promise<RequestFormData | null> {
-    if (!this.isConfigured()) return null;
+    if (!this.hasValidSession()) return null;
 
     try {
       const cookies = await this.getSessionCookies();

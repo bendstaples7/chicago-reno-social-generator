@@ -61,10 +61,9 @@ export default function QuoteInputPage() {
 
     // Fallback to title + description + notes
     const parts: string[] = [];
-    if (request.title) parts.push(request.title);
     if (request.description) {
       const trimmedDesc = request.description.trim();
-      if (trimmedDesc && trimmedDesc !== request.title) {
+      if (trimmedDesc) {
         parts.push(trimmedDesc);
       }
     }
@@ -74,7 +73,8 @@ export default function QuoteInputPage() {
       const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
       parts.push(`${label} ${trimmed}`);
     }
-    setCustomerText(parts.join('\n\n') || request.title || '');
+    // Only set customer text if we have actual content beyond just the title
+    setCustomerText(parts.join('\n\n'));
   };
 
   const handleRequestClear = () => {
@@ -181,7 +181,7 @@ export default function QuoteInputPage() {
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
           placeholder={jobberRequestId
-            ? 'Jobber form details aren\'t available via the API — paste or type the customer\'s description here to improve quote accuracy…'
+            ? 'Open the request in Jobber using the link above, then copy and paste the customer\'s request details here…'
             : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}

@@ -421,6 +421,53 @@ export class JobberIntegration {
     }
   }
 
+  // ── Single Request Detail ────────────────────────────────────────
+
+  /**
+   * Fetch a single request's full detail from the Jobber public API.
+   * Returns the raw node data or null on failure.
+   */
+  async fetchRequestDetail(requestId: string): Promise<JobberRequestNode | null> {
+    try {
+      const data = await this.graphqlRequest<{ request: JobberRequestNode }>(
+        `query FetchRequestDetail($id: EncodedId!) {
+          request(id: $id) {
+            id
+            title
+            companyName
+            contactName
+            phone
+            email
+            requestStatus
+            createdAt
+            jobberWebUri
+            notes(first: 20) {
+              edges {
+                node {
+                  ... on RequestNote {
+                    message
+                    createdAt
+                    createdBy { __typename }
+                  }
+                }
+              }
+            }
+            noteAttachments(first: 20) {
+              edges {
+                node { url fileName contentType }
+              }
+            }
+          }
+        }`,
+        { id: requestId },
+      );
+      return data.request ?? null;
+    } catch (err) {
+      console.error('[JobberIntegration] fetchRequestDetail failed:', err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
   // ── Private helpers ──────────────────────────────────────────────
 
   private isCacheExpired<T>(entry: CacheEntry<T>): boolean {

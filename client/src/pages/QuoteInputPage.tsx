@@ -59,9 +59,15 @@ export default function QuoteInputPage() {
       // Fall through to fallback
     }
 
-    // Fallback to title + notes
+    // Fallback to title + description + notes
     const parts: string[] = [];
     if (request.title) parts.push(request.title);
+    if (request.description) {
+      const trimmedDesc = request.description.trim();
+      if (trimmedDesc && trimmedDesc !== request.title) {
+        parts.push(trimmedDesc);
+      }
+    }
     for (const note of request.structuredNotes) {
       const trimmed = note.message.trim();
       if (!trimmed) continue;

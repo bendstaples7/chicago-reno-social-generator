@@ -103,6 +103,16 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId }
             </div>
           )}
 
+          {/* Description (from webhook/API data) — shown when no form data */}
+          {(!selectedRequest.formData || selectedRequest.formData.sections.length === 0) && selectedRequest.description && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <span style={sectionLabelStyle}>Description</span>
+              <div style={noteStyle}>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{selectedRequest.description}</div>
+              </div>
+            </div>
+          )}
+
           {/* Notes — labeled by author */}
           {selectedRequest.structuredNotes.length > 0 && (
             <div style={{ marginBottom: '0.75rem' }}>
@@ -136,7 +146,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId }
             </div>
           )}
 
-          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && (
+          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && (
             <div style={{ fontSize: '0.85rem', color: '#999', fontStyle: 'italic' }}>No notes or attachments on this request.</div>
           )}
 

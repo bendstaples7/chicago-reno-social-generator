@@ -106,7 +106,7 @@ const QUOTES_QUERY = `
 
 const REQUESTS_QUERY = `
   query FetchRequests($first: Int!, $after: String) {
-    requests(first: $first, after: $after) {
+    requests(first: $first, after: $after, sort: [{ key: REQUESTED_AT, direction: DESCENDING }]) {
       edges {
         node {
           id
@@ -398,6 +398,7 @@ export class JobberIntegration {
       return requests;
     } catch (err) {
       // Log error but do NOT set available = false
+      console.error('[JobberIntegration] fetchCustomerRequests failed:', err instanceof Error ? err.message : err);
       const description =
         err instanceof Error && err.name === 'AbortError'
           ? 'Jobber API request timed out during fetchCustomerRequests'
@@ -429,33 +430,56 @@ export class JobberIntegration {
   /**
    * Send a GraphQL query to the Jobber API and return the parsed data.
    * Automatically refreshes the access token on 401 and retries once.
+   * Retries on throttle errors with exponential backoff.
    */
   private async graphqlRequest<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    const result = await this.executeGraphql<T>(query, variables);
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 2000;
 
-    // If we got a 401 and have a refresh token, try refreshing and retry once
-    if (result.status === 401 && this.refreshToken) {
-      const refreshed = await this.refreshAccessToken();
-      if (refreshed) {
-        const retry = await this.executeGraphql<T>(query, variables);
-        if (retry.status !== undefined) {
-          throw new Error(`Jobber API error (${retry.status}): ${retry.errorText}`);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const result = await this.executeGraphql<T>(query, variables);
+
+      // If we got a 401 and have a refresh token, try refreshing and retry once
+      if (result.status === 401 && this.refreshToken) {
+        const refreshed = await this.refreshAccessToken();
+        if (refreshed) {
+          const retry = await this.executeGraphql<T>(query, variables);
+          if (retry.status !== undefined) {
+            throw new Error(`Jobber API error (${retry.status}): ${retry.errorText}`);
+          }
+          if (!retry.throttled) {
+            return retry.data!;
+          }
+          // If the retry was throttled, fall through to the throttle backoff logic below
         }
-        return retry.data!;
       }
+
+      if (result.status !== undefined) {
+        throw new Error(`Jobber API error (${result.status}): ${result.errorText}`);
+      }
+
+      if (result.throttled && attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[JobberIntegration] Throttled, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      if (result.throttled) {
+        throw new Error('Jobber API throttled after max retries');
+      }
+
+      return result.data!;
     }
 
-    if (result.status !== undefined) {
-      throw new Error(`Jobber API error (${result.status}): ${result.errorText}`);
-    }
-
-    return result.data!;
+    throw new Error('Jobber API: unexpected retry loop exit');
   }
 
   private async executeGraphql<T>(query: string, variables?: Record<string, unknown>): Promise<{
     data?: T;
     status?: number;
     errorText?: string;
+    throttled?: boolean;
   }> {
     if (!this.accessToken) {
       throw new Error('JOBBER_ACCESS_TOKEN is not configured');
@@ -485,6 +509,10 @@ export class JobberIntegration {
       const json = (await response.json()) as GraphQLResponse<T>;
 
       if (json.errors && json.errors.length > 0) {
+        const isThrottled = json.errors.some((e) => /throttle/i.test(e.message));
+        if (isThrottled) {
+          return { throttled: true };
+        }
         throw new Error(`Jobber GraphQL error: ${json.errors[0].message}`);
       }
 

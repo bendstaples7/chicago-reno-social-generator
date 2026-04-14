@@ -245,12 +245,13 @@ export class JobberWebhookService {
    * full detail data. Returns them as JobberCustomerRequest objects.
    */
   async getWebhookRequests(): Promise<JobberCustomerRequest[]> {
+    // Include all webhook requests, preferring rows with full detail (processed_at IS NOT NULL)
+    // but falling back to unprocessed rows so new requests aren't lost.
     const result = await dbQuery(
       `SELECT DISTINCT ON (jobber_request_id)
         jobber_request_id, title, client_name, description, image_urls, request_body, received_at
        FROM jobber_webhook_requests
-       WHERE processed_at IS NOT NULL
-       ORDER BY jobber_request_id, received_at DESC`,
+       ORDER BY jobber_request_id, processed_at DESC NULLS LAST, received_at DESC`,
     );
 
     return result.rows.map((row: Record<string, unknown>) => {
@@ -261,10 +262,14 @@ export class JobberWebhookService {
         imageUrls = (row.image_urls as string[]) ?? [];
       } catch { imageUrls = []; }
 
-      // Parse the stored request body to extract notes
+      // Parse the stored request body to extract notes and the original Jobber createdAt
+      let jobberCreatedAt: string | null = null;
+      let jobberWebUri = '';
       if (row.request_body) {
         try {
           const detail = JSON.parse(row.request_body as string) as RequestDetail;
+          jobberCreatedAt = detail.createdAt ?? null;
+          jobberWebUri = detail.jobberWebUri ?? '';
           structuredNotes = detail.notes.edges
             .filter((e) => e.node?.message)
             .map((e) => {
@@ -289,8 +294,8 @@ export class JobberWebhookService {
         notes: structuredNotes.map((n) => n.message),
         structuredNotes,
         imageUrls,
-        jobberWebUri: '',
-        createdAt: (row.received_at as Date).toISOString(),
+        jobberWebUri,
+        createdAt: jobberCreatedAt ?? (row.received_at as Date).toISOString(),
       };
     });
   }

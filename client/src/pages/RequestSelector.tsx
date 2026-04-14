@@ -6,9 +6,10 @@ interface RequestSelectorProps {
   onSelect: (request: JobberCustomerRequest) => void;
   onClear: () => void;
   selectedRequestId: string | null;
+  formDataLoaded?: boolean;
 }
 
-export default function RequestSelector({ onSelect, onClear, selectedRequestId }: RequestSelectorProps) {
+export default function RequestSelector({ onSelect, onClear, selectedRequestId, formDataLoaded }: RequestSelectorProps) {
   const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +147,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId }
             </div>
           )}
 
-          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && !selectedRequest.formData && (
+          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && !selectedRequest.formData && !formDataLoaded && (
             <div style={{ fontSize: '0.85rem', color: '#6d4c00', background: '#fff3e0', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
               The form details for this request aren't available via the Jobber API. Open the request in Jobber and paste the details below.
             </div>

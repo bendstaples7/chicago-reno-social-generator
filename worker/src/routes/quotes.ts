@@ -317,6 +317,17 @@ app.post('/templates', async (c) => {
 });
 
 /**
+ * GET /jobber/requests/:id/form-data
+ * Fetch the form submission data for a specific Jobber request.
+ * The Jobber web session (Auth0 cookie-based) is not available in the Worker
+ * environment, so this always returns null. The client falls back to
+ * title + notes when formData is null.
+ */
+app.get('/jobber/requests/:id/form-data', async (c) => {
+  return c.json({ formData: null });
+});
+
+/**
  * GET /jobber/requests
  * Fetch customer requests from Jobber, enriched with webhook data.
  */

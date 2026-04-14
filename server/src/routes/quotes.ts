@@ -470,9 +470,8 @@ router.get('/jobber/requests/:id/form-data', async (req, res, next) => {
   try {
     const requestId = req.params.id;
 
-    // Try the internal Jobber API only if we have valid cached cookies
-    // (skip the slow Auth0 flow — it's broken due to CAPTCHA)
-    if (jobberWebSession.hasValidSession()) {
+    // Try the internal Jobber API via Puppeteer browser session
+    if (jobberWebSession.isConfigured()) {
       const formData = await jobberWebSession.fetchRequestFormData(requestId);
       if (formData) {
         res.json({ formData });

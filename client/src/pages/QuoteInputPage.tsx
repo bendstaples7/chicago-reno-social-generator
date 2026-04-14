@@ -182,7 +182,7 @@ export default function QuoteInputPage() {
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
           placeholder={jobberRequestId
-            ? 'Open the request in Jobber using the link above, then copy and paste the customer\'s request details here…'
+            ? 'Loading request details… If empty, paste the customer\'s request details here.'
             : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}

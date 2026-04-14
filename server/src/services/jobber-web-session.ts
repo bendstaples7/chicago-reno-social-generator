@@ -83,7 +83,7 @@ export class JobberWebSession {
     return !!(this.session && Date.now() < this.session.expiresAt);
   }
 
-  /** Kept for backward compat with the settings route */
+  /** Set session cookies manually — bypasses Puppeteer login. */
   setManualCookies(cookies: string): void {
     this.session = {
       cookies,
@@ -107,9 +107,30 @@ export class JobberWebSession {
     if (!this.isConfigured()) return null;
 
     try {
-      const cookies = await this.getSessionCookies();
-      if (!cookies) return null;
+      const result = await this.queryInternalApi(requestId);
+      if (result) return result;
 
+      // First attempt failed (expired/invalid session) — retry with fresh cookies
+      this.session = null;
+      return await this.queryInternalApi(requestId);
+    } catch (err) {
+      console.error('JobberWebSession: Failed to fetch request form data:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Make a single attempt to query the internal Jobber API.
+   * Returns null if the session is invalid or the request has no form data.
+   */
+  private async queryInternalApi(requestId: string): Promise<RequestFormData | null> {
+    const cookies = await this.getSessionCookies();
+    if (!cookies) return null;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
       const resp = await fetch(INTERNAL_GQL_URL, {
         method: 'POST',
         headers: {
@@ -120,27 +141,12 @@ export class JobberWebSession {
           query: REQUEST_DETAILS_QUERY,
           variables: { id: requestId },
         }),
+        signal: controller.signal,
       });
 
       if (!resp.ok) {
         if (resp.status === 401 || resp.status === 403) {
-          // Session expired — clear and retry with fresh cookies
           this.session = null;
-          const freshCookies = await this.getSessionCookies();
-          if (!freshCookies) return null;
-          const retryResp = await fetch(INTERNAL_GQL_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': freshCookies,
-            },
-            body: JSON.stringify({
-              query: REQUEST_DETAILS_QUERY,
-              variables: { id: requestId },
-            }),
-          });
-          if (!retryResp.ok) return null;
-          return this.parseFormResponse(await retryResp.json());
         }
         return null;
       }
@@ -150,36 +156,14 @@ export class JobberWebSession {
         const msg = respData.errors.map((e: any) => e.message).join(', ');
         console.error('JobberWebSession: GraphQL errors:', msg);
         if (msg.includes('unauthenticated') || msg.includes('hidden')) {
-          // Session invalid — clear and retry once
           this.session = null;
-          const freshCookies = await this.getSessionCookies();
-          if (!freshCookies) return null;
-          const retryResp = await fetch(INTERNAL_GQL_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': freshCookies,
-            },
-            body: JSON.stringify({
-              query: REQUEST_DETAILS_QUERY,
-              variables: { id: requestId },
-            }),
-          });
-          if (!retryResp.ok) return null;
-          const retryData = await retryResp.json() as any;
-          if (retryData?.errors?.length > 0) {
-            console.error('JobberWebSession: Retry also failed:', retryData.errors[0]?.message);
-            return null;
-          }
-          return this.parseFormResponse(retryData);
         }
         return null;
       }
 
       return this.parseFormResponse(respData);
-    } catch (err) {
-      console.error('JobberWebSession: Failed to fetch request form data:', err);
-      return null;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -308,23 +292,29 @@ export class JobberWebSession {
       const cookieString = jobberCookies.map(c => `${c.name}=${c.value}`).join('; ');
       console.log('JobberWebSession: Login successful, extracted', jobberCookies.length, 'cookies');
 
-      // Test the cookies work
-      const testResult = await page.evaluate(
-        async (gqlUrl: string) => {
-          const r = await fetch(gqlUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ query: '{ __typename }' }),
-          });
-          return r.ok;
-        },
-        INTERNAL_GQL_URL,
-      );
-
-      if (!testResult) {
-        console.error('JobberWebSession: Cookie test failed');
+      // Test the extracted cookies work with a plain fetch (not browser context)
+      const testController = new AbortController();
+      const testTimeout = setTimeout(() => testController.abort(), 10000);
+      try {
+        const testResp = await fetch(INTERNAL_GQL_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': cookieString,
+          },
+          body: JSON.stringify({ query: '{ __typename }' }),
+          signal: testController.signal,
+        });
+        const testData = await testResp.json() as any;
+        if (testData?.errors?.length > 0) {
+          console.error('JobberWebSession: Cookie test failed:', testData.errors[0]?.message);
+          return '';
+        }
+      } catch (testErr) {
+        console.error('JobberWebSession: Cookie test error:', testErr instanceof Error ? testErr.message : testErr);
         return '';
+      } finally {
+        clearTimeout(testTimeout);
       }
 
       this.session = {

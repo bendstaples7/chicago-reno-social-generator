@@ -569,7 +569,10 @@ router.get('/jobber/requests/:id/form-data', async (req, res, next) => {
 
     // Add description if available and not already covered by notes
     const description = (row.description as string || '').trim();
-    if (description && !textParts.some(t => description.startsWith(t) || t.startsWith(description))) {
+    const descriptionAlreadyCovered = description.length > 0 && textParts.some(t =>
+      t.includes(description) || description.includes(t)
+    );
+    if (description && !descriptionAlreadyCovered) {
       sections.unshift({
         label: 'Request Description',
         sortOrder: 1,

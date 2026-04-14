@@ -463,7 +463,7 @@ export class JobberIntegration {
       );
       return data.request ?? null;
     } catch (err) {
-      console.error('[JobberIntegration] fetchRequestDetail failed:', err instanceof Error ? err.message : err);
+      await this.handleApiError('fetchRequestDetail', err);
       return null;
     }
   }

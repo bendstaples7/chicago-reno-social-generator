@@ -44,6 +44,7 @@ export default function QuoteInputPage() {
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     setJobberRequestId(request.id);
+    setFormData(null);
 
     // Fetch form data from the internal API
     try {
@@ -74,11 +75,13 @@ export default function QuoteInputPage() {
       parts.push(`${label} ${trimmed}`);
     }
     // Only set customer text if we have actual content beyond just the title
-    setCustomerText(parts.join('\n\n'));
+    setCustomerText(parts.join('\n\n') || request.title?.trim() || '');
   };
 
   const handleRequestClear = () => {
     setJobberRequestId(null);
+    setFormData(null);
+    setCustomerText('');
   };
 
   const hasText = customerText.trim().length > 0;

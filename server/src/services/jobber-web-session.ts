@@ -76,7 +76,7 @@ export class JobberWebSession {
   }
 
   isConfigured(): boolean {
-    return !!this.email && !!this.password;
+    return (!!this.email && !!this.password) || this.hasValidSession();
   }
 
   hasValidSession(): boolean {
@@ -108,11 +108,13 @@ export class JobberWebSession {
 
     try {
       const result = await this.queryInternalApi(requestId);
-      if (result) return result;
-
-      // First attempt failed (expired/invalid session) — retry with fresh cookies
-      this.session = null;
-      return await this.queryInternalApi(requestId);
+      if (result.authFailed) {
+        // Auth failure — clear session and retry once with fresh cookies
+        this.session = null;
+        const retry = await this.queryInternalApi(requestId);
+        return retry.data;
+      }
+      return result.data;
     } catch (err) {
       console.error('JobberWebSession: Failed to fetch request form data:', err);
       return null;
@@ -121,11 +123,11 @@ export class JobberWebSession {
 
   /**
    * Make a single attempt to query the internal Jobber API.
-   * Returns null if the session is invalid or the request has no form data.
+   * Returns { data, authFailed } to distinguish "no data" from "auth failure".
    */
-  private async queryInternalApi(requestId: string): Promise<RequestFormData | null> {
+  private async queryInternalApi(requestId: string): Promise<{ data: RequestFormData | null; authFailed: boolean }> {
     const cookies = await this.getSessionCookies();
-    if (!cookies) return null;
+    if (!cookies) return { data: null, authFailed: true };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -147,8 +149,9 @@ export class JobberWebSession {
       if (!resp.ok) {
         if (resp.status === 401 || resp.status === 403) {
           this.session = null;
+          return { data: null, authFailed: true };
         }
-        return null;
+        return { data: null, authFailed: false };
       }
 
       const respData = await resp.json() as any;
@@ -157,11 +160,12 @@ export class JobberWebSession {
         console.error('JobberWebSession: GraphQL errors:', msg);
         if (msg.includes('unauthenticated') || msg.includes('hidden')) {
           this.session = null;
+          return { data: null, authFailed: true };
         }
-        return null;
+        return { data: null, authFailed: false };
       }
 
-      return this.parseFormResponse(respData);
+      return { data: this.parseFormResponse(respData), authFailed: false };
     } finally {
       clearTimeout(timeout);
     }

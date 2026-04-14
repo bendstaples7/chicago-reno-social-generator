@@ -312,15 +312,22 @@ export class JobberWebSession {
       }).toString(),
     });
     this.captureCookies(authResp, cookieJar);
+    console.log('JobberWebSession: Step 3 - Login POST status:', authResp.status, 'redirect:', (authResp.headers.get('location') || '').substring(0, 100));
 
-    // Step 4: Follow redirects back to Jobber
+    // Step 4: Follow redirects back to Jobber, tracking the current domain
     let nextUrl = authResp.headers.get('location') || '';
+    let lastDomain = 'https://login.auth.getjobber.com';
     let maxRedirects = 10;
     while (nextUrl && maxRedirects-- > 0) {
-      // Resolve relative URLs
+      // Resolve relative URLs against the last domain we were on
       if (nextUrl.startsWith('/')) {
-        nextUrl = `https://login.auth.getjobber.com${nextUrl}`;
+        nextUrl = `${lastDomain}${nextUrl}`;
       }
+      // Track the domain for resolving future relative redirects
+      try {
+        const parsed = new URL(nextUrl);
+        lastDomain = `${parsed.protocol}//${parsed.host}`;
+      } catch { /* keep previous domain */ }
       console.log('JobberWebSession: Following redirect to:', nextUrl.substring(0, 80) + '...');
       const redirectResp = await fetch(nextUrl, {
         redirect: 'manual',
@@ -332,19 +339,20 @@ export class JobberWebSession {
 
     const cookies = this.buildCookieHeader(cookieJar);
     console.log('JobberWebSession: Authentication complete. Cookie count:', Object.keys(cookieJar).length);
+    console.log('JobberWebSession: Cookie names:', Object.keys(cookieJar).join(', '));
 
-    // Test the session
+    // Test the session with a real query (not just __typename)
     const testResp = await fetch(INTERNAL_GQL_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie': cookies,
       },
-      body: JSON.stringify({ query: '{ __typename }' }),
+      body: JSON.stringify({ query: '{ currentUser { id } }' }),
     });
     const testData = await testResp.json() as any;
-    const testPassed = testData?.data?.__typename === 'Query';
-    console.log('JobberWebSession: Session test:', testPassed ? 'SUCCESS' : 'FAILED');
+    const testPassed = !!testData?.data?.currentUser?.id;
+    console.log('JobberWebSession: Session test:', testPassed ? 'SUCCESS' : 'FAILED', testPassed ? '' : JSON.stringify(testData?.errors?.[0]?.message ?? testData).substring(0, 200));
 
     if (!testPassed) {
       console.error('JobberWebSession: Session test failed — not caching invalid cookies');

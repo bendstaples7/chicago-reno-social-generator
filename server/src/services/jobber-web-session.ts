@@ -1,17 +1,17 @@
 /**
  * Jobber Web Session Service
  *
- * Uses Puppeteer to authenticate with Jobber's web UI and access internal
+ * Uses Puppeteer to authenticate with Jobber's web UI and extract session
+ * cookies, then uses plain fetch calls with those cookies to access internal
  * GraphQL fields (like `requestDetails`) that aren't available through the
  * public developer API.
  *
- * The public Jobber GraphQL API doesn't expose the form submission data from
- * customer requests. The internal schema (used by the Jobber web app) has a
- * `requestDetails` field on `Request` that returns the submitted form data.
- * This service uses a headless browser to log in and query that field.
+ * Puppeteer only runs briefly during login (~15 seconds). The browser is
+ * closed immediately after cookies are extracted. All subsequent API calls
+ * use plain HTTP with the cached cookies until they expire.
  */
 
-import puppeteer, { type Browser, type Page } from 'puppeteer';
+import puppeteer from 'puppeteer';
 
 interface FormAnswer {
   label: string;
@@ -28,6 +28,11 @@ export interface RequestFormData {
   sections: FormSection[];
   /** Flattened text representation of all form answers */
   text: string;
+}
+
+interface SessionState {
+  cookies: string;
+  expiresAt: number;
 }
 
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -60,12 +65,10 @@ const REQUEST_DETAILS_QUERY = `
 `;
 
 export class JobberWebSession {
-  private browser: Browser | null = null;
-  private page: Page | null = null;
-  private authenticatedAt: number = 0;
-  private authenticating: Promise<boolean> | null = null;
+  private session: SessionState | null = null;
   private email: string;
   private password: string;
+  private authenticating: Promise<string> | null = null;
 
   constructor() {
     this.email = process.env.JOBBER_WEB_EMAIL || '';
@@ -77,171 +80,106 @@ export class JobberWebSession {
   }
 
   hasValidSession(): boolean {
-    return !!this.page && Date.now() - this.authenticatedAt < SESSION_TTL_MS;
+    return !!(this.session && Date.now() < this.session.expiresAt);
   }
 
   /** Kept for backward compat with the settings route */
-  setManualCookies(_cookies: string): void {
-    console.log('JobberWebSession: Manual cookies ignored — using Puppeteer browser session');
+  setManualCookies(cookies: string): void {
+    this.session = {
+      cookies,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    };
+    console.log('JobberWebSession: Manual cookies set');
   }
 
   getManualCookiesStatus(): { configured: boolean; expiresAt: number | null } {
     return {
       configured: this.hasValidSession(),
-      expiresAt: this.authenticatedAt ? this.authenticatedAt + SESSION_TTL_MS : null,
+      expiresAt: this.session?.expiresAt ?? null,
     };
   }
 
   /**
    * Fetch the form submission data for a Jobber request.
-   * Launches a browser and logs in if needed.
+   * Automatically refreshes cookies via Puppeteer when expired.
    */
   async fetchRequestFormData(requestId: string): Promise<RequestFormData | null> {
     if (!this.isConfigured()) return null;
 
     try {
-      const page = await this.getAuthenticatedPage();
-      if (!page) return null;
+      const cookies = await this.getSessionCookies();
+      if (!cookies) return null;
 
-      // Execute the GraphQL query from within the authenticated browser context
-      const result = await page.evaluate(
-        async (gqlUrl: string, query: string, reqId: string) => {
-          try {
-            const resp = await fetch(gqlUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ query, variables: { id: reqId } }),
-            });
-            if (!resp.ok) return { error: `HTTP ${resp.status}` };
-            return await resp.json();
-          } catch (err: any) {
-            return { error: err?.message || 'fetch failed' };
-          }
+      const resp = await fetch(INTERNAL_GQL_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': cookies,
         },
-        INTERNAL_GQL_URL,
-        REQUEST_DETAILS_QUERY,
-        requestId,
-      );
+        body: JSON.stringify({
+          query: REQUEST_DETAILS_QUERY,
+          variables: { id: requestId },
+        }),
+      });
 
-      if (result.error) {
-        console.error('JobberWebSession: GraphQL fetch error:', result.error);
-        return null;
-      }
-
-      if (result.errors?.length > 0) {
-        const msg = result.errors.map((e: any) => e.message).join(', ');
-        console.error('JobberWebSession: GraphQL errors:', msg);
-        // If unauthenticated, invalidate session so next call re-authenticates
-        if (msg.includes('unauthenticated') || msg.includes('hidden')) {
-          this.authenticatedAt = 0;
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) {
+          // Session expired — clear and retry with fresh cookies
+          this.session = null;
+          const freshCookies = await this.getSessionCookies();
+          if (!freshCookies) return null;
+          const retryResp = await fetch(INTERNAL_GQL_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': freshCookies,
+            },
+            body: JSON.stringify({
+              query: REQUEST_DETAILS_QUERY,
+              variables: { id: requestId },
+            }),
+          });
+          if (!retryResp.ok) return null;
+          return this.parseFormResponse(await retryResp.json());
         }
         return null;
       }
 
-      return this.parseFormResponse(result);
+      const respData = await resp.json() as any;
+      if (respData?.errors?.length > 0) {
+        const msg = respData.errors.map((e: any) => e.message).join(', ');
+        console.error('JobberWebSession: GraphQL errors:', msg);
+        if (msg.includes('unauthenticated') || msg.includes('hidden')) {
+          // Session invalid — clear and retry once
+          this.session = null;
+          const freshCookies = await this.getSessionCookies();
+          if (!freshCookies) return null;
+          const retryResp = await fetch(INTERNAL_GQL_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': freshCookies,
+            },
+            body: JSON.stringify({
+              query: REQUEST_DETAILS_QUERY,
+              variables: { id: requestId },
+            }),
+          });
+          if (!retryResp.ok) return null;
+          const retryData = await retryResp.json() as any;
+          if (retryData?.errors?.length > 0) {
+            console.error('JobberWebSession: Retry also failed:', retryData.errors[0]?.message);
+            return null;
+          }
+          return this.parseFormResponse(retryData);
+        }
+        return null;
+      }
+
+      return this.parseFormResponse(respData);
     } catch (err) {
       console.error('JobberWebSession: Failed to fetch request form data:', err);
       return null;
-    }
-  }
-
-  /**
-   * Get an authenticated Puppeteer page, logging in if needed.
-   */
-  private async getAuthenticatedPage(): Promise<Page | null> {
-    if (this.hasValidSession() && this.page) {
-      return this.page;
-    }
-
-    // Prevent concurrent auth attempts
-    if (this.authenticating) {
-      const ok = await this.authenticating;
-      return ok ? this.page : null;
-    }
-
-    this.authenticating = this.authenticate();
-    try {
-      const ok = await this.authenticating;
-      return ok ? this.page : null;
-    } finally {
-      this.authenticating = null;
-    }
-  }
-
-  /**
-   * Launch browser and log into Jobber.
-   */
-  private async authenticate(): Promise<boolean> {
-    console.log('JobberWebSession: Starting Puppeteer authentication...');
-
-    try {
-      // Launch browser if not already running
-      if (!this.browser || !this.browser.connected) {
-        this.browser = await puppeteer.launch({
-          headless: 'shell',
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-          ],
-        });
-      }
-
-      // Create a fresh page
-      if (this.page) {
-        try { await this.page.close(); } catch { /* ignore */ }
-      }
-      this.page = await this.browser.newPage();
-
-      // Disguise as a real browser to avoid Cloudflare bot detection
-      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-      await this.page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      });
-
-      // Navigate to Jobber login
-      await this.page.goto('https://secure.getjobber.com/login', {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-      });
-
-      // Wait for page to settle after any redirects
-      await new Promise(r => setTimeout(r, 3000));
-
-      console.log('JobberWebSession: Login page URL:', this.page.url());
-
-      // The login form may be on an Auth0 page after redirect
-      // Wait for either #username (Auth0) or input[name="email"] (direct Jobber)
-      await this.page.waitForSelector('#username, input[name="email"], input[type="email"]', { timeout: 15000 });
-
-      // Determine which selector is present
-      const usernameField = await this.page.$('#username');
-      const emailField = await this.page.$('input[name="email"]');
-      const usernameSelector = usernameField ? '#username' : (emailField ? 'input[name="email"]' : 'input[type="email"]');
-      const passwordSelector = usernameField ? '#password' : 'input[type="password"]';
-
-      await this.page.type(usernameSelector, this.email, { delay: 50 });
-      await this.page.type(passwordSelector, this.password, { delay: 50 });
-      await this.page.click('button[type="submit"]');
-
-      // Wait for navigation to Jobber dashboard
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-
-      const url = this.page.url();
-      console.log('JobberWebSession: Post-login URL:', url);
-
-      if (url.includes('secure.getjobber.com') && !url.includes('login')) {
-        console.log('JobberWebSession: Authentication successful');
-        this.authenticatedAt = Date.now();
-        return true;
-      }
-
-      console.error('JobberWebSession: Authentication failed — still on login page');
-      return false;
-    } catch (err) {
-      console.error('JobberWebSession: Puppeteer authentication failed:', err);
-      return false;
     }
   }
 
@@ -250,6 +188,7 @@ export class JobberWebSession {
     if (!sections || !Array.isArray(sections)) return null;
 
     const formSections: FormSection[] = sections
+      // Jobber form convention: sortOrder <= 0 = contact/address headers, 999 = file upload footer
       .filter((s: any) => s.sortOrder > 0 && s.sortOrder < 999)
       .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
       .map((s: any) => ({
@@ -282,15 +221,127 @@ export class JobberWebSession {
   }
 
   /**
-   * Clean up browser resources.
+   * Get valid session cookies, launching Puppeteer to log in if needed.
    */
-  async close(): Promise<void> {
+  private async getSessionCookies(): Promise<string> {
+    if (this.session && Date.now() < this.session.expiresAt) {
+      return this.session.cookies;
+    }
+
+    // Prevent concurrent auth attempts
+    if (this.authenticating) {
+      return this.authenticating;
+    }
+
+    this.authenticating = this.loginAndExtractCookies();
     try {
-      if (this.page) await this.page.close();
-      if (this.browser) await this.browser.close();
-    } catch { /* ignore */ }
-    this.page = null;
-    this.browser = null;
-    this.authenticatedAt = 0;
+      return await this.authenticating;
+    } finally {
+      this.authenticating = null;
+    }
+  }
+
+  /**
+   * Launch a headless browser, log into Jobber, extract session cookies,
+   * then close the browser immediately.
+   */
+  private async loginAndExtractCookies(): Promise<string> {
+    console.log('JobberWebSession: Launching browser to refresh session...');
+    let browser;
+
+    try {
+      browser = await puppeteer.launch({
+        headless: 'shell',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled',
+        ],
+      });
+
+      const page = await browser.newPage();
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+      );
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
+
+      // Navigate to Jobber login
+      await page.goto('https://secure.getjobber.com/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Wait for login form
+      await page.waitForSelector('#username, input[name="email"], input[type="email"]', { timeout: 15000 });
+
+      const usernameField = await page.$('#username');
+      const usernameSelector = usernameField ? '#username' : 'input[type="email"]';
+      const passwordSelector = usernameField ? '#password' : 'input[type="password"]';
+
+      await page.type(usernameSelector, this.email, { delay: 50 });
+      await page.type(passwordSelector, this.password, { delay: 50 });
+      await page.click('button[type="submit"]');
+
+      // Wait for redirect to Jobber dashboard
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+      const url = page.url();
+      if (url.includes('login')) {
+        console.error('JobberWebSession: Login failed — still on login page');
+        return '';
+      }
+
+      // Extract ALL cookies (including HttpOnly) via CDP
+      const client = await page.createCDPSession();
+      const { cookies: allCookies } = await client.send('Network.getAllCookies') as {
+        cookies: Array<{ name: string; value: string; domain: string }>;
+      };
+
+      // Filter to Jobber-related cookies
+      const jobberCookies = allCookies.filter(c =>
+        c.domain.includes('getjobber.com') || c.domain.includes('jobber.com')
+      );
+
+      const cookieString = jobberCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      console.log('JobberWebSession: Login successful, extracted', jobberCookies.length, 'cookies');
+
+      // Test the cookies work
+      const testResult = await page.evaluate(
+        async (gqlUrl: string) => {
+          const r = await fetch(gqlUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ query: '{ __typename }' }),
+          });
+          return r.ok;
+        },
+        INTERNAL_GQL_URL,
+      );
+
+      if (!testResult) {
+        console.error('JobberWebSession: Cookie test failed');
+        return '';
+      }
+
+      this.session = {
+        cookies: cookieString,
+        expiresAt: Date.now() + SESSION_TTL_MS,
+      };
+
+      console.log('JobberWebSession: Session cached for', SESSION_TTL_MS / 3600000, 'hours');
+      return cookieString;
+    } catch (err) {
+      console.error('JobberWebSession: Browser login failed:', err instanceof Error ? err.message : err);
+      return '';
+    } finally {
+      // Always close the browser
+      if (browser) {
+        try { await browser.close(); } catch { /* ignore */ }
+      }
+    }
   }
 }

@@ -147,7 +147,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             </div>
           )}
 
-          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && !selectedRequest.formData && !formDataLoaded && (
+          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && (!selectedRequest.formData || selectedRequest.formData.sections.length === 0) && !formDataLoaded && (
             <div style={{ fontSize: '0.85rem', color: '#6d4c00', background: '#fff3e0', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
               The form details for this request aren't available via the Jobber API. Open the request in Jobber and paste the details below.
             </div>

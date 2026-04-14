@@ -489,8 +489,9 @@ router.get('/jobber/requests/:id/form-data', async (req, res, next) => {
       [requestId],
     );
 
-    // If not in DB, fetch from the public Jobber API and store it
-    if (result.rows.length === 0 && jobberIntegration.isAvailable()) {
+    // If not in DB, try fetching from the public Jobber API and storing it
+    // (attempt even if isAvailable() is false — it may have recovered)
+    if (result.rows.length === 0) {
       try {
         const detail = await jobberIntegration.fetchRequestDetail(requestId);
         if (detail) {

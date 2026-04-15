@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
-import type { ProductCatalogEntry, QuoteLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules } from 'shared';
 
-const REVISION_TIMEOUT_MS = 30_000;
+const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
 
 export interface RevisionInput {
@@ -9,6 +9,7 @@ export interface RevisionInput {
   currentLineItems: QuoteLineItem[];
   currentUnresolvedItems: QuoteLineItem[];
   catalog: ProductCatalogEntry[];
+  rules?: RuleGroupWithRules[];
 }
 
 export interface RevisionOutput {
@@ -24,6 +25,7 @@ interface AILineItem {
   confidenceScore: number;
   originalText: string;
   unmatchedReason?: string;
+  ruleIdsApplied?: string[];
 }
 
 const SYSTEM_PROMPT = [
@@ -44,6 +46,7 @@ const SYSTEM_PROMPT = [
   '- If a new item cannot be matched to the catalog, include it with productCatalogEntryId: null and a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
+  '- When BUSINESS RULES are provided, follow them when revising line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -55,7 +58,8 @@ const SYSTEM_PROMPT = [
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
   '      "originalText": "original text for this item",',
-  '      "unmatchedReason": "reason or omit if matched"',
+  '      "unmatchedReason": "reason or omit if matched",',
+  '      "ruleIdsApplied": ["rule-id-1", "rule-id-2"]',
   '    }',
   '  ]',
   '}',
@@ -89,6 +93,9 @@ export class RevisionEngine {
     }
 
     const userPrompt = this.buildPrompt(input);
+    const systemPrompt = input.rules && input.rules.length > 0
+      ? SYSTEM_PROMPT + '\n\n' + this.buildRulesSection(input.rules)
+      : SYSTEM_PROMPT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);
 
@@ -102,7 +109,7 @@ export class RevisionEngine {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
           temperature: 0.3,
@@ -136,7 +143,7 @@ export class RevisionEngine {
           severity: 'error',
           component: 'RevisionEngine',
           operation: 'revise',
-          description: 'Quote revision timed out after 30 seconds.',
+          description: 'Quote revision timed out after 5 minutes.',
           recommendedActions: ['Try again'],
         });
       }
@@ -231,6 +238,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else if (item.productCatalogEntryId) {
         // Matched item — use catalog pricing
@@ -245,6 +253,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else {
         // No catalog reference
@@ -258,6 +267,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No catalog match',
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       }
 
@@ -269,5 +279,34 @@ export class RevisionEngine {
     }
 
     return { lineItems, unresolvedItems };
+  }
+
+  // ── Rules section builder ─────────────────────────────────────────
+
+  /**
+   * Sanitize ruleIdsApplied from AI response — filter to valid UUID strings only.
+   */
+  private sanitizeRuleIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
+  }
+
+  /**
+   * Format active rules as a structured "BUSINESS RULES" prompt section,
+   * grouped by group name with each rule's ID and description listed.
+   */
+  buildRulesSection(rules: RuleGroupWithRules[]): string {
+    const parts: string[] = ['BUSINESS RULES:'];
+
+    for (const group of rules) {
+      if (group.rules.length === 0) continue;
+      parts.push(`\n[${group.name}]`);
+      for (const rule of group.rules) {
+        parts.push(`- (ID: ${rule.id}) ${rule.description}`);
+      }
+    }
+
+    return parts.join('\n');
   }
 }

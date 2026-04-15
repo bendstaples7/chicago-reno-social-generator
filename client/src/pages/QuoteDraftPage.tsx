@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import type { QuoteDraft, QuoteLineItem, ErrorResponse } from 'shared';
-import { fetchDraft, reviseDraft } from '../api';
+import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule } from 'shared';
+import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail } from '../api';
+import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
 export default function QuoteDraftPage() {
@@ -15,6 +16,12 @@ export default function QuoteDraftPage() {
   const [revising, setRevising] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [feedbackValidation, setFeedbackValidation] = useState<string | null>(null);
+  const [expandedRuleRows, setExpandedRuleRows] = useState<Set<string>>(new Set());
+  const [ruleGroups, setRuleGroups] = useState<RuleGroupWithRules[]>([]);
+  const [createRuleToggle, setCreateRuleToggle] = useState(false);
+  const [ruleCreatedMsg, setRuleCreatedMsg] = useState<string | null>(null);
+  const [ruleCreationWarning, setRuleCreationWarning] = useState<string | null>(null);
+  const [requestDetail, setRequestDetail] = useState<JobberRequestDetail | null>(null);
 
   const loadDraft = useCallback(async () => {
     if (!id) return;
@@ -32,6 +39,24 @@ export default function QuoteDraftPage() {
 
   useEffect(() => { loadDraft(); }, [loadDraft]);
 
+  useEffect(() => {
+    fetchRules().then(setRuleGroups).catch(() => { /* rules are supplementary; ignore errors */ });
+  }, []);
+
+  // Fetch Jobber request details when draft has a jobberRequestId
+  useEffect(() => {
+    if (!draft?.jobberRequestId) {
+      setRequestDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setRequestDetail(null);
+    fetchJobberRequestDetail(draft.jobberRequestId)
+      .then((data) => { if (!cancelled) setRequestDetail(data.request); })
+      .catch(() => { /* supplementary; ignore errors */ });
+    return () => { cancelled = true; };
+  }, [draft?.jobberRequestId]);
+
   const handleSubmitFeedback = async () => {
     if (!id || !feedbackText.trim()) {
       setFeedbackValidation('Please enter feedback before submitting.');
@@ -39,16 +64,69 @@ export default function QuoteDraftPage() {
     }
     setFeedbackValidation(null);
     setRevisionError(null);
+    setRuleCreatedMsg(null);
+    setRuleCreationWarning(null);
     setRevising(true);
     try {
-      const updated = await reviseDraft(id, feedbackText);
+      const updated = await reviseDraft(id, feedbackText, createRuleToggle || undefined);
       setDraft(updated);
       setFeedbackText('');
+      setCreateRuleToggle(false);
+      if (updated.ruleCreated) {
+        setRuleCreatedMsg(`Rule "${updated.ruleCreated.name}" was created and will apply to future quotes.`);
+        // Refresh rules so traceability panel has the latest
+        fetchRules().then(setRuleGroups).catch(() => {});
+      } else if (updated.ruleCreationError) {
+        setRuleCreationWarning(`Quote revised successfully, but rule creation failed: ${updated.ruleCreationError}`);
+      }
     } catch (err) {
       setRevisionError((err as ErrorResponse).message ?? 'Revision failed. Please try again.');
     } finally {
       setRevising(false);
     }
+  };
+
+  // Build a lookup map: ruleId -> Rule
+  const ruleById = new Map<string, Rule>();
+  for (const group of ruleGroups) {
+    for (const rule of group.rules) {
+      ruleById.set(rule.id, rule);
+    }
+  }
+
+  // Build a lookup map: ruleId -> group name
+  const groupNameByRuleId = new Map<string, string>();
+  for (const group of ruleGroups) {
+    for (const rule of group.rules) {
+      groupNameByRuleId.set(rule.id, group.name);
+    }
+  }
+
+  const toggleRuleRow = (itemId: string) => {
+    setExpandedRuleRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  /** Get applied rules for a line item, grouped by group name */
+  const getAppliedRulesGrouped = (item: QuoteLineItem): Map<string, Rule[]> => {
+    const grouped = new Map<string, Rule[]>();
+    if (!item.ruleIdsApplied || item.ruleIdsApplied.length === 0) return grouped;
+    for (const ruleId of item.ruleIdsApplied) {
+      const rule = ruleById.get(ruleId);
+      if (!rule) continue;
+      const groupName = groupNameByRuleId.get(ruleId) ?? 'Unknown';
+      const list = grouped.get(groupName) ?? [];
+      list.push(rule);
+      grouped.set(groupName, list);
+    }
+    return grouped;
   };
 
   if (loading) {
@@ -72,9 +150,12 @@ export default function QuoteDraftPage() {
   }
 
   const hasUnresolved = draft.unresolvedItems.length > 0;
+  const showSidePanel = !!(draft.customerRequestText || requestDetail);
 
   return (
-    <div style={containerStyle}>
+    <div style={{ display: 'flex', gap: '1.5rem', maxWidth: showSidePanel ? 1200 : 800, margin: '0 auto' }}>
+      {/* Main content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
       <button onClick={() => navigate('/quotes')} style={backBtnStyle}>← Back to New Quote</button>
 
       <h1 style={titleStyle}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
@@ -83,14 +164,6 @@ export default function QuoteDraftPage() {
       {draft.selectedTemplateName && (
         <div style={templateBannerStyle}>
           <span style={{ fontWeight: 600 }}>Template:</span> {draft.selectedTemplateName}
-        </div>
-      )}
-
-      {/* Original customer request */}
-      {draft.customerRequestText && (
-        <div style={requestSectionStyle}>
-          <h2 style={sectionTitleStyle}>Customer Request</h2>
-          <p style={requestBodyStyle}>{draft.customerRequestText}</p>
         </div>
       )}
 
@@ -113,21 +186,73 @@ export default function QuoteDraftPage() {
                   <th style={{ ...thStyle, textAlign: 'right' }}>Quantity</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Unit Price</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Confidence</th>
+                  <th style={{ ...thStyle, textAlign: 'center', width: 40 }}>Rules</th>
                 </tr>
               </thead>
               <tbody>
-                {draft.lineItems.map((item: QuoteLineItem) => (
-                  <tr key={item.id}>
-                    <td style={tdStyle}>{item.productName}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>{item.quantity}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>${item.unitPrice.toFixed(2)}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <span style={confidenceBadgeStyle(item.confidenceScore)}>
-                        {item.confidenceScore}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {draft.lineItems.map((item: QuoteLineItem) => {
+                  const isExpanded = expandedRuleRows.has(item.id);
+                  const appliedGrouped = getAppliedRulesGrouped(item);
+                  const hasRules = appliedGrouped.size > 0;
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr style={{ verticalAlign: 'top' }}>
+                        <td style={tdStyle}>{item.productName}</td>
+                        <td style={{ ...tdStyle, textAlign: 'right' }}>{item.quantity}</td>
+                        <td style={{ ...tdStyle, textAlign: 'right' }}>${item.unitPrice.toFixed(2)}</td>
+                        <td style={{ ...tdStyle, textAlign: 'right' }}>
+                          <span style={confidenceBadgeStyle(item.confidenceScore)}>
+                            {item.confidenceScore}%
+                          </span>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                          <button
+                            onClick={() => toggleRuleRow(item.id)}
+                            style={infoIconBtnStyle}
+                            aria-label={isExpanded ? 'Hide applied rules' : 'Show applied rules'}
+                            aria-expanded={isExpanded}
+                            title="View applied rules"
+                          >
+                            ℹ
+                          </button>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            style={{ padding: 0, border: 'none' }}
+                          >
+                            <div
+                              onClick={() => toggleRuleRow(item.id)}
+                              style={ruleTraceabilityPanelStyle}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRuleRow(item.id); } }}
+                              aria-label="Click to close rules panel"
+                            >
+                              {!hasRules ? (
+                                <p style={noRulesTextStyle}>No specific rules were applied</p>
+                              ) : (
+                                Array.from(appliedGrouped.entries()).map(([groupName, rules]) => (
+                                  <div key={groupName} style={{ marginBottom: '0.5rem' }}>
+                                    <p style={ruleGroupHeadingStyle}>{groupName}</p>
+                                    {rules.map((rule) => (
+                                      <div key={rule.id} style={ruleEntryStyle}>
+                                        <span style={ruleNameStyle}>{rule.name}</span>
+                                        <span style={ruleDescStyle}>{rule.description}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -186,6 +311,27 @@ export default function QuoteDraftPage() {
         {revisionError && (
           <div role="alert" style={revisionErrorStyle}>{revisionError}</div>
         )}
+        <div style={toggleRowStyle}>
+          <label style={toggleLabelStyle}>
+            <span
+              role="switch"
+              aria-checked={createRuleToggle}
+              tabIndex={0}
+              onClick={() => setCreateRuleToggle((v) => !v)}
+              onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setCreateRuleToggle((v) => !v); } }}
+              style={{
+                ...toggleTrackStyle,
+                background: createRuleToggle ? '#00a89d' : '#ccc',
+              }}
+            >
+              <span style={{
+                ...toggleThumbStyle,
+                transform: createRuleToggle ? 'translateX(16px)' : 'translateX(0)',
+              }} />
+            </span>
+            <span style={{ fontSize: '0.85rem', color: '#555' }}>Also save as rule for future quotes</span>
+          </label>
+        </div>
         <button
           onClick={handleSubmitFeedback}
           disabled={!feedbackText.trim() || revising}
@@ -203,6 +349,12 @@ export default function QuoteDraftPage() {
             'Submit Feedback'
           )}
         </button>
+        {ruleCreatedMsg && (
+          <div style={ruleCreatedMsgStyle} role="status">{ruleCreatedMsg}</div>
+        )}
+        {ruleCreationWarning && (
+          <div style={ruleCreationWarningStyle} role="alert">{ruleCreationWarning}</div>
+        )}
       </div>
 
       {/* Revision history */}
@@ -228,6 +380,76 @@ export default function QuoteDraftPage() {
         {' · '}
         Source: {draft.catalogSource === 'jobber' ? 'Jobber' : 'Manual'}
       </div>
+      </div>{/* end main content column */}
+
+      {/* Request details side panel */}
+      {showSidePanel && (
+        <aside style={sidePanelStyle}>
+          <h2 style={{ margin: '0 0 0.75rem', fontSize: '1.1rem', fontWeight: 600 }}>Request Details</h2>
+
+          {requestDetail?.title && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>Title</h3>
+              <p style={sidePanelTextStyle}>{requestDetail.title}</p>
+            </div>
+          )}
+
+          {requestDetail?.clientName && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>Client</h3>
+              <p style={sidePanelTextStyle}>{requestDetail.clientName}</p>
+            </div>
+          )}
+
+          {draft.customerRequestText && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>{requestDetail ? 'Request Body' : 'Customer Request'}</h3>
+              <p style={{ ...sidePanelTextStyle, whiteSpace: 'pre-wrap' }}>{draft.customerRequestText}</p>
+            </div>
+          )}
+
+          {requestDetail && requestDetail.description && requestDetail.description !== draft.customerRequestText && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>Description</h3>
+              <p style={{ ...sidePanelTextStyle, whiteSpace: 'pre-wrap' }}>{requestDetail.description}</p>
+            </div>
+          )}
+
+          {requestDetail && requestDetail.imageUrls.length > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>Images ({requestDetail.imageUrls.length})</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {requestDetail.imageUrls.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={url}
+                      alt={`Request image ${i + 1}`}
+                      style={{ width: '100%', borderRadius: 6, border: '1px solid #e0e0e0', cursor: 'pointer' }}
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {requestDetail && requestDetail.notes.length > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <h3 style={sidePanelLabelStyle}>Notes ({requestDetail.notes.length})</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {requestDetail.notes.map((note, i) => (
+                  <div key={i} style={sidePanelNoteStyle}>
+                    <p style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>{note.message}</p>
+                    <span style={{ fontSize: '0.7rem', color: '#999', marginTop: '0.2rem', display: 'block' }}>
+                      {note.createdBy === 'team' ? '👤 Team' : '💬 Client'}
+                      {note.createdAt && ` · ${new Date(note.createdAt).toLocaleDateString()}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+      )}
     </div>
   );
 }
@@ -428,4 +650,158 @@ const historyTimestampStyle: React.CSSProperties = {
   color: '#999',
   marginTop: '0.25rem',
   display: 'block',
+};
+
+// ── Rule Traceability Styles ──
+
+const infoIconBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  fontSize: '1rem',
+  padding: '0.15rem 0.35rem',
+  borderRadius: 4,
+  color: '#00a89d',
+  lineHeight: 1,
+};
+
+const ruleTraceabilityPanelStyle: React.CSSProperties = {
+  textAlign: 'left',
+  background: '#f8f9fa',
+  border: '1px solid #e0e0e0',
+  borderRadius: 6,
+  padding: '0.75rem 1rem',
+  margin: '0.25rem 0.75rem 0.5rem',
+  cursor: 'pointer',
+};
+
+const noRulesTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.8rem',
+  color: '#888',
+  fontStyle: 'italic',
+};
+
+const ruleGroupHeadingStyle: React.CSSProperties = {
+  margin: '0 0 0.25rem',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  color: '#555',
+  textTransform: 'uppercase',
+  letterSpacing: '0.3px',
+};
+
+const ruleEntryStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.1rem',
+  padding: '0.25rem 0 0.25rem 0.5rem',
+  borderLeft: '2px solid #00a89d',
+  marginBottom: '0.35rem',
+};
+
+const ruleNameStyle: React.CSSProperties = {
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  color: '#333',
+};
+
+const ruleDescStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  color: '#666',
+};
+
+// ── Rule Creation Toggle Styles ──
+
+const toggleRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  marginTop: '0.5rem',
+};
+
+const toggleLabelStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.5rem',
+  cursor: 'pointer',
+};
+
+const toggleTrackStyle: React.CSSProperties = {
+  display: 'inline-block',
+  width: 36,
+  height: 20,
+  borderRadius: 10,
+  position: 'relative',
+  transition: 'background 0.2s',
+  flexShrink: 0,
+};
+
+const toggleThumbStyle: React.CSSProperties = {
+  display: 'block',
+  width: 16,
+  height: 16,
+  borderRadius: '50%',
+  background: '#fff',
+  position: 'absolute',
+  top: 2,
+  left: 2,
+  transition: 'transform 0.2s',
+  boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+};
+
+const ruleCreatedMsgStyle: React.CSSProperties = {
+  background: '#e0f7f5',
+  color: '#00695c',
+  padding: '0.5rem 0.75rem',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  marginTop: '0.5rem',
+};
+
+const ruleCreationWarningStyle: React.CSSProperties = {
+  background: '#fff8e1',
+  color: '#e65100',
+  padding: '0.5rem 0.75rem',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  marginTop: '0.5rem',
+};
+
+// ── Request Details Side Panel Styles ──
+
+const sidePanelStyle: React.CSSProperties = {
+  width: 320,
+  flexShrink: 0,
+  background: '#f8f9fa',
+  border: '1px solid #e0e0e0',
+  borderRadius: 8,
+  padding: '1rem 1.25rem',
+  alignSelf: 'flex-start',
+  position: 'sticky',
+  top: '1rem',
+  maxHeight: 'calc(100vh - 2rem)',
+  overflowY: 'auto',
+};
+
+const sidePanelLabelStyle: React.CSSProperties = {
+  margin: '0 0 0.25rem',
+  fontSize: '0.75rem',
+  fontWeight: 600,
+  color: '#888',
+  textTransform: 'uppercase',
+  letterSpacing: '0.5px',
+};
+
+const sidePanelTextStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.9rem',
+  color: '#333',
+  lineHeight: 1.4,
+};
+
+const sidePanelNoteStyle: React.CSSProperties = {
+  padding: '0.5rem 0.6rem',
+  background: '#fff',
+  borderRadius: 6,
+  border: '1px solid #eee',
 };

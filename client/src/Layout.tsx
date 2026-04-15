@@ -22,6 +22,7 @@ const socialNavItems = [
 const quotesNavItems = [
   { to: '/quotes', label: 'New Quote' },
   { to: '/quotes/drafts', label: 'Saved Drafts' },
+  { to: '/quotes/rules', label: 'Rules' },
   { to: '/quotes/catalog', label: 'Catalog & Templates' },
 ];
 

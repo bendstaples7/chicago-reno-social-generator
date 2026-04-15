@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, RuleGroupWithRules } from 'shared';
 
-const GENERATION_TIMEOUT_MS = 30_000;
+const GENERATION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
 
 export interface QuoteEngineInput {
@@ -27,6 +27,7 @@ interface AILineItem {
   confidenceScore: number;
   originalText: string;
   unmatchedReason?: string;
+  ruleIdsApplied?: string[];
 }
 
 interface AIResponse {
@@ -47,6 +48,7 @@ const SYSTEM_PROMPT = [
   '- Use unit prices from the catalog entry.',
   '- If a template matches the type of work, reference it by ID and name.',
   '- When SIMILAR PAST QUOTES are provided, prefer their line items and pricing when they match the current customer request. Higher similarity scores indicate stronger matches.',
+  '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -60,7 +62,8 @@ const SYSTEM_PROMPT = [
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
   '      "originalText": "original customer text for this item",',
-  '      "unmatchedReason": "reason or omit if matched"',
+  '      "unmatchedReason": "reason or omit if matched",',
+  '      "ruleIdsApplied": ["rule-id-1", "rule-id-2"]',
   '    }',
   '  ]',
   '}',
@@ -77,6 +80,7 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     catalog: ProductCatalogEntry[],
     templates: QuoteTemplate[],
+    rules?: RuleGroupWithRules[],
   ): Promise<QuoteEngineOutput> {
     const apiKey = process.env.AI_TEXT_API_KEY || '';
     const apiUrl = process.env.AI_TEXT_API_URL || '';
@@ -103,6 +107,9 @@ export class QuoteEngine {
 
     const similarQuotes = input.similarQuotes ?? [];
     const userPrompt = this.buildPrompt(input, catalog, templates, similarQuotes);
+    const systemPrompt = rules && rules.length > 0
+      ? SYSTEM_PROMPT + '\n\n' + this.buildRulesSection(rules)
+      : SYSTEM_PROMPT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
@@ -116,7 +123,7 @@ export class QuoteEngine {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
           temperature: 0.3,
@@ -160,7 +167,7 @@ export class QuoteEngine {
         component: 'QuoteEngine',
         operation: 'generateQuote',
         description: isAbort
-          ? 'Quote generation timed out after 30 seconds.'
+          ? 'Quote generation timed out after 5 minutes.'
           : `Quote generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
         recommendedActions: ['Try again'],
       });
@@ -318,6 +325,7 @@ export class QuoteEngine {
         originalText: item.originalText ?? '',
         resolved,
         unmatchedReason: resolved ? undefined : (item.unmatchedReason || 'Low confidence match'),
+        ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
       };
     });
 
@@ -345,5 +353,34 @@ export class QuoteEngine {
       draft,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
     };
+  }
+
+  // ── Rules section builder ─────────────────────────────────────────
+
+  /**
+   * Sanitize ruleIdsApplied from AI response — filter to valid UUID strings only.
+   */
+  private sanitizeRuleIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
+  }
+
+  /**
+   * Format active rules as a structured "BUSINESS RULES" prompt section,
+   * grouped by group name with each rule's ID and description listed.
+   */
+  buildRulesSection(rules: RuleGroupWithRules[]): string {
+    const parts: string[] = ['BUSINESS RULES:'];
+
+    for (const group of rules) {
+      if (group.rules.length === 0) continue;
+      parts.push(`\n[${group.name}]`);
+      for (const rule of group.rules) {
+        parts.push(`- (ID: ${rule.id}) ${rule.description}`);
+      }
+    }
+
+    return parts.join('\n');
   }
 }

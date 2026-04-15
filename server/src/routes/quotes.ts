@@ -10,11 +10,13 @@ import {
   RevisionEngine,
   JobberWebSession,
   JobberWebhookService,
+  RulesService,
 } from '../services/index.js';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import { query } from '../config/database.js';
-import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
+import type { SimilarQuoteResult } from '../services/index.js';
+import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules } from 'shared';
 
 const router = Router();
 const activityLog = new ActivityLogService();
@@ -27,9 +29,138 @@ const embeddingService = new EmbeddingService();
 const similarityEngine = new SimilarityEngine(embeddingService);
 const quoteSyncService = new QuoteSyncService(embeddingService, activityLog);
 const webhookService = new JobberWebhookService(activityLog);
+const rulesService = new RulesService();
 
 // All quote routes require authentication
 router.use(sessionMiddleware);
+
+// ── Rules CRUD endpoints ──────────────────────────────────────
+
+/**
+ * GET /rules
+ * List all rule groups with their nested rules.
+ */
+router.get('/rules', async (_req, res, next) => {
+  try {
+    const groups = await rulesService.getAllGroupedRules();
+    res.json(groups);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /rules
+ * Create a new rule.
+ */
+router.post('/rules', async (req, res, next) => {
+  try {
+    const { name, description, ruleGroupId, isActive } = req.body as {
+      name?: string;
+      description?: string;
+      ruleGroupId?: string;
+      isActive?: boolean;
+    };
+    const rule = await rulesService.createRule({
+      name: name ?? '',
+      description: description ?? '',
+      ruleGroupId,
+      isActive,
+    });
+    res.status(201).json(rule);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /rules/:id
+ * Update an existing rule.
+ */
+router.put('/rules/:id', async (req, res, next) => {
+  try {
+    const { name, description, ruleGroupId, isActive } = req.body as {
+      name?: string;
+      description?: string;
+      ruleGroupId?: string;
+      isActive?: boolean;
+    };
+    const rule = await rulesService.updateRule(req.params.id, {
+      name,
+      description,
+      ruleGroupId,
+      isActive,
+    });
+    res.json(rule);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /rules/:id/deactivate
+ * Deactivate a rule (soft delete).
+ */
+router.put('/rules/:id/deactivate', async (req, res, next) => {
+  try {
+    const rule = await rulesService.deactivateRule(req.params.id);
+    res.json(rule);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /rules/groups
+ * Create a new rule group.
+ */
+router.post('/rules/groups', async (req, res, next) => {
+  try {
+    const { name, description } = req.body as { name?: string; description?: string };
+    const group = await rulesService.createGroup({
+      name: name ?? '',
+      description,
+    });
+    res.status(201).json(group);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /rules/groups/:id
+ * Update an existing rule group.
+ */
+router.put('/rules/groups/:id', async (req, res, next) => {
+  try {
+    const { name, description, displayOrder } = req.body as {
+      name?: string;
+      description?: string;
+      displayOrder?: number;
+    };
+    const group = await rulesService.updateGroup(req.params.id, {
+      name,
+      description,
+      displayOrder,
+    });
+    res.json(group);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /rules/groups/:id
+ * Delete a rule group (reassigns its rules to the "General" group).
+ */
+router.delete('/rules/groups/:id', async (req, res, next) => {
+  try {
+    await rulesService.deleteGroup(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * POST /corpus/sync
@@ -104,12 +235,21 @@ router.post('/generate', async (req, res, next) => {
     }
 
     // Find similar past quotes from the corpus
-    let similarQuotes;
+    let similarQuotes: SimilarQuoteResult[] = [];
     try {
       similarQuotes = await similarityEngine.findSimilar(customerText ?? '');
     } catch {
       // Graceful degradation: proceed without similar quotes
       similarQuotes = [];
+    }
+
+    // Fetch active rules for prompt injection
+    let activeRules: RuleGroupWithRules[] = [];
+    try {
+      activeRules = await rulesService.getActiveRulesGrouped();
+    } catch {
+      // Graceful degradation: proceed without rules
+      activeRules = [];
     }
 
     const result = await quoteEngine.generateQuote(
@@ -130,6 +270,7 @@ router.post('/generate', async (req, res, next) => {
       },
       catalog,
       templates,
+      activeRules,
     );
 
     // Persist the draft
@@ -196,7 +337,10 @@ router.post('/drafts/:id/revise', async (req, res, next) => {
   try {
     const userId = req.user!.id;
     const draftId = req.params.id;
-    const { feedbackText } = req.body as { feedbackText?: string };
+    const { feedbackText, createRule: shouldCreateRule } = req.body as {
+      feedbackText?: string;
+      createRule?: boolean;
+    };
 
     const trimmed = (feedbackText ?? '').trim();
     if (!trimmed) {
@@ -238,12 +382,21 @@ router.post('/drafts/:id/revise', async (req, res, next) => {
       }));
     }
 
-    // Revise the draft
+    // Fetch active rules for prompt injection
+    let activeRules: RuleGroupWithRules[] = [];
+    try {
+      activeRules = await rulesService.getActiveRulesGrouped();
+    } catch {
+      activeRules = [];
+    }
+
+    // Revise the draft with rules
     const revised = await revisionEngine.revise({
       feedbackText: trimmed,
       currentLineItems: draft.lineItems,
       currentUnresolvedItems: draft.unresolvedItems,
       catalog,
+      rules: activeRules,
     });
 
     // Persist the revision history entry
@@ -255,7 +408,27 @@ router.post('/drafts/:id/revise', async (req, res, next) => {
       unresolvedItems: revised.unresolvedItems,
     });
 
-    res.json(updated);
+    // Optionally create a rule from the feedback text
+    let ruleCreated: { id: string; name: string } | undefined;
+    let ruleCreationError: string | undefined;
+    if (shouldCreateRule) {
+      try {
+        const newRule = await rulesService.createRuleFromFeedback(trimmed);
+        ruleCreated = { id: newRule.id, name: newRule.name };
+      } catch (ruleErr) {
+        ruleCreationError = ruleErr instanceof PlatformError
+          ? ruleErr.description
+          : ruleErr instanceof Error
+            ? ruleErr.message
+            : 'Unknown error creating rule';
+      }
+    }
+
+    res.json({
+      ...updated,
+      ...(ruleCreated ? { ruleCreated } : {}),
+      ...(ruleCreationError ? { ruleCreationError } : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -454,6 +627,126 @@ router.get('/jobber/requests', async (_req, res, next) => {
     }
 
     res.json({ requests, available });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /jobber/requests/:id
+ * Fetch stored details for a single Jobber request (title, client, description, images, notes).
+ */
+router.get('/jobber/requests/:id', async (req, res, next) => {
+  try {
+    const requestId = req.params.id;
+
+    let result = await query(
+      `SELECT jobber_request_id, title, client_name, description, image_urls, request_body
+       FROM jobber_webhook_requests
+       WHERE jobber_request_id = $1
+       ORDER BY processed_at DESC NULLS LAST, received_at DESC
+       LIMIT 1`,
+      [requestId],
+    );
+
+    // If not in DB, try fetching from the Jobber API and storing it
+    if (result.rows.length === 0) {
+      try {
+        const detail = await jobberIntegration.fetchRequestDetail(requestId);
+        if (detail) {
+          const noteMessages = (detail.notes?.edges ?? [])
+            .map((e: any) => e.node?.message)
+            .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+          const description = noteMessages.join('\n\n');
+          const imageUrls = (detail.noteAttachments?.edges ?? [])
+            .filter((e: any) => e.node.contentType.startsWith('image/'))
+            .map((e: any) => e.node.url);
+
+          await query(
+            `INSERT INTO jobber_webhook_requests
+              (jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+             ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+               title = COALESCE(EXCLUDED.title, jobber_webhook_requests.title),
+               client_name = COALESCE(EXCLUDED.client_name, jobber_webhook_requests.client_name),
+               description = COALESCE(EXCLUDED.description, jobber_webhook_requests.description),
+               request_body = COALESCE(EXCLUDED.request_body, jobber_webhook_requests.request_body),
+               image_urls = COALESCE(EXCLUDED.image_urls, jobber_webhook_requests.image_urls),
+               processed_at = NOW()`,
+            [
+              requestId,
+              'API_FETCH',
+              '',
+              detail.title ?? null,
+              detail.companyName || detail.contactName || null,
+              description || null,
+              JSON.stringify(detail),
+              JSON.stringify(imageUrls),
+              JSON.stringify({ source: 'api_fetch' }),
+            ],
+          );
+
+          // Re-query now that we've stored it
+          result = await query(
+            `SELECT jobber_request_id, title, client_name, description, image_urls, request_body
+             FROM jobber_webhook_requests
+             WHERE jobber_request_id = $1
+             ORDER BY processed_at DESC NULLS LAST, received_at DESC
+             LIMIT 1`,
+            [requestId],
+          );
+        }
+      } catch (fetchErr) {
+        console.error('[quotes/request-detail] fetchRequestDetail fallback failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
+      }
+    }
+
+    if (result.rows.length === 0) {
+      res.json({ request: null });
+      return;
+    }
+
+    const row = result.rows[0] as Record<string, unknown>;
+
+    // Extract notes from the stored request_body
+    let notes: Array<{ message: string; createdBy: string; createdAt: string }> = [];
+    if (row.request_body) {
+      try {
+        const detail = JSON.parse(row.request_body as string);
+        const noteEdges = detail?.notes?.edges ?? [];
+        notes = noteEdges
+          .map((e: any) => e.node)
+          .filter((n: any) => n?.message && typeof n.message === 'string' && n.message.trim().length > 0)
+          .map((n: any) => {
+            const typeName = n.createdBy?.__typename ?? '';
+            let createdBy: 'team' | 'client' | 'system' = 'system';
+            if (typeName === 'User') createdBy = 'team';
+            else if (typeName === 'Client') createdBy = 'client';
+            return {
+              message: n.message,
+              createdBy,
+              createdAt: n.createdAt ?? '',
+            };
+          });
+      } catch { /* ignore parse errors */ }
+    }
+
+    // Parse image_urls (stored as JSONB)
+    let imageUrls: string[] = [];
+    if (row.image_urls) {
+      imageUrls = Array.isArray(row.image_urls) ? row.image_urls as string[] : [];
+    }
+
+    res.json({
+      request: {
+        id: row.jobber_request_id as string,
+        title: (row.title as string) ?? '',
+        clientName: (row.client_name as string) ?? '',
+        description: (row.description as string) ?? '',
+        imageUrls,
+        notes,
+      },
+    });
   } catch (err) {
     next(err);
   }

@@ -28,6 +28,7 @@ export interface QuoteLineItem {
   originalText: string;
   resolved: boolean;
   unmatchedReason?: string;
+  ruleIdsApplied?: string[];
 }
 
 /** The full quote draft */
@@ -42,6 +43,7 @@ export interface QuoteDraft {
   unresolvedItems: QuoteLineItem[];
   catalogSource: 'jobber' | 'manual';
   jobberRequestId: string | null;
+  clientName?: string | null;
   status: 'draft' | 'finalized';
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];
@@ -112,4 +114,30 @@ export interface QuoteDraftUpdate {
   unresolvedItems?: Partial<QuoteLineItem>[];
   selectedTemplateId?: string | null;
   status?: 'draft' | 'finalized';
+}
+
+/** A business rule that influences quote generation */
+export interface Rule {
+  id: string;
+  name: string;
+  description: string;
+  ruleGroupId: string;
+  priorityOrder: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A named group for organizing related rules */
+export interface RuleGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  displayOrder: number;
+  createdAt: Date;
+}
+
+/** A rule group with its nested rules */
+export interface RuleGroupWithRules extends RuleGroup {
+  rules: Rule[];
 }

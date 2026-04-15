@@ -1,9 +1,12 @@
 import crypto from 'node:crypto';
 import { query, getClient } from '../config/database.js';
 import { PlatformError } from '../errors/index.js';
+import { RulesService } from './rules-service.js';
 import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem, SimilarQuote, RevisionHistoryEntry } from 'shared';
 
 export class QuoteDraftService {
+  private rulesService = new RulesService();
+
   /**
    * Save a new quote draft with its line items and media associations.
    */
@@ -66,7 +69,22 @@ export class QuoteDraftService {
       }
 
       await client.query('COMMIT');
-      return this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems, draft.similarQuotes);
+
+      const savedDraft = this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems, draft.similarQuotes);
+
+      // Persist rule-to-line-item associations (outside transaction — best effort)
+      try {
+        const lineItemRules = allItems
+          .filter((item) => item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
+          .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied! }));
+        if (lineItemRules.length > 0) {
+          await this.rulesService.saveLineItemRules(draft.id, lineItemRules);
+        }
+      } catch {
+        // Best effort — draft is already saved, don't fail the response
+      }
+
+      return savedDraft;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -99,6 +117,22 @@ export class QuoteDraftService {
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
     const similarQuotes = await this.fetchSimilarQuotes(draftId);
     const revisionHistory = await this.getRevisionHistory(draftId);
+
+    // Attach rule traceability to line items
+    const ruleMap = await this.rulesService.getLineItemRules(draftId);
+    for (const item of lineItems) {
+      const rules = ruleMap.get(item.id);
+      if (rules && rules.length > 0) {
+        item.ruleIdsApplied = rules.map((r) => r.id);
+      }
+    }
+    for (const item of unresolvedItems) {
+      const rules = ruleMap.get(item.id);
+      if (rules && rules.length > 0) {
+        item.ruleIdsApplied = rules.map((r) => r.id);
+      }
+    }
+
     const draft = this.mapDraftRow(result.rows[0], lineItems, unresolvedItems, similarQuotes);
     draft.revisionHistory = revisionHistory.length > 0 ? revisionHistory : undefined;
     return draft;
@@ -109,10 +143,17 @@ export class QuoteDraftService {
    */
   async list(userId: string): Promise<QuoteDraft[]> {
     const result = await query(
-      `SELECT id, draft_number, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at
-       FROM quote_drafts
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT qd.id, qd.draft_number, qd.user_id, qd.customer_request_text, qd.selected_template_id, qd.selected_template_name, qd.catalog_source, qd.status, qd.jobber_request_id, qd.created_at, qd.updated_at,
+              jwr.client_name
+       FROM quote_drafts qd
+       LEFT JOIN LATERAL (
+         SELECT client_name FROM jobber_webhook_requests
+         WHERE jobber_request_id = qd.jobber_request_id
+         ORDER BY processed_at DESC NULLS LAST, received_at DESC
+         LIMIT 1
+       ) jwr ON true
+       WHERE qd.user_id = $1
+       ORDER BY qd.created_at DESC`,
       [userId],
     );
 
@@ -248,6 +289,45 @@ export class QuoteDraftService {
       }
 
       await client.query('COMMIT');
+
+      // Re-persist rule-to-line-item associations if line items were replaced
+      if (updates.lineItems !== undefined || updates.unresolvedItems !== undefined) {
+        try {
+          // Collect rule links from the updated items
+          const updatedItems = [
+            ...(updates.lineItems ?? []),
+            ...(updates.unresolvedItems ?? []),
+          ];
+          const newRuleLinks = updatedItems
+            .filter((item): item is Partial<QuoteLineItem> & { id: string; ruleIdsApplied: string[] } =>
+              !!item.id && !!item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
+            .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied }));
+
+          // If both lists were provided, we can safely clear and re-insert all
+          if (updates.lineItems !== undefined && updates.unresolvedItems !== undefined) {
+            await this.rulesService.saveLineItemRules(draftId, newRuleLinks);
+          } else if (newRuleLinks.length > 0) {
+            // Partial update — only insert new links without clearing existing ones
+            // First get existing links to avoid clearing untouched items' associations
+            const existingRuleMap = await this.rulesService.getLineItemRules(draftId);
+            const allLinks: Array<{ lineItemId: string; ruleIds: string[] }> = [];
+
+            // Preserve existing links for items NOT in the update
+            const updatedItemIds = new Set(updatedItems.map((i) => i.id).filter(Boolean));
+            for (const [lineItemId, rules] of existingRuleMap) {
+              if (!updatedItemIds.has(lineItemId)) {
+                allLinks.push({ lineItemId, ruleIds: rules.map((r) => r.id) });
+              }
+            }
+
+            // Add new links from the update
+            allLinks.push(...newRuleLinks);
+            await this.rulesService.saveLineItemRules(draftId, allLinks);
+          }
+        } catch {
+          // Best effort — draft update already committed
+        }
+      }
 
       const { lineItems, unresolvedItems: unresolved } = await this.fetchLineItems(draftId);
       const similarQuotes = await this.fetchSimilarQuotes(draftId);
@@ -410,6 +490,7 @@ export class QuoteDraftService {
       catalogSource: row.catalog_source as QuoteDraft['catalogSource'],
       status: row.status as QuoteDraft['status'],
       jobberRequestId: (row.jobber_request_id as string) ?? null,
+      clientName: (row.client_name as string) ?? undefined,
       similarQuotes: similarQuotes && similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),

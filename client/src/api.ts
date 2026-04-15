@@ -5,6 +5,7 @@ import type {
   ActivityLogEntry, AdvisorMode, ContentIdea, QuoteDraft,
   ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
   JobberCustomerRequest, SimilarQuote, JobberRequestFormData,
+  Rule, RuleGroup, RuleGroupWithRules,
 } from 'shared';
 
 const TOKEN_KEY = 'session_token';
@@ -447,11 +448,15 @@ export async function updateDraft(id: string, updates: QuoteDraftUpdate): Promis
   return handleResponse(res);
 }
 
-export async function reviseDraft(draftId: string, feedbackText: string): Promise<QuoteDraft> {
+export async function reviseDraft(
+  draftId: string,
+  feedbackText: string,
+  createRule?: boolean,
+): Promise<QuoteDraft & { ruleCreated?: { id: string; name: string }; ruleCreationError?: string }> {
   const res = await fetch(API_BASE + '/api/quotes/drafts/' + draftId + '/revise', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ feedbackText }),
+    body: JSON.stringify({ feedbackText, ...(createRule ? { createRule: true } : {}) }),
   });
   return handleResponse(res);
 }
@@ -526,6 +531,22 @@ export async function fetchJobberRequestFormData(requestId: string): Promise<{ f
   return handleResponse(res);
 }
 
+export interface JobberRequestDetail {
+  id: string;
+  title: string;
+  clientName: string;
+  description: string;
+  imageUrls: string[];
+  notes: Array<{ message: string; createdBy: string; createdAt: string }>;
+}
+
+export async function fetchJobberRequestDetail(requestId: string): Promise<{ request: JobberRequestDetail | null }> {
+  const res = await fetch(API_BASE + '/api/quotes/jobber/requests/' + requestId, {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Quote Corpus ──
 
 export interface SyncResult {
@@ -551,4 +572,83 @@ export async function fetchCorpusStatus(): Promise<{ totalQuotes: number; lastSy
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
+}
+
+
+// ── Rules Engine ──
+
+export async function fetchRules(): Promise<RuleGroupWithRules[]> {
+  const res = await fetch(API_BASE + '/api/quotes/rules', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function createRule(data: {
+  name: string;
+  description: string;
+  ruleGroupId?: string;
+  isActive?: boolean;
+}): Promise<Rule> {
+  const res = await fetch(API_BASE + '/api/quotes/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function updateRule(id: string, data: {
+  name?: string;
+  description?: string;
+  ruleGroupId?: string;
+  isActive?: boolean;
+}): Promise<Rule> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function deactivateRule(id: string): Promise<Rule> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/' + id + '/deactivate', {
+    method: 'PUT',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function createRuleGroup(data: {
+  name: string;
+  description?: string;
+}): Promise<RuleGroup> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function updateRuleGroup(id: string, data: {
+  name?: string;
+  description?: string;
+  displayOrder?: number;
+}): Promise<RuleGroup> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/groups/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteRuleGroup(id: string): Promise<void> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/groups/' + id, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  });
+  await handleResponse(res);
 }

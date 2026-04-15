@@ -78,8 +78,15 @@ export default function QuoteDraftsListPage() {
                 aria-label={`View draft from ${new Date(draft.createdAt).toLocaleDateString()}`}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.25rem', color: '#061216' }}>
-                    D-{String(draft.draftNumber).padStart(3, '0')}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.95rem', color: '#061216' }}>
+                      D-{String(draft.draftNumber).padStart(3, '0')}
+                    </span>
+                    {draft.clientName && (
+                      <span style={{ fontSize: '0.85rem', color: '#555' }}>
+                        — {draft.clientName}
+                      </span>
+                    )}
                   </div>
                   <p style={requestTextStyle}>
                     {draft.customerRequestText

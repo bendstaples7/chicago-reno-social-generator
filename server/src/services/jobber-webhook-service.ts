@@ -254,7 +254,7 @@ export class JobberWebhookService {
        ORDER BY jobber_request_id, processed_at DESC NULLS LAST, received_at DESC`,
     );
 
-    return result.rows.map((row: Record<string, unknown>) => {
+    return result.rows.map((row: Record<string, unknown>): JobberCustomerRequest | null => {
       let structuredNotes: { message: string; createdBy: 'team' | 'client' | 'system'; createdAt: string }[] = [];
       let imageUrls: string[] = [];
 
@@ -286,6 +286,13 @@ export class JobberWebhookService {
         } catch { /* ignore parse errors */ }
       }
 
+      // If we don't have the real Jobber createdAt, skip this request entirely.
+      // Using received_at (webhook receipt time) as a substitute caused old requests
+      // to appear with recent dates and sort to the top of the list.
+      if (!jobberCreatedAt) {
+        return null;
+      }
+
       return {
         id: row.jobber_request_id as string,
         title: (row.title as string) || 'Untitled Request',
@@ -295,9 +302,9 @@ export class JobberWebhookService {
         structuredNotes,
         imageUrls,
         jobberWebUri,
-        createdAt: jobberCreatedAt ?? (row.received_at as Date).toISOString(),
+        createdAt: jobberCreatedAt,
       };
-    });
+    }).filter((r): r is JobberCustomerRequest => r !== null);
   }
 
   private async logEvent(severity: 'info' | 'warn' | 'error', operation: string, description: string): Promise<void> {

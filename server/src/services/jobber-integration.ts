@@ -353,11 +353,15 @@ export class JobberIntegration {
     }
 
     try {
-      const nodes = await this.fetchAllPages<JobberRequestNode>(
-        REQUESTS_QUERY,
-        { first: DEFAULT_PAGE_SIZE, after: null },
-        ['requests'],
-      );
+      // Only fetch the first page of requests (sorted by REQUESTED_AT DESC in the query).
+      // Using fetchAllPages previously pulled every request ever created (potentially thousands),
+      // including very old archived/converted ones that are no longer actionable.
+      const data = await this.graphqlRequest<Record<string, unknown>>(REQUESTS_QUERY, {
+        first: DEFAULT_PAGE_SIZE,
+        after: null,
+      });
+      const connection = (data as any).requests as { edges: Array<{ node: JobberRequestNode }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } } | undefined;
+      const nodes: JobberRequestNode[] = connection?.edges?.map((e) => e.node) ?? [];
 
       const requests: JobberCustomerRequest[] = nodes.map((r) => {
         const structuredNotes = r.notes.edges

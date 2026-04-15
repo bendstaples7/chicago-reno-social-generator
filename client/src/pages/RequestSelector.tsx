@@ -7,9 +7,10 @@ interface RequestSelectorProps {
   onClear: () => void;
   selectedRequestId: string | null;
   formDataLoaded?: boolean;
+  loadingFormData?: boolean;
 }
 
-export default function RequestSelector({ onSelect, onClear, selectedRequestId, formDataLoaded }: RequestSelectorProps) {
+export default function RequestSelector({ onSelect, onClear, selectedRequestId, formDataLoaded, loadingFormData }: RequestSelectorProps) {
   const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +85,14 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             {selectedRequest.clientName} · {formatDate(selectedRequest.createdAt)}
           </div>
 
+          {/* Loading indicator while form data is being fetched */}
+          {loadingFormData && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
+              <span style={spinnerStyle} />
+              <span style={{ fontSize: '0.85rem', color: '#666' }}>Loading request details…</span>
+            </div>
+          )}
+
           {/* Form submission data */}
           {selectedRequest.formData && selectedRequest.formData.sections.length > 0 && (
             <div style={{ marginBottom: '0.75rem' }}>
@@ -147,7 +156,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             </div>
           )}
 
-          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && (!selectedRequest.formData || selectedRequest.formData.sections.length === 0) && !formDataLoaded && (
+          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && (!selectedRequest.formData || selectedRequest.formData.sections.length === 0) && !formDataLoaded && !loadingFormData && (
             <div style={{ fontSize: '0.85rem', color: '#6d4c00', background: '#fff3e0', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
               The form details for this request aren't available via the Jobber API. Open the request in Jobber and paste the details below.
             </div>

@@ -41,24 +41,37 @@ export default function QuoteInputPage() {
   }, []);
 
   const [formData, setFormData] = useState<import('shared').JobberRequestFormData | null>(null);
+  const [loadingFormData, setLoadingFormData] = useState(false);
+  const selectTokenRef = useRef(0);
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
+    const token = ++selectTokenRef.current;
     setJobberRequestId(request.id);
     setFormData(null);
+    setLoadingFormData(true);
 
     // Fetch form data from the internal API
     try {
       const { formData: fetchedFormData } = await fetchJobberRequestFormData(request.id);
+      if (token !== selectTokenRef.current) return; // stale — a newer selection superseded this one
       if (fetchedFormData) {
         setFormData(fetchedFormData);
         if (fetchedFormData.text) {
           setCustomerText(fetchedFormData.text);
+          setLoadingFormData(false);
           return;
         }
       }
     } catch {
+      if (token !== selectTokenRef.current) return;
       // Fall through to fallback
+    } finally {
+      if (token === selectTokenRef.current) {
+        setLoadingFormData(false);
+      }
     }
+
+    if (token !== selectTokenRef.current) return;
 
     // Fallback to title + description + notes
     const parts: string[] = [];
@@ -81,6 +94,7 @@ export default function QuoteInputPage() {
   const handleRequestClear = () => {
     setJobberRequestId(null);
     setFormData(null);
+    setLoadingFormData(false);
     setCustomerText('');
   };
 
@@ -175,6 +189,7 @@ export default function QuoteInputPage() {
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
           formDataLoaded={!!formData}
+          loadingFormData={loadingFormData}
         />
       )}
 

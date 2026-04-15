@@ -145,8 +145,9 @@ export default function RulesPage() {
     <div style={{ background: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: 6, padding: '1rem', marginBottom: '1rem' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <div>
-          <label style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Name</label>
+          <label htmlFor="rule-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Name</label>
           <input
+            id="rule-name"
             type="text"
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -155,8 +156,9 @@ export default function RulesPage() {
           />
         </div>
         <div>
-          <label style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Description</label>
+          <label htmlFor="rule-description" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Description</label>
           <textarea
+            id="rule-description"
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             placeholder="Describe what this rule does"
@@ -165,8 +167,9 @@ export default function RulesPage() {
           />
         </div>
         <div>
-          <label style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Group</label>
+          <label htmlFor="rule-group" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Group</label>
           <select
+            id="rule-group"
             value={formData.ruleGroupId}
             onChange={(e) => setFormData({ ...formData, ruleGroupId: e.target.value })}
             style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box' }}
@@ -236,20 +239,28 @@ export default function RulesPage() {
         <div style={{ background: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: 6, padding: '1rem', marginBottom: '1.5rem' }}>
           <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem' }}>New Group</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <input
-              type="text"
-              value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
-              placeholder="Group name"
-              style={{ padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc' }}
-            />
-            <input
-              type="text"
-              value={groupDescription}
-              onChange={(e) => setGroupDescription(e.target.value)}
-              placeholder="Description (optional)"
-              style={{ padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc' }}
-            />
+            <div>
+              <label htmlFor="group-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Name</label>
+              <input
+                id="group-name"
+                type="text"
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                placeholder="Group name"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label htmlFor="group-description" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Description</label>
+              <input
+                id="group-description"
+                type="text"
+                value={groupDescription}
+                onChange={(e) => setGroupDescription(e.target.value)}
+                placeholder="Description (optional)"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box' }}
+              />
+            </div>
             {groupError && (
               <div role="alert" style={{ padding: '0.5rem 0.75rem', background: '#fdecea', color: '#b71c1c', borderRadius: 4, fontSize: '0.85rem' }}>
                 {groupError}

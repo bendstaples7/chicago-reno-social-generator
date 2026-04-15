@@ -70,15 +70,21 @@ export class QuoteDraftService {
 
       await client.query('COMMIT');
 
+      const savedDraft = this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems, draft.similarQuotes);
+
       // Persist rule-to-line-item associations (outside transaction — best effort)
-      const lineItemRules = allItems
-        .filter((item) => item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
-        .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied! }));
-      if (lineItemRules.length > 0) {
-        await this.rulesService.saveLineItemRules(draft.id, lineItemRules);
+      try {
+        const lineItemRules = allItems
+          .filter((item) => item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
+          .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied! }));
+        if (lineItemRules.length > 0) {
+          await this.rulesService.saveLineItemRules(draft.id, lineItemRules);
+        }
+      } catch {
+        // Best effort — draft is already saved, don't fail the response
       }
 
-      return this.mapDraftRow(result.rows[0], draft.lineItems, draft.unresolvedItems, draft.similarQuotes);
+      return savedDraft;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -286,16 +292,41 @@ export class QuoteDraftService {
 
       // Re-persist rule-to-line-item associations if line items were replaced
       if (updates.lineItems !== undefined || updates.unresolvedItems !== undefined) {
-        const updatedItems = [
-          ...(updates.lineItems ?? []),
-          ...(updates.unresolvedItems ?? []),
-        ];
-        const lineItemRules = updatedItems
-          .filter((item): item is Partial<QuoteLineItem> & { id: string; ruleIdsApplied: string[] } =>
-            !!item.id && !!item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
-          .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied }));
-        // saveLineItemRules clears existing associations for the draft first
-        await this.rulesService.saveLineItemRules(draftId, lineItemRules);
+        try {
+          // Collect rule links from the updated items
+          const updatedItems = [
+            ...(updates.lineItems ?? []),
+            ...(updates.unresolvedItems ?? []),
+          ];
+          const newRuleLinks = updatedItems
+            .filter((item): item is Partial<QuoteLineItem> & { id: string; ruleIdsApplied: string[] } =>
+              !!item.id && !!item.ruleIdsApplied && item.ruleIdsApplied.length > 0)
+            .map((item) => ({ lineItemId: item.id, ruleIds: item.ruleIdsApplied }));
+
+          // If both lists were provided, we can safely clear and re-insert all
+          if (updates.lineItems !== undefined && updates.unresolvedItems !== undefined) {
+            await this.rulesService.saveLineItemRules(draftId, newRuleLinks);
+          } else if (newRuleLinks.length > 0) {
+            // Partial update — only insert new links without clearing existing ones
+            // First get existing links to avoid clearing untouched items' associations
+            const existingRuleMap = await this.rulesService.getLineItemRules(draftId);
+            const allLinks: Array<{ lineItemId: string; ruleIds: string[] }> = [];
+
+            // Preserve existing links for items NOT in the update
+            const updatedItemIds = new Set(updatedItems.map((i) => i.id).filter(Boolean));
+            for (const [lineItemId, rules] of existingRuleMap) {
+              if (!updatedItemIds.has(lineItemId)) {
+                allLinks.push({ lineItemId, ruleIds: rules.map((r) => r.id) });
+              }
+            }
+
+            // Add new links from the update
+            allLinks.push(...newRuleLinks);
+            await this.rulesService.saveLineItemRules(draftId, allLinks);
+          }
+        } catch {
+          // Best effort — draft update already committed
+        }
       }
 
       const { lineItems, unresolvedItems: unresolved } = await this.fetchLineItems(draftId);

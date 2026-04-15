@@ -717,11 +717,17 @@ router.get('/jobber/requests/:id', async (req, res, next) => {
         notes = noteEdges
           .map((e: any) => e.node)
           .filter((n: any) => n?.message && typeof n.message === 'string' && n.message.trim().length > 0)
-          .map((n: any) => ({
-            message: n.message,
-            createdBy: n.createdBy?.__typename === 'JobberUser' ? 'team' : 'client',
-            createdAt: n.createdAt ?? '',
-          }));
+          .map((n: any) => {
+            const typeName = n.createdBy?.__typename ?? '';
+            let createdBy: 'team' | 'client' | 'system' = 'system';
+            if (typeName === 'User') createdBy = 'team';
+            else if (typeName === 'Client') createdBy = 'client';
+            return {
+              message: n.message,
+              createdBy,
+              createdAt: n.createdAt ?? '',
+            };
+          });
       } catch { /* ignore parse errors */ }
     }
 

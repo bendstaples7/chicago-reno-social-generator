@@ -325,7 +325,7 @@ export class QuoteEngine {
         originalText: item.originalText ?? '',
         resolved,
         unmatchedReason: resolved ? undefined : (item.unmatchedReason || 'Low confidence match'),
-        ruleIdsApplied: item.ruleIdsApplied ?? [],
+        ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
       };
     });
 
@@ -356,6 +356,15 @@ export class QuoteEngine {
   }
 
   // ── Rules section builder ─────────────────────────────────────────
+
+  /**
+   * Sanitize ruleIdsApplied from AI response — filter to valid UUID strings only.
+   */
+  private sanitizeRuleIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
+  }
 
   /**
    * Format active rules as a structured "BUSINESS RULES" prompt section,

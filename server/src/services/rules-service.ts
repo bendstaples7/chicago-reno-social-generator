@@ -47,11 +47,18 @@ export class RulesService {
     const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
 
     try {
+      // Assign priority_order to one past the current max in the group
+      const orderResult = await query(
+        'SELECT COALESCE(MAX(priority_order), -1) + 1 AS next_order FROM rules WHERE rule_group_id = $1',
+        [groupId],
+      );
+      const nextOrder = Number(orderResult.rows[0].next_order);
+
       const result = await query(
-        `INSERT INTO rules (name, description, rule_group_id, is_active)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO rules (name, description, rule_group_id, priority_order, is_active)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at`,
-        [data.name.trim(), data.description.trim(), groupId, data.isActive ?? true],
+        [data.name.trim(), data.description.trim(), groupId, nextOrder, data.isActive ?? true],
       );
 
       return this.mapRuleRow(result.rows[0]);
@@ -78,6 +85,26 @@ export class RulesService {
     ruleGroupId?: string;
     isActive?: boolean;
   }): Promise<Rule> {
+    // Reject whitespace-only name or description
+    if (data.name !== undefined && data.name.trim() === '') {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'RulesService',
+        operation: 'updateRule',
+        description: 'Rule name cannot be empty.',
+        recommendedActions: ['Provide a non-empty name'],
+      });
+    }
+    if (data.description !== undefined && data.description.trim() === '') {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'RulesService',
+        operation: 'updateRule',
+        description: 'Rule description cannot be empty.',
+        recommendedActions: ['Provide a non-empty description'],
+      });
+    }
+
     const setClauses: string[] = ['updated_at = NOW()'];
     const values: unknown[] = [];
     let paramIndex = 1;
@@ -214,6 +241,21 @@ export class RulesService {
       });
     }
 
+    // Check for duplicate group name (case-insensitive)
+    const existing = await query(
+      'SELECT id FROM rule_groups WHERE LOWER(name) = LOWER($1)',
+      [data.name.trim()],
+    );
+    if (existing.rows.length > 0) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'RulesService',
+        operation: 'createGroup',
+        description: `A group named '${data.name.trim()}' already exists.`,
+        recommendedActions: ['Choose a different name'],
+      });
+    }
+
     // Place new group after existing ones
     const orderResult = await query(
       'SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM rule_groups',
@@ -238,6 +280,17 @@ export class RulesService {
     description?: string;
     displayOrder?: number;
   }): Promise<RuleGroup> {
+    // Reject whitespace-only name
+    if (data.name !== undefined && data.name.trim() === '') {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'RulesService',
+        operation: 'updateGroup',
+        description: 'Group name cannot be empty.',
+        recommendedActions: ['Provide a non-empty name'],
+      });
+    }
+
     const setClauses: string[] = [];
     const values: unknown[] = [];
     let paramIndex = 1;

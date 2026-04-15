@@ -238,7 +238,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
-          ruleIdsApplied: item.ruleIdsApplied ?? [],
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else if (item.productCatalogEntryId) {
         // Matched item — use catalog pricing
@@ -253,7 +253,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
-          ruleIdsApplied: item.ruleIdsApplied ?? [],
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else {
         // No catalog reference
@@ -267,7 +267,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No catalog match',
-          ruleIdsApplied: item.ruleIdsApplied ?? [],
+          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
         };
       }
 
@@ -282,6 +282,15 @@ export class RevisionEngine {
   }
 
   // ── Rules section builder ─────────────────────────────────────────
+
+  /**
+   * Sanitize ruleIdsApplied from AI response — filter to valid UUID strings only.
+   */
+  private sanitizeRuleIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
+  }
 
   /**
    * Format active rules as a structured "BUSINESS RULES" prompt section,

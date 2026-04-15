@@ -45,10 +45,16 @@ export default function QuoteDraftPage() {
 
   // Fetch Jobber request details when draft has a jobberRequestId
   useEffect(() => {
-    if (!draft?.jobberRequestId) return;
+    if (!draft?.jobberRequestId) {
+      setRequestDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setRequestDetail(null);
     fetchJobberRequestDetail(draft.jobberRequestId)
-      .then((data) => setRequestDetail(data.request))
+      .then((data) => { if (!cancelled) setRequestDetail(data.request); })
       .catch(() => { /* supplementary; ignore errors */ });
+    return () => { cancelled = true; };
   }, [draft?.jobberRequestId]);
 
   const handleSubmitFeedback = async () => {

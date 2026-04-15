@@ -462,16 +462,137 @@ router.get('/jobber/requests', async (_req, res, next) => {
 /**
  * GET /jobber/requests/:id/form-data
  * Fetch the form submission data for a specific Jobber request.
- * This uses the internal Jobber API (requires web credentials).
+ * Tries the internal Jobber API first (requires web session cookies),
+ * then falls back to building form data from stored webhook/API data.
+ * If the request isn't in the DB yet, fetches it from the public API and stores it.
  */
 router.get('/jobber/requests/:id/form-data', async (req, res, next) => {
   try {
-    if (!jobberWebSession.isConfigured()) {
+    const requestId = req.params.id;
+
+    // Try the internal Jobber API via Puppeteer browser session
+    if (jobberWebSession.isConfigured()) {
+      const formData = await jobberWebSession.fetchRequestFormData(requestId);
+      if (formData) {
+        res.json({ formData });
+        return;
+      }
+    }
+
+    // Check if we have this request stored in the webhook table
+    let result = await query(
+      `SELECT title, client_name, description, request_body, image_urls
+       FROM jobber_webhook_requests
+       WHERE jobber_request_id = $1
+       ORDER BY processed_at DESC NULLS LAST, received_at DESC
+       LIMIT 1`,
+      [requestId],
+    );
+
+    // If not in DB, try fetching from the public Jobber API and storing it
+    // (attempt even if isAvailable() is false — it may have recovered)
+    if (result.rows.length === 0) {
+      try {
+        const detail = await jobberIntegration.fetchRequestDetail(requestId);
+        if (detail) {
+          const noteMessages = (detail.notes?.edges ?? [])
+            .map((e: any) => e.node?.message)
+            .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+          const description = noteMessages.join('\n\n');
+          const imageUrls = (detail.noteAttachments?.edges ?? [])
+            .filter((e: any) => e.node.contentType.startsWith('image/'))
+            .map((e: any) => e.node.url);
+
+          await query(
+            `INSERT INTO jobber_webhook_requests
+              (jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+            [
+              requestId,
+              'API_FETCH',
+              '',
+              detail.title ?? null,
+              detail.companyName || detail.contactName || null,
+              description || null,
+              JSON.stringify(detail),
+              JSON.stringify(imageUrls),
+              JSON.stringify({ source: 'api_fetch' }),
+            ],
+          );
+
+          // Re-query now that we've stored it
+          result = await query(
+            `SELECT title, client_name, description, request_body, image_urls
+             FROM jobber_webhook_requests
+             WHERE jobber_request_id = $1
+             ORDER BY processed_at DESC NULLS LAST, received_at DESC
+             LIMIT 1`,
+            [requestId],
+          );
+        }
+      } catch (fetchErr) {
+        console.error('[quotes/form-data] fetchRequestDetail fallback failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
+        // Best-effort — fall through to null
+      }
+    }
+
+    if (result.rows.length === 0) {
       res.json({ formData: null });
       return;
     }
-    const formData = await jobberWebSession.fetchRequestFormData(req.params.id);
-    res.json({ formData });
+
+    const row = result.rows[0] as Record<string, unknown>;
+    const sections: Array<{ label: string; sortOrder: number; answers: Array<{ label: string; value: string | null }> }> = [];
+    const textParts: string[] = [];
+
+    // Extract notes from the stored request body
+    if (row.request_body) {
+      try {
+        const detail = JSON.parse(row.request_body as string);
+        const noteEdges = detail?.notes?.edges ?? [];
+        const noteMessages = noteEdges
+          .map((e: any) => e.node?.message)
+          .filter((m: unknown): m is string => typeof m === 'string' && m.trim().length > 0);
+
+        if (noteMessages.length > 0) {
+          sections.push({
+            label: 'Notes',
+            sortOrder: 2,
+            answers: noteMessages.map((msg: string, i: number) => ({
+              label: `Note ${i + 1}`,
+              value: msg,
+            })),
+          });
+          textParts.push(...noteMessages);
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    // Add description if available and not already covered by notes
+    const description = (row.description as string || '').trim();
+    const descriptionAlreadyCovered = description.length > 0 && textParts.some(t =>
+      t.includes(description) || description.includes(t)
+    );
+    if (description && !descriptionAlreadyCovered) {
+      sections.unshift({
+        label: 'Request Description',
+        sortOrder: 1,
+        answers: [{ label: 'Description', value: description }],
+      });
+      textParts.unshift(description);
+    }
+
+    if (sections.length === 0) {
+      res.json({ formData: null });
+      return;
+    }
+
+    res.json({
+      formData: {
+        sections,
+        text: textParts.join('\n\n'),
+      },
+    });
   } catch (err) {
     next(err);
   }

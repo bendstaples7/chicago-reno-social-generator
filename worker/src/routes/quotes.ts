@@ -317,6 +317,81 @@ app.post('/templates', async (c) => {
 });
 
 /**
+ * GET /jobber/requests/:id/form-data
+ * Fetch the form submission data for a specific Jobber request.
+ * Builds form data from stored webhook/API data since the Jobber web
+ * session (Auth0 cookie-based) is not available in the Worker environment.
+ */
+app.get('/jobber/requests/:id/form-data', async (c) => {
+  const db = c.env.DB;
+  const requestId = c.req.param('id');
+
+  // Build form data from webhook/API data stored in D1
+  const row = await db.prepare(
+    `SELECT title, client_name, description, request_body, image_urls
+     FROM jobber_webhook_requests
+     WHERE jobber_request_id = ?
+     ORDER BY processed_at DESC, received_at DESC
+     LIMIT 1`
+  ).bind(requestId).first() as Record<string, unknown> | null;
+
+  if (!row) {
+    return c.json({ formData: null });
+  }
+
+  const sections: Array<{ label: string; sortOrder: number; answers: Array<{ label: string; value: string | null }> }> = [];
+  const textParts: string[] = [];
+
+  // Extract notes from the stored request body
+  if (row.request_body) {
+    try {
+      const detail = JSON.parse(row.request_body as string);
+      const noteEdges = detail?.notes?.edges ?? [];
+      const noteMessages = noteEdges
+        .map((e: any) => e.node?.message)
+        .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+
+      if (noteMessages.length > 0) {
+        sections.push({
+          label: 'Notes',
+          sortOrder: 2,
+          answers: noteMessages.map((msg: string, i: number) => ({
+            label: `Note ${i + 1}`,
+            value: msg,
+          })),
+        });
+        textParts.push(...noteMessages);
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Add description if available and not already covered by notes
+  const description = ((row.description as string) || '').trim();
+  const descriptionAlreadyCovered = description.length > 0 && textParts.some(t =>
+    t.includes(description) || description.includes(t)
+  );
+  if (description && !descriptionAlreadyCovered) {
+    sections.unshift({
+      label: 'Request Description',
+      sortOrder: 1,
+      answers: [{ label: 'Description', value: description }],
+    });
+    textParts.unshift(description);
+  }
+
+  if (sections.length === 0) {
+    return c.json({ formData: null });
+  }
+
+  return c.json({
+    formData: {
+      sections,
+      text: textParts.join('\n\n'),
+    },
+  });
+});
+
+/**
  * GET /jobber/requests
  * Fetch customer requests from Jobber, enriched with webhook data.
  */

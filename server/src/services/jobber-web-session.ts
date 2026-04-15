@@ -1,14 +1,17 @@
 /**
  * Jobber Web Session Service
  *
- * Authenticates with Jobber's web UI via Auth0 to access internal GraphQL fields
- * (like `requestDetails`) that aren't available through the public developer API.
+ * Uses Puppeteer to authenticate with Jobber's web UI and extract session
+ * cookies, then uses plain fetch calls with those cookies to access internal
+ * GraphQL fields (like `requestDetails`) that aren't available through the
+ * public developer API.
  *
- * The public Jobber GraphQL API doesn't expose the form submission data from
- * customer requests. The internal schema (used by the Jobber web app) has a
- * `requestDetails` field on `Request` that returns the submitted form data.
- * This service authenticates via Auth0 to get a web session and queries that field.
+ * Puppeteer only runs briefly during login (~15 seconds). The browser is
+ * closed immediately after cookies are extracted. All subsequent API calls
+ * use plain HTTP with the cached cookies until they expire.
  */
+
+import puppeteer from 'puppeteer';
 
 interface FormAnswer {
   label: string;
@@ -32,7 +35,7 @@ interface SessionState {
   expiresAt: number;
 }
 
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INTERNAL_GQL_URL = 'https://api.getjobber.com/api/graphql?location=j';
 
 const REQUEST_DETAILS_QUERY = `
@@ -66,48 +69,70 @@ export class JobberWebSession {
   private email: string;
   private password: string;
   private authenticating: Promise<string> | null = null;
-  private manualCookies: string | null = null;
-  private auth0ClientId: string;
 
   constructor() {
     this.email = process.env.JOBBER_WEB_EMAIL || '';
     this.password = process.env.JOBBER_WEB_PASSWORD || '';
-    this.auth0ClientId = process.env.JOBBER_AUTH0_CLIENT_ID || 'q9lB1bI9LPm31Q29WnuLQi3y75q7kcIQ';
   }
 
   isConfigured(): boolean {
-    return !!this.manualCookies || (!!this.email && !!this.password);
+    return (!!this.email && !!this.password) || this.hasValidSession();
   }
 
-  /**
-   * Set session cookies manually (from browser DevTools).
-   * This bypasses the Auth0 login flow entirely.
-   */
+  hasValidSession(): boolean {
+    return !!(this.session && Date.now() < this.session.expiresAt);
+  }
+
+  /** Set session cookies manually — bypasses Puppeteer login. */
   setManualCookies(cookies: string): void {
-    this.manualCookies = cookies;
     this.session = {
       cookies,
-      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     };
     console.log('JobberWebSession: Manual cookies set');
   }
 
   getManualCookiesStatus(): { configured: boolean; expiresAt: number | null } {
     return {
-      configured: !!this.session?.cookies,
+      configured: this.hasValidSession(),
       expiresAt: this.session?.expiresAt ?? null,
     };
   }
 
   /**
    * Fetch the form submission data for a Jobber request.
-   * Returns null if web session is not configured or the request has no form data.
+   * Automatically refreshes cookies via Puppeteer when expired.
    */
   async fetchRequestFormData(requestId: string): Promise<RequestFormData | null> {
     if (!this.isConfigured()) return null;
 
     try {
-      const cookies = await this.getSessionCookies();
+      const result = await this.queryInternalApi(requestId);
+      if (result.authFailed) {
+        // Auth failure — clear session and retry once with fresh cookies
+        this.session = null;
+        const retry = await this.queryInternalApi(requestId);
+        return retry.data;
+      }
+      return result.data;
+    } catch (err) {
+      console.error('JobberWebSession: Failed to fetch request form data:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Make a single attempt to query the internal Jobber API.
+   * Returns { data, authFailed } to distinguish "no data" from "auth failure".
+   */
+  private async queryInternalApi(requestId: string): Promise<{ data: RequestFormData | null; authFailed: boolean }> {
+    const cookies = await this.getSessionCookies();
+    if (!cookies) return { data: null, authFailed: true };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
       const resp = await fetch(INTERNAL_GQL_URL, {
         method: 'POST',
         headers: {
@@ -118,44 +143,31 @@ export class JobberWebSession {
           query: REQUEST_DETAILS_QUERY,
           variables: { id: requestId },
         }),
+        signal: controller.signal,
       });
 
       if (!resp.ok) {
-        // Session might be expired — if using manual cookies, don't retry (same cookies would be reused)
         if (resp.status === 401 || resp.status === 403) {
-          if (this.manualCookies) {
-            this.session = null;
-            this.manualCookies = null;
-            return null;
-          }
           this.session = null;
-          const freshCookies = await this.getSessionCookies();
-          const retryResp = await fetch(INTERNAL_GQL_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cookie': freshCookies,
-            },
-            body: JSON.stringify({
-              query: REQUEST_DETAILS_QUERY,
-              variables: { id: requestId },
-            }),
-          });
-          if (!retryResp.ok) return null;
-          return this.parseFormResponse(await retryResp.json());
+          return { data: null, authFailed: true };
         }
-        return null;
+        return { data: null, authFailed: false };
       }
 
       const respData = await resp.json() as any;
       if (respData?.errors?.length > 0) {
-        console.error('JobberWebSession: GraphQL errors:', respData.errors.map((e: any) => e.message).join(', '));
-        return null;
+        const msg = respData.errors.map((e: any) => e.message).join(', ');
+        console.error('JobberWebSession: GraphQL errors:', msg);
+        if (msg.includes('unauthenticated') || msg.includes('hidden')) {
+          this.session = null;
+          return { data: null, authFailed: true };
+        }
+        return { data: null, authFailed: false };
       }
-      return this.parseFormResponse(respData);
-    } catch (err) {
-      console.error('JobberWebSession: Failed to fetch request form data:', err);
-      return null;
+
+      return { data: this.parseFormResponse(respData), authFailed: false };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -181,7 +193,6 @@ export class JobberWebSession {
 
     if (formSections.length === 0) return null;
 
-    // Build flattened text
     const textParts: string[] = [];
     for (const section of formSections) {
       for (const answer of section.answers) {
@@ -197,18 +208,11 @@ export class JobberWebSession {
     };
   }
 
+  /**
+   * Get valid session cookies, launching Puppeteer to log in if needed.
+   */
   private async getSessionCookies(): Promise<string> {
     if (this.session && Date.now() < this.session.expiresAt) {
-      return this.session.cookies;
-    }
-
-    // If manual cookies are set, restore the session from them
-    // instead of falling through to the Auth0 authenticate flow
-    if (this.manualCookies) {
-      this.session = {
-        cookies: this.manualCookies,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-      };
       return this.session.cookies;
     }
 
@@ -217,161 +221,121 @@ export class JobberWebSession {
       return this.authenticating;
     }
 
-    this.authenticating = this.authenticate();
+    this.authenticating = this.loginAndExtractCookies();
     try {
-      const cookies = await this.authenticating;
-      return cookies;
+      return await this.authenticating;
     } finally {
       this.authenticating = null;
     }
   }
 
   /**
-   * Authenticate with Jobber via Auth0 to get session cookies.
-   * This simulates the browser login flow:
-   * 1. GET secure.getjobber.com → redirects to Auth0 login
-   * 2. POST credentials to Auth0
-   * 3. Follow redirects back to secure.getjobber.com
-   * 4. Capture the session cookies
+   * Launch a headless browser, log into Jobber, extract session cookies,
+   * then close the browser immediately.
    */
-  private async authenticate(): Promise<string> {
-    const cookieJar: Record<string, string> = {};
-    console.log('JobberWebSession: Starting Auth0 authentication flow...');
+  private async loginAndExtractCookies(): Promise<string> {
+    console.log('JobberWebSession: Launching browser to refresh session...');
+    let browser;
 
     try {
-      // Step 1: Hit secure.getjobber.com/login which redirects to Auth0
-      // Don't pass redirect_uri — let Auth0 use the default configured for the app
-      const authorizeUrl = 'https://login.auth.getjobber.com/authorize?' + new URLSearchParams({
-        response_type: 'code',
-        client_id: this.auth0ClientId,
-        scope: 'openid profile email',
-        state: crypto.randomUUID(),
-      }).toString();
+      browser = await puppeteer.launch({
+        headless: 'shell',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled',
+        ],
+      });
 
-      const authorizeResp = await fetch(authorizeUrl, { redirect: 'manual' });
-      this.captureCookies(authorizeResp, cookieJar);
-      const loginUrl = authorizeResp.headers.get('location') || '';
-      console.log('JobberWebSession: Step 1 - Authorize redirect:', loginUrl ? 'got login URL' : 'no redirect');
+      const page = await browser.newPage();
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+      );
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
 
-      if (!loginUrl) {
-        console.error('JobberWebSession: No redirect from authorize endpoint');
+      // Navigate to Jobber login
+      await page.goto('https://secure.getjobber.com/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Wait for login form
+      await page.waitForSelector('#username, input[name="email"], input[type="email"]', { timeout: 15000 });
+
+      const usernameField = await page.$('#username');
+      const usernameSelector = usernameField ? '#username' : 'input[type="email"]';
+      const passwordSelector = usernameField ? '#password' : 'input[type="password"]';
+
+      await page.type(usernameSelector, this.email, { delay: 50 });
+      await page.type(passwordSelector, this.password, { delay: 50 });
+      await page.click('button[type="submit"]');
+
+      // Wait for redirect to Jobber dashboard
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+      const url = page.url();
+      if (url.includes('login')) {
+        console.error('JobberWebSession: Login failed — still on login page');
         return '';
       }
 
-      // Resolve relative URLs against the Auth0 domain
-      const resolvedLoginUrl = loginUrl.startsWith('/') ? `https://login.auth.getjobber.com${loginUrl}` : loginUrl;
+      // Extract ALL cookies (including HttpOnly) via CDP
+      const client = await page.createCDPSession();
+      const { cookies: allCookies } = await client.send('Network.getAllCookies') as {
+        cookies: Array<{ name: string; value: string; domain: string }>;
+      };
 
-      // Step 2: GET the login page to get the state parameter
-      const loginPageResp = await fetch(resolvedLoginUrl, {
-        redirect: 'manual',
-        headers: { 'Cookie': this.buildCookieHeader(cookieJar) },
-      });
-      this.captureCookies(loginPageResp, cookieJar);
-      const html = await loginPageResp.text();
+      // Filter to Jobber-related cookies
+      const jobberCookies = allCookies.filter(c =>
+        c.domain.includes('getjobber.com') || c.domain.includes('jobber.com')
+      );
 
-      // Auth0 Universal Login puts state in hidden inputs: <input type="hidden" name="state" value="...">
-      const stateMatch = html.match(/name="state"\s+value="([^"]+)"/)
-        || html.match(/value="([^"]+)"\s+name="state"/)
-        || html.match(/name='state'\s+value='([^']+)'/)
-        || html.match(/type="hidden"[^>]*name="state"[^>]*value="([^"]+)"/);
-      const state = stateMatch?.[1] || '';
-      console.log('JobberWebSession: Step 2 - Got login form state:', state ? 'yes' : 'no');
+      const cookieString = jobberCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      console.log('JobberWebSession: Login successful, extracted', jobberCookies.length, 'cookies');
 
-      if (!state) {
-        // Try extracting state from the URL query parameter instead
-        const urlState = new URL(resolvedLoginUrl).searchParams.get('state');
-        if (urlState) {
-          console.log('JobberWebSession: Using state from URL parameter');
-          return this.authenticateWithState(urlState, loginUrl, cookieJar);
+      // Test the extracted cookies work with a plain fetch (not browser context)
+      const testController = new AbortController();
+      const testTimeout = setTimeout(() => testController.abort(), 10000);
+      try {
+        const testResp = await fetch(INTERNAL_GQL_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': cookieString,
+          },
+          body: JSON.stringify({ query: '{ __typename }' }),
+          signal: testController.signal,
+        });
+        const testData = await testResp.json() as any;
+        if (testData?.errors?.length > 0) {
+          console.error('JobberWebSession: Cookie test failed:', testData.errors[0]?.message);
+          return '';
         }
-        console.error('JobberWebSession: Could not extract Auth0 state from login form');
+      } catch (testErr) {
+        console.error('JobberWebSession: Cookie test error:', testErr instanceof Error ? testErr.message : testErr);
         return '';
+      } finally {
+        clearTimeout(testTimeout);
       }
 
-      return this.authenticateWithState(state, loginUrl, cookieJar);
+      this.session = {
+        cookies: cookieString,
+        expiresAt: Date.now() + SESSION_TTL_MS,
+      };
+
+      console.log('JobberWebSession: Session cached for', SESSION_TTL_MS / 3600000, 'hours');
+      return cookieString;
     } catch (err) {
-      console.error('JobberWebSession: Authentication failed:', err);
+      console.error('JobberWebSession: Browser login failed:', err instanceof Error ? err.message : err);
       return '';
-    }
-  }
-
-  private async authenticateWithState(state: string, loginUrl: string, cookieJar: Record<string, string>): Promise<string> {
-    // Step 3: POST credentials to Auth0
-    const postUrl = `https://login.auth.getjobber.com/u/login?state=${state}`;
-    const authResp = await fetch(postUrl, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Cookie': this.buildCookieHeader(cookieJar),
-      },
-      body: new URLSearchParams({
-        state,
-        username: this.email,
-        password: this.password,
-      }).toString(),
-    });
-    this.captureCookies(authResp, cookieJar);
-
-    // Step 4: Follow redirects back to Jobber
-    let nextUrl = authResp.headers.get('location') || '';
-    let maxRedirects = 10;
-    while (nextUrl && maxRedirects-- > 0) {
-      // Resolve relative URLs
-      if (nextUrl.startsWith('/')) {
-        nextUrl = `https://login.auth.getjobber.com${nextUrl}`;
-      }
-      console.log('JobberWebSession: Following redirect to:', nextUrl.substring(0, 80) + '...');
-      const redirectResp = await fetch(nextUrl, {
-        redirect: 'manual',
-        headers: { 'Cookie': this.buildCookieHeader(cookieJar) },
-      });
-      this.captureCookies(redirectResp, cookieJar);
-      nextUrl = redirectResp.headers.get('location') || '';
-    }
-
-    const cookies = this.buildCookieHeader(cookieJar);
-    console.log('JobberWebSession: Authentication complete. Cookie count:', Object.keys(cookieJar).length);
-
-    // Test the session
-    const testResp = await fetch(INTERNAL_GQL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': cookies,
-      },
-      body: JSON.stringify({ query: '{ __typename }' }),
-    });
-    const testData = await testResp.json() as any;
-    const testPassed = testData?.data?.__typename === 'Query';
-    console.log('JobberWebSession: Session test:', testPassed ? 'SUCCESS' : 'FAILED');
-
-    if (!testPassed) {
-      console.error('JobberWebSession: Session test failed — not caching invalid cookies');
-      return '';
-    }
-
-    this.session = {
-      cookies,
-      expiresAt: Date.now() + SESSION_TTL_MS,
-    };
-    return cookies;
-  }
-
-  private captureCookies(resp: Response, jar: Record<string, string>): void {
-    const setCookies = resp.headers.getSetCookie?.() || [];
-    for (const cookie of setCookies) {
-      const [nameValue] = cookie.split(';');
-      const eqIdx = nameValue.indexOf('=');
-      if (eqIdx > 0) {
-        const name = nameValue.substring(0, eqIdx).trim();
-        const value = nameValue.substring(eqIdx + 1).trim();
-        jar[name] = value;
+    } finally {
+      // Always close the browser
+      if (browser) {
+        try { await browser.close(); } catch { /* ignore */ }
       }
     }
-  }
-
-  private buildCookieHeader(jar: Record<string, string>): string {
-    return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
   }
 }

@@ -44,6 +44,7 @@ export default function QuoteInputPage() {
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     setJobberRequestId(request.id);
+    setFormData(null);
 
     // Fetch form data from the internal API
     try {
@@ -59,20 +60,28 @@ export default function QuoteInputPage() {
       // Fall through to fallback
     }
 
-    // Fallback to title + notes
+    // Fallback to title + description + notes
     const parts: string[] = [];
-    if (request.title) parts.push(request.title);
+    if (request.description) {
+      const trimmedDesc = request.description.trim();
+      if (trimmedDesc) {
+        parts.push(trimmedDesc);
+      }
+    }
     for (const note of request.structuredNotes) {
       const trimmed = note.message.trim();
       if (!trimmed) continue;
       const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
       parts.push(`${label} ${trimmed}`);
     }
-    setCustomerText(parts.join('\n\n') || request.title || '');
+    // Only set customer text if we have actual content beyond just the title
+    setCustomerText(parts.join('\n\n') || request.title?.trim() || '');
   };
 
   const handleRequestClear = () => {
     setJobberRequestId(null);
+    setFormData(null);
+    setCustomerText('');
   };
 
   const hasText = customerText.trim().length > 0;
@@ -165,6 +174,7 @@ export default function QuoteInputPage() {
           onSelect={handleRequestSelect}
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
+          formDataLoaded={!!formData}
         />
       )}
 
@@ -175,7 +185,7 @@ export default function QuoteInputPage() {
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
           placeholder={jobberRequestId
-            ? 'Jobber form details aren\'t available via the API — paste or type the customer\'s description here to improve quote accuracy…'
+            ? 'Loading request details… If empty, paste the customer\'s request details here.'
             : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}

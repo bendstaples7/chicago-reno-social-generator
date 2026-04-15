@@ -14,6 +14,7 @@ import QuoteInputPage from './pages/QuoteInputPage';
 import QuoteDraftPage from './pages/QuoteDraftPage';
 import QuoteDraftsListPage from './pages/QuoteDraftsListPage';
 import ManualFallbackPage from './pages/ManualFallbackPage';
+import RulesPage from './pages/RulesPage';
 
 function LegacyPostRedirect() {
   const { id } = useParams();
@@ -41,6 +42,7 @@ export default function App() {
                 <Route path="/quotes" element={<QuoteInputPage />} />
                 <Route path="/quotes/drafts" element={<QuoteDraftsListPage />} />
                 <Route path="/quotes/drafts/:id" element={<QuoteDraftPage />} />
+                <Route path="/quotes/rules" element={<RulesPage />} />
                 <Route path="/quotes/catalog" element={<ManualFallbackPage />} />
               </Route>
             </Route>

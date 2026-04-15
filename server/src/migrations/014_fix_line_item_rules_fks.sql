@@ -9,6 +9,13 @@ ALTER TABLE line_item_rules ADD CONSTRAINT line_item_rules_rule_id_fkey
 -- Convert quote_draft_id from TEXT to UUID so it can reference quote_drafts(id)
 ALTER TABLE line_item_rules ALTER COLUMN quote_draft_id TYPE UUID USING quote_draft_id::uuid;
 
+-- Clean up any orphaned rows before adding FK
+DELETE FROM line_item_rules
+WHERE quote_draft_id NOT IN (SELECT id FROM quote_drafts);
+
 -- Add FK for quote_draft_id with CASCADE
 ALTER TABLE line_item_rules ADD CONSTRAINT line_item_rules_quote_draft_id_fkey
     FOREIGN KEY (quote_draft_id) REFERENCES quote_drafts(id) ON DELETE CASCADE;
+
+-- Add unique index on group names (case-insensitive) to prevent duplicates
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_groups_name_lower ON rule_groups(LOWER(name));

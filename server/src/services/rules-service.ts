@@ -262,14 +262,27 @@ export class RulesService {
     );
     const nextOrder = Number(orderResult.rows[0].next_order);
 
-    const result = await query(
-      `INSERT INTO rule_groups (name, description, display_order)
-       VALUES ($1, $2, $3)
-       RETURNING id, name, description, display_order, created_at`,
-      [data.name.trim(), data.description?.trim() ?? null, nextOrder],
-    );
+    try {
+      const result = await query(
+        `INSERT INTO rule_groups (name, description, display_order)
+         VALUES ($1, $2, $3)
+         RETURNING id, name, description, display_order, created_at`,
+        [data.name.trim(), data.description?.trim() ?? null, nextOrder],
+      );
 
-    return this.mapGroupRow(result.rows[0]);
+      return this.mapGroupRow(result.rows[0]);
+    } catch (err: unknown) {
+      if (this.isUniqueViolation(err)) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'RulesService',
+          operation: 'createGroup',
+          description: `A group named '${data.name.trim()}' already exists.`,
+          recommendedActions: ['Choose a different name'],
+        });
+      }
+      throw err;
+    }
   }
 
   /**

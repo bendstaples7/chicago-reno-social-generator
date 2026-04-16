@@ -6,6 +6,8 @@ on:
     paths:
       - 'worker/**'
       - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
 
 jobs:
   deploy:

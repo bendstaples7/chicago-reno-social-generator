@@ -47,6 +47,7 @@ interface JobberRequestNode {
   requestStatus: string;
   createdAt: string;
   jobberWebUri: string;
+  client?: { id: string; firstName: string | null; lastName: string | null; companyName: string | null };
   notes: {
     edges: Array<{ node: { message?: string; createdAt?: string; createdBy?: { __typename: string } } }>;
   };
@@ -118,6 +119,7 @@ const REQUESTS_QUERY = `
           requestStatus
           createdAt
           jobberWebUri
+          client { id firstName lastName companyName }
           notes(first: 5) {
             edges {
               node {
@@ -378,10 +380,16 @@ export class JobberIntegration {
             };
           });
 
+        const clientDetail = r.client;
+        const clientName = r.companyName
+          || r.contactName
+          || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+          || 'Unknown';
+
         return {
           id: r.id,
           title: r.title || 'Untitled Request',
-          clientName: r.companyName || r.contactName || 'Unknown',
+          clientName,
           description: r.notes.edges[0]?.node?.message || '',
           notes: r.notes.edges
             .map((e) => e.node?.message)

@@ -1,4 +1,5 @@
 import { ActivityLogService } from './activity-log-service.js';
+import type { JobberTokenStore } from './jobber-token-store.js';
 import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
 
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -43,6 +44,7 @@ interface JobberRequestNode {
   requestStatus: string;
   createdAt: string;
   jobberWebUri: string;
+  client?: { id: string; firstName: string | null; lastName: string | null; companyName: string | null };
   notes: {
     edges: Array<{ node: { message?: string; createdAt?: string; createdBy?: { __typename: string } } }>;
   };
@@ -114,6 +116,7 @@ const REQUESTS_QUERY = `
           requestStatus
           createdAt
           jobberWebUri
+          client { id firstName lastName companyName }
           notes(first: 5) {
             edges {
               node {
@@ -162,6 +165,7 @@ export class JobberIntegration {
   private accessToken: string;
   private refreshToken: string;
   private apiUrl: string;
+  private tokenStore: JobberTokenStore | null;
 
   constructor(
     activityLog: ActivityLogService,
@@ -172,6 +176,7 @@ export class JobberIntegration {
       refreshToken?: string;
       apiUrl?: string;
       cacheTtlMs?: number;
+      tokenStore?: JobberTokenStore;
     },
   ) {
     this.activityLog = activityLog;
@@ -181,6 +186,24 @@ export class JobberIntegration {
     this.refreshToken = opts.refreshToken || '';
     this.apiUrl = opts.apiUrl || 'https://api.getjobber.com/api/graphql';
     this.cacheTtlMs = opts.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.tokenStore = opts.tokenStore ?? null;
+  }
+
+  /**
+   * Load the latest tokens from D1 if a token store is configured.
+   * Call this before making API requests to ensure we have the freshest tokens.
+   */
+  async loadPersistedTokens(): Promise<void> {
+    if (!this.tokenStore) return;
+    try {
+      const stored = await this.tokenStore.load();
+      if (stored) {
+        this.accessToken = stored.accessToken;
+        this.refreshToken = stored.refreshToken;
+      }
+    } catch {
+      // Fall back to env tokens
+    }
   }
 
   /**
@@ -307,10 +330,16 @@ export class JobberIntegration {
             };
           });
 
+        const clientDetail = r.client;
+        const clientName = r.companyName
+          || r.contactName
+          || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+          || 'Unknown';
+
         return {
           id: r.id,
           title: r.title || 'Untitled Request',
-          clientName: r.companyName || r.contactName || 'Unknown',
+          clientName,
           description: r.notes.edges[0]?.node?.message || '',
           notes: r.notes.edges
             .map((e) => e.node?.message)
@@ -488,6 +517,11 @@ export class JobberIntegration {
       // If refresh token rotation is enabled, Jobber returns a new refresh token
       if (data.refresh_token) {
         this.refreshToken = data.refresh_token;
+      }
+
+      // Persist refreshed tokens to D1 so they survive cold starts
+      if (this.tokenStore) {
+        await this.tokenStore.save(this.accessToken, this.refreshToken);
       }
 
       console.log('[JobberIntegration] Access token refreshed successfully');

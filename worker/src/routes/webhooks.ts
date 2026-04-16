@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
 import { JobberWebhookService, type JobberWebhookPayload } from '../services/jobber-webhook-service.js';
+import { JobberTokenStore } from '../services/jobber-token-store.js';
 import { ActivityLogService } from '../services/index.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -16,10 +17,15 @@ app.post('/jobber', async (c) => {
   const signature = c.req.header('x-jobber-hmac-sha256') || '';
 
   const activityLog = new ActivityLogService(c.env.DB);
+  const tokenStore = new JobberTokenStore(c.env.DB);
   const webhookService = new JobberWebhookService(c.env.DB, activityLog, {
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    clientId: c.env.JOBBER_CLIENT_ID || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
+    tokenStore,
   });
+  await webhookService.loadPersistedTokens();
 
   // Verify HMAC signature
   if (c.env.JOBBER_CLIENT_SECRET) {
@@ -76,10 +82,15 @@ app.post('/backfill', async (c) => {
   } catch { /* table may not exist yet, proceed */ }
 
   const activityLog = new ActivityLogService(db);
+  const tokenStore = new JobberTokenStore(db);
   const webhookService = new JobberWebhookService(db, activityLog, {
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    clientId: c.env.JOBBER_CLIENT_ID || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
+    tokenStore,
   });
+  await webhookService.loadPersistedTokens();
 
   const result = await webhookService.backfillFromApi(c.env.JOBBER_ACCESS_TOKEN || '');
   return c.json({ message: 'Backfill complete', ...result });

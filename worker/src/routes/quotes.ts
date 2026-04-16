@@ -419,6 +419,8 @@ app.get('/jobber/requests', async (c) => {
     const webhookService = new JobberWebhookService(db, activityLog, {
       accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
       clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+      clientId: c.env.JOBBER_CLIENT_ID || '',
+      refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
     });
     const webhookRequests = await webhookService.getWebhookRequests();
     const apiIds = new Set(requests.map((r) => r.id));

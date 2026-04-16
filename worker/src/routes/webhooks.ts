@@ -19,6 +19,8 @@ app.post('/jobber', async (c) => {
   const webhookService = new JobberWebhookService(c.env.DB, activityLog, {
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    clientId: c.env.JOBBER_CLIENT_ID || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
   });
 
   // Verify HMAC signature
@@ -79,6 +81,8 @@ app.post('/backfill', async (c) => {
   const webhookService = new JobberWebhookService(db, activityLog, {
     accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
     clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+    clientId: c.env.JOBBER_CLIENT_ID || '',
+    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
   });
 
   const result = await webhookService.backfillFromApi(c.env.JOBBER_ACCESS_TOKEN || '');

@@ -16,7 +16,7 @@ const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
 // ── Helper: create a JobberIntegration with D1-persisted tokens ──
 
-async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{ jobberIntegration: JobberIntegration; tokenStore: JobberTokenStore }> {
+async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{ jobberIntegration: JobberIntegration; tokenStore: JobberTokenStore; activityLog: ActivityLogService }> {
   const activityLog = new ActivityLogService(db);
   const tokenStore = new JobberTokenStore(db);
   const jobberIntegration = new JobberIntegration(activityLog, {
@@ -28,7 +28,7 @@ async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{
     tokenStore,
   });
   await jobberIntegration.loadPersistedTokens();
-  return { jobberIntegration, tokenStore };
+  return { jobberIntegration, tokenStore, activityLog };
 }
 
 app.use('*', sessionMiddleware);
@@ -394,8 +394,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
  */
 app.get('/jobber/requests', async (c) => {
   const db = c.env.DB;
-  const { jobberIntegration, tokenStore } = await createJobberIntegration(db, c.env);
-  const activityLog = new ActivityLogService(db);
+  const { jobberIntegration, tokenStore, activityLog } = await createJobberIntegration(db, c.env);
 
   let requests: JobberCustomerRequest[] = [];
   let available = false;

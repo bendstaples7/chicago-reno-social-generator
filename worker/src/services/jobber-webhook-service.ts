@@ -31,6 +31,7 @@ interface RequestDetail {
   requestStatus: string;
   createdAt: string;
   jobberWebUri: string;
+  client?: { id: string; firstName: string | null; lastName: string | null; companyName: string | null } | null;
   notes: {
     edges: Array<{
       node: {
@@ -122,8 +123,8 @@ export class JobberWebhookService {
         this.accessToken = stored.accessToken;
         this.refreshToken = stored.refreshToken;
       }
-    } catch {
-      // Fall back to env tokens
+    } catch (err) {
+      console.warn('[WebhookService] Failed to load persisted tokens, falling back to env:', err);
     }
   }
 
@@ -166,20 +167,7 @@ export class JobberWebhookService {
         return;
       }
 
-      const imageUrls = (detail.noteAttachments?.edges ?? [])
-        .filter((e) => e.node.contentType.startsWith('image/'))
-        .map((e) => e.node.url);
-
-      const description = detail.notes.edges
-        .map((e) => e.node?.message)
-        .filter((m): m is string => !!m)
-        .join('\n\n');
-
-      const clientDetail = (detail as any).client;
-      const clientName = detail.companyName
-        || detail.contactName
-        || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
-        || null;
+      const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
 
       await this.storeWebhookData(itemId, topic, accountId, {
         title: detail.title,
@@ -191,6 +179,29 @@ export class JobberWebhookService {
     } catch (err) {
       console.error('Webhook processing error:', err);
     }
+  }
+
+  /**
+   * Extract image URLs, description, and client name from a RequestDetail.
+   * Shared by processWebhook, backfill-on-read, and backfillFromApi.
+   */
+  private parseRequestDetail(detail: RequestDetail): { imageUrls: string[]; description: string; clientName: string | null } {
+    const imageUrls = (detail.noteAttachments?.edges ?? [])
+      .filter((e) => e.node.contentType.startsWith('image/'))
+      .map((e) => e.node.url);
+
+    const description = detail.notes.edges
+      .map((e) => e.node?.message)
+      .filter((m): m is string => !!m)
+      .join('\n\n');
+
+    const clientDetail = detail.client;
+    const clientName = detail.companyName
+      || detail.contactName
+      || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+      || null;
+
+    return { imageUrls, description, clientName };
   }
 
   private async fetchRequestDetail(requestId: string): Promise<RequestDetail | null> {
@@ -262,6 +273,12 @@ export class JobberWebhookService {
       }
 
       const data = (await response.json()) as { access_token: string; refresh_token?: string };
+
+      if (!data.access_token) {
+        console.error('[WebhookService] Token refresh response missing access_token');
+        return false;
+      }
+
       this.accessToken = data.access_token;
       if (data.refresh_token) {
         this.refreshToken = data.refresh_token;
@@ -269,7 +286,11 @@ export class JobberWebhookService {
 
       // Persist refreshed tokens to D1 so they survive cold starts
       if (this.tokenStore) {
-        await this.tokenStore.save(this.accessToken, this.refreshToken);
+        try {
+          await this.tokenStore.save(this.accessToken, this.refreshToken);
+        } catch (err) {
+          console.error('[WebhookService] Token refresh succeeded but failed to persist to D1:', err);
+        }
       }
 
       console.log('[WebhookService] Access token refreshed successfully');
@@ -352,18 +373,7 @@ export class JobberWebhookService {
           const detail = await this.fetchRequestDetail(id);
           if (!detail) continue;
 
-          const imageUrls = (detail.noteAttachments?.edges ?? [])
-            .filter((e) => e.node.contentType.startsWith('image/'))
-            .map((e) => e.node.url);
-          const description = detail.notes.edges
-            .map((e) => e.node?.message)
-            .filter((m): m is string => !!m)
-            .join('\n\n');
-          const clientDetail = (detail as any).client;
-          const clientName = detail.companyName
-            || detail.contactName
-            || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
-            || null;
+          const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
 
           // Update the existing row with full detail
           await this.db.prepare(
@@ -389,8 +399,8 @@ export class JobberWebhookService {
             row.request_body = JSON.stringify(detail);
             row.image_urls = JSON.stringify(imageUrls);
           }
-        } catch {
-          // Best-effort — skip this one
+        } catch (err) {
+          console.warn(`[WebhookService] Backfill-on-read failed for ${id}:`, err);
         }
       }
     }

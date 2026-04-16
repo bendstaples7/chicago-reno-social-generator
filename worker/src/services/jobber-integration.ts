@@ -512,6 +512,12 @@ export class JobberIntegration {
       }
 
       const data = (await response.json()) as { access_token: string; refresh_token?: string };
+
+      if (!data.access_token) {
+        console.error('[JobberIntegration] Token refresh response missing access_token');
+        return false;
+      }
+
       this.accessToken = data.access_token;
 
       // If refresh token rotation is enabled, Jobber returns a new refresh token
@@ -521,7 +527,11 @@ export class JobberIntegration {
 
       // Persist refreshed tokens to D1 so they survive cold starts
       if (this.tokenStore) {
-        await this.tokenStore.save(this.accessToken, this.refreshToken);
+        try {
+          await this.tokenStore.save(this.accessToken, this.refreshToken);
+        } catch (err) {
+          console.error('[JobberIntegration] Token refresh succeeded but failed to persist to D1:', err);
+        }
       }
 
       console.log('[JobberIntegration] Access token refreshed successfully');

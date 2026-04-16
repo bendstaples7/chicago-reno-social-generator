@@ -4,6 +4,11 @@ import type { JobberCustomerRequest } from 'shared';
 
 const JOBBER_GRAPHQL_URL = 'https://api.getjobber.com/api/graphql';
 
+/** Thrown when the Jobber API returns 401, signalling the access token has expired. */
+class TokenExpiredError extends Error {
+  constructor() { super('Jobber access token expired'); }
+}
+
 export interface JobberWebhookPayload {
   data: {
     webHookEvent: {
@@ -191,41 +196,43 @@ export class JobberWebhookService {
   private async fetchRequestDetail(requestId: string): Promise<RequestDetail | null> {
     if (!this.accessToken) return null;
 
-    const attempt = async (): Promise<RequestDetail | null> => {
-      const res = await fetch(JOBBER_GRAPHQL_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.accessToken}`,
-          'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
-        },
-        body: JSON.stringify({
-          query: REQUEST_DETAIL_QUERY,
-          variables: { id: requestId },
-        }),
-      });
-
-      if (res.status === 401) return undefined as any; // signal to retry
-      if (!res.ok) return null;
-      const json = await res.json() as { data?: { request?: RequestDetail } };
-      return json.data?.request ?? null;
-    };
-
     try {
-      const first = await attempt();
-      // undefined signals a 401 — try refreshing the token and retry once
-      if (first === undefined && this.refreshToken) {
+      const result = await this.attemptFetchDetail(requestId);
+      return result;
+    } catch (err) {
+      // Token expired — try refreshing and retry once
+      if (err instanceof TokenExpiredError && this.refreshToken) {
         const refreshed = await this.refreshAccessToken();
         if (refreshed) {
-          const retry = await attempt();
-          return retry === undefined ? null : retry;
+          try {
+            return await this.attemptFetchDetail(requestId);
+          } catch {
+            return null;
+          }
         }
-        return null;
       }
-      return first;
-    } catch {
       return null;
     }
+  }
+
+  private async attemptFetchDetail(requestId: string): Promise<RequestDetail | null> {
+    const res = await fetch(JOBBER_GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.accessToken}`,
+        'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
+      },
+      body: JSON.stringify({
+        query: REQUEST_DETAIL_QUERY,
+        variables: { id: requestId },
+      }),
+    });
+
+    if (res.status === 401) throw new TokenExpiredError();
+    if (!res.ok) return null;
+    const json = await res.json() as { data?: { request?: RequestDetail } };
+    return json.data?.request ?? null;
   }
 
   /**
@@ -332,10 +339,12 @@ export class JobberWebhookService {
 
     // Backfill on read: for rows missing request_body, try fetching detail now.
     // This handles cases where the initial webhook processing failed (e.g., expired token).
+    // Limit to 5 per request to avoid slow responses when many rows are incomplete.
     const rows = result.results as any[];
     const incompleteIds = rows
       .filter((r) => !r.request_body)
-      .map((r) => r.jobber_request_id as string);
+      .map((r) => r.jobber_request_id as string)
+      .slice(0, 5);
 
     if (incompleteIds.length > 0 && this.accessToken) {
       for (const id of incompleteIds) {

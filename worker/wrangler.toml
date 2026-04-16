@@ -11,6 +11,7 @@ migrations_dir = "src/migrations"
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "chicago-reno-media"
+preview_bucket_name = "chicago-reno-media-preview"
 
 [[queues.producers]]
 binding = "IMAGE_QUEUE"

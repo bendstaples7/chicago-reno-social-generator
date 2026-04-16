@@ -1,7 +1,13 @@
 import { ActivityLogService } from './activity-log-service.js';
+import type { JobberTokenStore } from './jobber-token-store.js';
 import type { JobberCustomerRequest } from 'shared';
 
 const JOBBER_GRAPHQL_URL = 'https://api.getjobber.com/api/graphql';
+
+/** Thrown when the Jobber API returns 401, signalling the access token has expired. */
+class TokenExpiredError extends Error {
+  constructor() { super('Jobber access token expired'); }
+}
 
 export interface JobberWebhookPayload {
   data: {
@@ -25,6 +31,7 @@ interface RequestDetail {
   requestStatus: string;
   createdAt: string;
   jobberWebUri: string;
+  client?: { id: string; firstName: string | null; lastName: string | null; companyName: string | null } | null;
   notes: {
     edges: Array<{
       node: {
@@ -85,12 +92,40 @@ export class JobberWebhookService {
   private activityLog: ActivityLogService;
   private accessToken: string;
   private clientSecret: string;
+  private clientId: string;
+  private refreshToken: string;
+  private tokenStore: JobberTokenStore | null;
 
-  constructor(db: D1Database, activityLog: ActivityLogService, opts: { accessToken: string; clientSecret: string }) {
+  constructor(db: D1Database, activityLog: ActivityLogService, opts: {
+    accessToken: string;
+    clientSecret: string;
+    clientId?: string;
+    refreshToken?: string;
+    tokenStore?: JobberTokenStore;
+  }) {
     this.db = db;
     this.activityLog = activityLog;
     this.accessToken = opts.accessToken;
     this.clientSecret = opts.clientSecret;
+    this.clientId = opts.clientId || '';
+    this.refreshToken = opts.refreshToken || '';
+    this.tokenStore = opts.tokenStore ?? null;
+  }
+
+  /**
+   * Load the latest tokens from D1 if a token store is configured.
+   */
+  async loadPersistedTokens(): Promise<void> {
+    if (!this.tokenStore) return;
+    try {
+      const stored = await this.tokenStore.load();
+      if (stored) {
+        this.accessToken = stored.accessToken;
+        this.refreshToken = stored.refreshToken;
+      }
+    } catch (err) {
+      console.warn('[WebhookService] Failed to load persisted tokens, falling back to env:', err);
+    }
   }
 
   /**
@@ -132,20 +167,7 @@ export class JobberWebhookService {
         return;
       }
 
-      const imageUrls = (detail.noteAttachments?.edges ?? [])
-        .filter((e) => e.node.contentType.startsWith('image/'))
-        .map((e) => e.node.url);
-
-      const description = detail.notes.edges
-        .map((e) => e.node?.message)
-        .filter((m): m is string => !!m)
-        .join('\n\n');
-
-      const clientDetail = (detail as any).client;
-      const clientName = detail.companyName
-        || detail.contactName
-        || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
-        || null;
+      const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
 
       await this.storeWebhookData(itemId, topic, accountId, {
         title: detail.title,
@@ -159,28 +181,123 @@ export class JobberWebhookService {
     }
   }
 
+  /**
+   * Extract image URLs, description, and client name from a RequestDetail.
+   * Shared by processWebhook, backfill-on-read, and backfillFromApi.
+   */
+  private parseRequestDetail(detail: RequestDetail): { imageUrls: string[]; description: string; clientName: string | null } {
+    const imageUrls = (detail.noteAttachments?.edges ?? [])
+      .filter((e) => e.node.contentType.startsWith('image/'))
+      .map((e) => e.node.url);
+
+    const description = detail.notes.edges
+      .map((e) => e.node?.message)
+      .filter((m): m is string => !!m)
+      .join('\n\n');
+
+    const clientDetail = detail.client;
+    const clientName = detail.companyName
+      || detail.contactName
+      || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+      || null;
+
+    return { imageUrls, description, clientName };
+  }
+
   private async fetchRequestDetail(requestId: string): Promise<RequestDetail | null> {
     if (!this.accessToken) return null;
 
     try {
-      const res = await fetch(JOBBER_GRAPHQL_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.accessToken}`,
-          'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
-        },
-        body: JSON.stringify({
-          query: REQUEST_DETAIL_QUERY,
-          variables: { id: requestId },
-        }),
+      const result = await this.attemptFetchDetail(requestId);
+      return result;
+    } catch (err) {
+      // Token expired — try refreshing and retry once
+      if (err instanceof TokenExpiredError && this.refreshToken) {
+        const refreshed = await this.refreshAccessToken();
+        if (refreshed) {
+          try {
+            return await this.attemptFetchDetail(requestId);
+          } catch {
+            return null;
+          }
+        }
+      }
+      return null;
+    }
+  }
+
+  private async attemptFetchDetail(requestId: string): Promise<RequestDetail | null> {
+    const res = await fetch(JOBBER_GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.accessToken}`,
+        'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
+      },
+      body: JSON.stringify({
+        query: REQUEST_DETAIL_QUERY,
+        variables: { id: requestId },
+      }),
+    });
+
+    if (res.status === 401) throw new TokenExpiredError();
+    if (!res.ok) return null;
+    const json = await res.json() as { data?: { request?: RequestDetail } };
+    return json.data?.request ?? null;
+  }
+
+  /**
+   * Refresh the Jobber access token using the OAuth refresh token.
+   * Updates the in-memory token for subsequent calls within this request.
+   */
+  private async refreshAccessToken(): Promise<boolean> {
+    if (!this.clientId || !this.clientSecret || !this.refreshToken) return false;
+
+    try {
+      const body = new URLSearchParams({
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: this.refreshToken,
       });
 
-      if (!res.ok) return null;
-      const json = await res.json() as { data?: { request?: RequestDetail } };
-      return json.data?.request ?? null;
-    } catch {
-      return null;
+      const response = await fetch('https://api.getjobber.com/api/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        console.error(`[WebhookService] Token refresh failed (${response.status})`);
+        return false;
+      }
+
+      const data = (await response.json()) as { access_token: string; refresh_token?: string };
+
+      if (!data.access_token) {
+        console.error('[WebhookService] Token refresh response missing access_token');
+        return false;
+      }
+
+      this.accessToken = data.access_token;
+      if (data.refresh_token) {
+        this.refreshToken = data.refresh_token;
+      }
+
+      // Persist refreshed tokens to D1 so they survive cold starts
+      if (this.tokenStore) {
+        try {
+          await this.tokenStore.save(this.accessToken, this.refreshToken);
+        } catch (err) {
+          console.error('[WebhookService] Token refresh succeeded but failed to persist to D1:', err);
+        }
+      }
+
+      console.log('[WebhookService] Access token refreshed successfully');
+      return true;
+    } catch (err) {
+      console.error('[WebhookService] Token refresh error:', err);
+      return false;
     }
   }
 
@@ -241,7 +358,54 @@ export class JobberWebhookService {
        ORDER BY w.received_at DESC`
     ).all();
 
-    return (result.results as any[]).map((row): JobberCustomerRequest | null => {
+    // Backfill on read: for rows missing request_body, try fetching detail now.
+    // This handles cases where the initial webhook processing failed (e.g., expired token).
+    // Limit to 5 per request to avoid slow responses when many rows are incomplete.
+    const rows = result.results as any[];
+    const incompleteIds = rows
+      .filter((r) => !r.request_body)
+      .map((r) => r.jobber_request_id as string)
+      .slice(0, 5);
+
+    if (incompleteIds.length > 0 && this.accessToken) {
+      for (const id of incompleteIds) {
+        try {
+          const detail = await this.fetchRequestDetail(id);
+          if (!detail) continue;
+
+          const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
+
+          // Update the existing row with full detail
+          await this.db.prepare(
+            `UPDATE jobber_webhook_requests
+             SET title = ?, client_name = ?, description = ?, request_body = ?, image_urls = ?, processed_at = ?
+             WHERE jobber_request_id = ? AND request_body IS NULL`
+          ).bind(
+            detail.title ?? null,
+            clientName,
+            description || null,
+            JSON.stringify(detail),
+            JSON.stringify(imageUrls),
+            new Date().toISOString(),
+            id,
+          ).run();
+
+          // Update the in-memory row so we don't need to re-query
+          const row = rows.find((r) => r.jobber_request_id === id);
+          if (row) {
+            row.title = detail.title;
+            row.client_name = clientName;
+            row.description = description;
+            row.request_body = JSON.stringify(detail);
+            row.image_urls = JSON.stringify(imageUrls);
+          }
+        } catch (err) {
+          console.warn(`[WebhookService] Backfill-on-read failed for ${id}:`, err);
+        }
+      }
+    }
+
+    return rows.map((row): JobberCustomerRequest | null => {
       let structuredNotes: { message: string; createdBy: 'team' | 'client' | 'system'; createdAt: string }[] = [];
       let imageUrls: string[] = [];
 

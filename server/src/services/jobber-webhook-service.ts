@@ -254,7 +254,56 @@ export class JobberWebhookService {
        ORDER BY jobber_request_id, processed_at DESC NULLS LAST, received_at DESC`,
     );
 
-    return result.rows.map((row: Record<string, unknown>): JobberCustomerRequest | null => {
+    // Backfill on read: for rows missing request_body, try fetching detail now.
+    // Limit to 5 per request to avoid slow responses when many rows are incomplete.
+    const rows = result.rows as Array<Record<string, unknown>>;
+    const incompleteIds = rows
+      .filter((r) => !r.request_body)
+      .map((r) => r.jobber_request_id as string)
+      .slice(0, 5);
+
+    if (incompleteIds.length > 0 && process.env.JOBBER_ACCESS_TOKEN) {
+      for (const id of incompleteIds) {
+        try {
+          const detail = await this.fetchRequestDetail(id);
+          if (!detail) continue;
+
+          const imageUrls = (detail.noteAttachments?.edges ?? [])
+            .filter((e) => e.node.contentType.startsWith('image/'))
+            .map((e) => e.node.url);
+          const description = detail.notes.edges
+            .map((e) => e.node?.message)
+            .filter((m): m is string => !!m)
+            .join('\n\n');
+          const clientDetail = detail.client;
+          const clientName = detail.companyName
+            || detail.contactName
+            || (clientDetail ? `${clientDetail.firstName || ''} ${clientDetail.lastName || ''}`.trim() || clientDetail.companyName : null)
+            || null;
+
+          await dbQuery(
+            `UPDATE jobber_webhook_requests
+             SET title = $1, client_name = $2, description = $3, request_body = $4, image_urls = $5, processed_at = NOW()
+             WHERE jobber_request_id = $6 AND request_body IS NULL`,
+            [detail.title ?? null, clientName, description || null, JSON.stringify(detail), JSON.stringify(imageUrls), id],
+          );
+
+          // Update the in-memory row so we don't need to re-query
+          const row = rows.find((r) => r.jobber_request_id === id);
+          if (row) {
+            row.title = detail.title;
+            row.client_name = clientName;
+            row.description = description;
+            row.request_body = JSON.stringify(detail);
+            row.image_urls = imageUrls;
+          }
+        } catch {
+          // Best-effort — skip this one
+        }
+      }
+    }
+
+    return rows.map((row: Record<string, unknown>): JobberCustomerRequest | null => {
       let structuredNotes: { message: string; createdBy: 'team' | 'client' | 'system'; createdAt: string }[] = [];
       let imageUrls: string[] = [];
 

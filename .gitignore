@@ -34,3 +34,6 @@ worker/.wrangler/
 # Kiro local config
 .kiro/hooks/
 .kiro/settings/
+
+# Worker local secrets
+.dev.vars

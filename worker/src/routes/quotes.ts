@@ -10,8 +10,26 @@ import {
   ActivityLogService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
+import { JobberTokenStore } from '../services/jobber-token-store.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
+
+// ── Helper: create a JobberIntegration with D1-persisted tokens ──
+
+async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{ jobberIntegration: JobberIntegration; tokenStore: JobberTokenStore; activityLog: ActivityLogService }> {
+  const activityLog = new ActivityLogService(db);
+  const tokenStore = new JobberTokenStore(db);
+  const jobberIntegration = new JobberIntegration(activityLog, {
+    clientId: env.JOBBER_CLIENT_ID || '',
+    clientSecret: env.JOBBER_CLIENT_SECRET || '',
+    accessToken: env.JOBBER_ACCESS_TOKEN || '',
+    refreshToken: env.JOBBER_REFRESH_TOKEN || '',
+    apiUrl: env.JOBBER_API_URL || undefined,
+    tokenStore,
+  });
+  await jobberIntegration.loadPersistedTokens();
+  return { jobberIntegration, tokenStore, activityLog };
+}
 
 app.use('*', sessionMiddleware);
 
@@ -72,14 +90,7 @@ app.post('/generate', async (c) => {
     });
   }
 
-  const activityLog = new ActivityLogService(db);
-  const jobberIntegration = new JobberIntegration(activityLog, {
-    clientId: c.env.JOBBER_CLIENT_ID || '',
-    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
-    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
-    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
-    apiUrl: c.env.JOBBER_API_URL || undefined,
-  });
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
   const quoteEngine = new QuoteEngine(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
   const quoteDraftService = new QuoteDraftService(db);
 
@@ -180,14 +191,7 @@ app.delete('/drafts/:id', async (c) => {
 app.get('/catalog', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
-  const activityLog = new ActivityLogService(db);
-  const jobberIntegration = new JobberIntegration(activityLog, {
-    clientId: c.env.JOBBER_CLIENT_ID || '',
-    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
-    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
-    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
-    apiUrl: c.env.JOBBER_API_URL || undefined,
-  });
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
 
   let catalog: ProductCatalogEntry[];
   if (jobberIntegration.isAvailable()) {
@@ -252,14 +256,7 @@ app.post('/catalog', async (c) => {
 app.get('/templates', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
-  const activityLog = new ActivityLogService(db);
-  const jobberIntegration = new JobberIntegration(activityLog, {
-    clientId: c.env.JOBBER_CLIENT_ID || '',
-    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
-    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
-    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
-    apiUrl: c.env.JOBBER_API_URL || undefined,
-  });
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
 
   let templates: QuoteTemplate[];
   if (jobberIntegration.isAvailable()) {
@@ -397,14 +394,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
  */
 app.get('/jobber/requests', async (c) => {
   const db = c.env.DB;
-  const activityLog = new ActivityLogService(db);
-  const jobberIntegration = new JobberIntegration(activityLog, {
-    clientId: c.env.JOBBER_CLIENT_ID || '',
-    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
-    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
-    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
-    apiUrl: c.env.JOBBER_API_URL || undefined,
-  });
+  const { jobberIntegration, tokenStore, activityLog } = await createJobberIntegration(db, c.env);
 
   let requests: JobberCustomerRequest[] = [];
   let available = false;
@@ -419,7 +409,11 @@ app.get('/jobber/requests', async (c) => {
     const webhookService = new JobberWebhookService(db, activityLog, {
       accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
       clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+      clientId: c.env.JOBBER_CLIENT_ID || '',
+      refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
+      tokenStore,
     });
+    await webhookService.loadPersistedTokens();
     const webhookRequests = await webhookService.getWebhookRequests();
     const apiIds = new Set(requests.map((r) => r.id));
 
@@ -456,14 +450,7 @@ app.get('/jobber/requests', async (c) => {
  */
 app.get('/jobber/status', async (c) => {
   const db = c.env.DB;
-  const activityLog = new ActivityLogService(db);
-  const jobberIntegration = new JobberIntegration(activityLog, {
-    clientId: c.env.JOBBER_CLIENT_ID || '',
-    clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
-    accessToken: c.env.JOBBER_ACCESS_TOKEN || '',
-    refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
-    apiUrl: c.env.JOBBER_API_URL || undefined,
-  });
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
 
   let webhookActive = false;
   try {

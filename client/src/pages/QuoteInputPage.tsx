@@ -188,6 +188,7 @@ export default function QuoteInputPage() {
           onSelect={handleRequestSelect}
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
+          formData={formData}
           formDataLoaded={!!formData}
           loadingFormData={loadingFormData}
         />

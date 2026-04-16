@@ -1,6 +1,7 @@
 name = "social-media-cross-poster"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
+account_id = "bb32e3131a6d41a35dc00b65e86287fd"
 
 [[d1_databases]]
 binding = "DB"

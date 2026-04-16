@@ -29,7 +29,7 @@ export class JobberTokenStore {
     } catch (err) {
       // Table may not exist yet (migration not applied) — treat as empty
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table') || message.includes('SQLITE_ERROR')) {
+      if (message.includes('no such table')) {
         return null;
       }
       // Real D1 failure — let caller handle it

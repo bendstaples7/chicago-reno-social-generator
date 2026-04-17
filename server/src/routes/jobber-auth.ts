@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve } from 'path';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { jobberIntegration } from './quotes.js';
 
 const router = Router();
 
@@ -74,7 +75,10 @@ router.get('/callback', async (req, res) => {
       refresh_token: string;
     };
 
-    // Persist tokens to .env (append if keys don't exist)
+    // BACKWARD COMPAT: Persist tokens to .env as a fallback seed for first-run scenarios.
+    // The database (via JobberTokenStore) is the primary durable store and is always
+    // preferred on startup. This .env write should be removed once DB persistence is
+    // fully validated in production.
     const envPath = resolve(import.meta.dirname, '../../.env');
     let envContent = '';
     try {
@@ -104,6 +108,14 @@ router.get('/callback', async (req, res) => {
       await tokenStore.save(data.access_token, data.refresh_token);
     } catch (dbErr) {
       console.error('[jobber-auth] Failed to persist tokens to database:', dbErr);
+    }
+
+    // Reload tokens into the long-lived JobberIntegration singleton
+    // so it picks up the new tokens without waiting for the next refresh cycle.
+    try {
+      await jobberIntegration.reloadTokens();
+    } catch {
+      // Best-effort — the next API call will pick them up via ensureInitialized
     }
 
     res.send(

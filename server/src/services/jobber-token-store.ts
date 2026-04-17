@@ -25,11 +25,11 @@ export class JobberTokenStore {
       return { accessToken: row.access_token, refreshToken: row.refresh_token };
     } catch (err) {
       // Table may not exist yet (migration not applied) — treat as empty
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('does not exist')) {
+      if ((err as any)?.code === '42P01') {
         return null;
       }
       // Log but don't throw — caller will fall back to .env
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[JobberTokenStore] Failed to load tokens from DB:', message);
       return null;
     }
@@ -51,8 +51,7 @@ export class JobberTokenStore {
         [accessToken, refreshToken],
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('does not exist')) {
+      if ((err as any)?.code === '42P01') {
         console.warn('[JobberTokenStore] jobber_tokens table not found — migration may not be applied yet');
         return;
       }

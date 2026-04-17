@@ -230,6 +230,17 @@ export class JobberIntegration {
     this.customerRequestsCache = null;
   }
 
+  /**
+   * Reload tokens from the database. Call after an external OAuth reauth
+   * so the long-lived singleton picks up the newly persisted tokens.
+   */
+  async reloadTokens(): Promise<void> {
+    this.initialized = false;
+    this.initPromise = null;
+    this.invalidateCache();
+    await this.ensureInitialized();
+  }
+
   // ── Product Catalog ──────────────────────────────────────────────
 
   /**
@@ -658,15 +669,18 @@ export class JobberIntegration {
         this.refreshToken = data.refresh_token;
       }
 
-      // Persist new tokens to PostgreSQL so they survive server restarts
+      // Persist new tokens to PostgreSQL so they survive server restarts.
+      // If persistence fails, the old refresh token is already invalidated by Jobber,
+      // so we must treat this as a failed refresh to avoid silent token loss on restart.
       try {
         await this.tokenStore.save(this.accessToken, this.refreshToken);
         console.log('[JobberIntegration] Tokens persisted to database');
       } catch (dbErr) {
-        console.error('[JobberIntegration] Failed to persist tokens to database:', dbErr);
-        // Tokens are still valid in memory for this session, but will be lost on restart.
-        // This is a critical issue — log it prominently.
-        console.error('[JobberIntegration] WARNING: Token persistence failed. Tokens will be lost on server restart.');
+        console.error('[JobberIntegration] CRITICAL: Token persistence failed after successful refresh.', dbErr);
+        console.error('[JobberIntegration] Tokens are valid in memory but will be lost on server restart.');
+        // Return false so callers know the refresh is not durably persisted.
+        // The in-memory tokens still work for this session.
+        return false;
       }
 
       console.log('[JobberIntegration] Access token refreshed successfully');

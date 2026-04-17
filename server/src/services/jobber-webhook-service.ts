@@ -276,7 +276,7 @@ export class JobberWebhookService {
       .map((r) => r.jobber_request_id as string)
       .slice(0, 5);
 
-    if (incompleteIds.length > 0 && process.env.JOBBER_ACCESS_TOKEN) {
+    if (incompleteIds.length > 0) {
       for (const id of incompleteIds) {
         try {
           const detail = await this.fetchRequestDetail(id);

@@ -1098,4 +1098,5 @@ async function fetchManualTemplates(userId: string): Promise<QuoteTemplate[]> {
   }));
 }
 
+export { jobberIntegration };
 export default router;

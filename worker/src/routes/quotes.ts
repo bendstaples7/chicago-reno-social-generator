@@ -9,6 +9,7 @@ import {
   QuoteDraftService,
   ActivityLogService,
   RulesService,
+  RevisionEngine,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -304,6 +305,98 @@ app.delete('/drafts/:id', async (c) => {
 });
 
 /**
+ * POST /drafts/:id/revise
+ * Submit feedback and get a revised draft.
+ */
+app.post('/drafts/:id/revise', async (c) => {
+  const userId = c.get('user').id;
+  const db = c.env.DB;
+  const draftId = c.req.param('id');
+  const { feedbackText, createRule: shouldCreateRule } = await c.req.json() as {
+    feedbackText?: string;
+    createRule?: boolean;
+  };
+
+  const trimmed = (feedbackText ?? '').trim();
+  if (!trimmed) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'revise',
+      description: 'Feedback text cannot be empty.',
+      recommendedActions: ['Enter feedback describing the changes you want'],
+    });
+  }
+
+  const quoteDraftService = new QuoteDraftService(db);
+  const revisionEngine = new RevisionEngine(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const rulesService = new RulesService(db);
+
+  // Load the current draft (verifies ownership)
+  const draft = await quoteDraftService.getById(draftId, userId);
+
+  // Fetch the product catalog
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
+  let catalog: ProductCatalogEntry[];
+  if (draft.catalogSource === 'jobber' && jobberIntegration.isAvailable()) {
+    catalog = await jobberIntegration.fetchProductCatalog();
+    if (!jobberIntegration.isAvailable()) {
+      catalog = await fetchManualCatalog(db, userId);
+    }
+  } else {
+    catalog = await fetchManualCatalog(db, userId);
+  }
+
+  // Fetch active rules for prompt injection
+  let activeRules: RuleGroupWithRules[] = [];
+  try {
+    activeRules = await rulesService.getActiveRulesGrouped();
+  } catch {
+    activeRules = [];
+  }
+
+  // Revise the draft
+  const revised = await revisionEngine.revise({
+    feedbackText: trimmed,
+    currentLineItems: draft.lineItems,
+    currentUnresolvedItems: draft.unresolvedItems,
+    catalog,
+    rules: activeRules,
+  });
+
+  // Persist the revision history entry
+  await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
+
+  // Update the draft with revised line items
+  const updated = await quoteDraftService.update(draftId, userId, {
+    lineItems: revised.lineItems,
+    unresolvedItems: revised.unresolvedItems,
+  });
+
+  // Optionally create a rule from the feedback text
+  let ruleCreated: { id: string; name: string } | undefined;
+  let ruleCreationError: string | undefined;
+  if (shouldCreateRule) {
+    try {
+      const newRule = await rulesService.createRuleFromFeedback(trimmed);
+      ruleCreated = { id: newRule.id, name: newRule.name };
+    } catch (ruleErr) {
+      ruleCreationError = ruleErr instanceof PlatformError
+        ? ruleErr.description
+        : ruleErr instanceof Error
+          ? ruleErr.message
+          : 'Unknown error creating rule';
+    }
+  }
+
+  return c.json({
+    ...updated,
+    ...(ruleCreated ? { ruleCreated } : {}),
+    ...(ruleCreationError ? { ruleCreationError } : {}),
+  });
+});
+
+/**
  * GET /catalog
  * Get the current product catalog (from Jobber or manual entries).
  */
@@ -430,6 +523,114 @@ app.post('/templates', async (c) => {
 
   const templates = await fetchManualTemplates(db, userId);
   return c.json({ templates });
+});
+
+/**
+ * POST /corpus/sync
+ * Corpus sync is not yet ported to the worker.
+ * Returns a stub response so the client doesn't get a 404.
+ */
+app.post('/corpus/sync', async (c) => {
+  return c.json({
+    totalFetched: 0,
+    newQuotes: 0,
+    updatedQuotes: 0,
+    unchangedQuotes: 0,
+    embeddingsGenerated: 0,
+    durationMs: 0,
+    error: 'Corpus sync is not yet available in the deployed environment. Use the development server to sync.',
+  });
+});
+
+/**
+ * GET /corpus/status
+ * Get the current corpus status (quote count and last sync timestamp).
+ */
+app.get('/corpus/status', async (c) => {
+  const db = c.env.DB;
+  try {
+    const row = await db.prepare(
+      'SELECT total_quotes, last_sync_at FROM quote_corpus_sync_status WHERE id = 1'
+    ).first() as { total_quotes: number; last_sync_at: string | null } | null;
+
+    if (!row) {
+      return c.json({ totalQuotes: 0, lastSyncAt: null });
+    }
+
+    return c.json({
+      totalQuotes: Number(row.total_quotes),
+      lastSyncAt: row.last_sync_at ? new Date(row.last_sync_at).toISOString() : null,
+    });
+  } catch {
+    // Table may not exist yet — return safe defaults
+    return c.json({ totalQuotes: 0, lastSyncAt: null });
+  }
+});
+
+/**
+ * GET /jobber/requests/:id
+ * Fetch stored details for a single Jobber request.
+ */
+app.get('/jobber/requests/:id', async (c) => {
+  const db = c.env.DB;
+  const requestId = c.req.param('id');
+
+  const row = await db.prepare(
+    `SELECT jobber_request_id, title, client_name, description, image_urls, request_body
+     FROM jobber_webhook_requests
+     WHERE jobber_request_id = ?
+     ORDER BY processed_at DESC, received_at DESC
+     LIMIT 1`
+  ).bind(requestId).first() as Record<string, unknown> | null;
+
+  if (!row) {
+    return c.json({ request: null });
+  }
+
+  // Extract notes from the stored request_body
+  let notes: Array<{ message: string; createdBy: string; createdAt: string }> = [];
+  if (row.request_body) {
+    try {
+      const detail = JSON.parse(row.request_body as string);
+      const noteEdges = detail?.notes?.edges ?? [];
+      notes = noteEdges
+        .map((e: any) => e.node)
+        .filter((n: any) => n?.message && typeof n.message === 'string' && n.message.trim().length > 0)
+        .map((n: any) => {
+          const typeName = n.createdBy?.__typename ?? '';
+          let createdBy: 'team' | 'client' | 'system' = 'system';
+          if (typeName === 'User') createdBy = 'team';
+          else if (typeName === 'Client') createdBy = 'client';
+          return {
+            message: n.message,
+            createdBy,
+            createdAt: n.createdAt ?? '',
+          };
+        });
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Parse image_urls (stored as JSON text)
+  let imageUrls: string[] = [];
+  if (row.image_urls) {
+    try {
+      const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
+      imageUrls = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      imageUrls = [];
+    }
+  }
+
+  return c.json({
+    request: {
+      id: row.jobber_request_id as string,
+      title: (row.title as string) ?? '',
+      clientName: (row.client_name as string) ?? '',
+      description: (row.description as string) ?? '',
+      imageUrls,
+      notes,
+    },
+  });
 });
 
 /**

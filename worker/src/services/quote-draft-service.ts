@@ -200,6 +200,31 @@ export class QuoteDraftService {
     return true;
   }
 
+  /**
+   * Persist a revision history entry for a draft.
+   */
+  async addRevisionEntry(draftId: string, userId: string, feedbackText: string): Promise<{ id: string; quoteDraftId: string; feedbackText: string; createdAt: Date }> {
+    // Verify ownership
+    await this.getById(draftId, userId);
+
+    const id = crypto.randomUUID();
+    await this.db.prepare(
+      `INSERT INTO quote_revision_history (id, quote_draft_id, feedback_text)
+       VALUES (?, ?, ?)`
+    ).bind(id, draftId, feedbackText).run();
+
+    const row = await this.db.prepare(
+      'SELECT id, quote_draft_id, feedback_text, created_at FROM quote_revision_history WHERE id = ?'
+    ).bind(id).first() as Record<string, unknown>;
+
+    return {
+      id: row.id as string,
+      quoteDraftId: row.quote_draft_id as string,
+      feedbackText: row.feedback_text as string,
+      createdAt: new Date(row.created_at as string),
+    };
+  }
+
   // ── Private helpers ──────────────────────────────────────────
 
   private async fetchLineItems(draftId: string): Promise<{ lineItems: QuoteLineItem[]; unresolvedItems: QuoteLineItem[] }> {

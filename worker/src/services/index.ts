@@ -19,3 +19,5 @@ export { JobberWebhookService } from './jobber-webhook-service.js';
 export type { JobberWebhookPayload } from './jobber-webhook-service.js';
 export { InstagramSyncService } from './instagram-sync-service.js';
 export { RulesService } from './rules-service.js';
+export { RevisionEngine } from './revision-engine.js';
+export type { RevisionInput, RevisionOutput } from './revision-engine.js';

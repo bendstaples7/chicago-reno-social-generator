@@ -176,21 +176,12 @@ export class QuoteDraftService {
    * Delete a quote draft and its associated line items (via CASCADE).
    */
   async delete(draftId: string, userId: string): Promise<boolean> {
-    // D1 doesn't support CASCADE reliably in all cases, so delete line items first
-    await this.db.batch([
-      this.db.prepare('DELETE FROM line_item_rules WHERE quote_draft_id = ?').bind(draftId),
-      this.db.prepare('DELETE FROM quote_revision_history WHERE quote_draft_id = ?').bind(draftId),
-      this.db.prepare('DELETE FROM quote_media WHERE quote_draft_id = ?').bind(draftId),
-      this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
-      this.db.prepare('DELETE FROM quote_drafts WHERE id = ? AND user_id = ?').bind(draftId, userId),
-    ]);
-
-    // Verify deletion
-    const check = await this.db.prepare(
+    // Verify ownership before deleting child rows
+    const draft = await this.db.prepare(
       'SELECT id FROM quote_drafts WHERE id = ? AND user_id = ?'
     ).bind(draftId, userId).first();
 
-    if (check) {
+    if (!draft) {
       throw new PlatformError({
         severity: 'error',
         component: 'QuoteDraftService',
@@ -199,6 +190,15 @@ export class QuoteDraftService {
         recommendedActions: ['Verify the draft exists in your quotes list'],
       });
     }
+
+    // D1 doesn't support CASCADE reliably in all cases, so delete child rows first
+    await this.db.batch([
+      this.db.prepare('DELETE FROM line_item_rules WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_revision_history WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_media WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_drafts WHERE id = ?').bind(draftId),
+    ]);
 
     return true;
   }

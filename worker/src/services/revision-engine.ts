@@ -190,7 +190,7 @@ export class RevisionEngine {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      console.warn(`[RevisionEngine] Failed to parse AI response (first 200 chars): ${cleaned.slice(0, 200)}`);
+      console.warn('[RevisionEngine] Failed to parse AI response');
       return {
         lineItems: input.currentLineItems,
         unresolvedItems: input.currentUnresolvedItems,

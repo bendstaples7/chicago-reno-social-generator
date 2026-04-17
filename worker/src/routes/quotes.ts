@@ -699,8 +699,8 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
      LIMIT 1`
   ).bind(requestId).first() as Record<string, unknown> | null;
 
-  // If not in D1, try fetching from the Jobber API and storing it
-  if (!row) {
+  // If not in D1 or row has no request_body (partial webhook row), try fetching from the Jobber API
+  if (!row || row.request_body == null) {
     try {
       const { jobberIntegration } = await createJobberIntegration(db, c.env);
       // Note: this query mirrors REQUEST_DETAIL_QUERY in jobber-webhook-service.ts
@@ -722,7 +722,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
           .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
         const description = noteMessages.join('\n\n');
         const imageUrls = (request.noteAttachments?.edges ?? [])
-          .filter((e: any) => e.node.contentType.startsWith('image/'))
+          .filter((e: any) => e.node?.contentType?.startsWith('image/'))
           .map((e: any) => e.node.url);
         const clientName = request.companyName || request.contactName
           || (request.client ? `${request.client.firstName || ''} ${request.client.lastName || ''}`.trim() || request.client.companyName : null)

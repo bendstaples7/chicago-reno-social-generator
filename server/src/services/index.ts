@@ -12,6 +12,7 @@ export { InstagramChannel } from './instagram-channel.js';
 export { CrossPoster } from './cross-poster.js';
 export { ContentIdeasService } from './content-ideas-service.js';
 export { JobberIntegration } from './jobber-integration.js';
+export { JobberTokenStore } from './jobber-token-store.js';
 export { QuoteEngine } from './quote-engine.js';
 export type { QuoteEngineInput, QuoteEngineOutput } from './quote-engine.js';
 export { QuoteDraftService } from './quote-draft-service.js';

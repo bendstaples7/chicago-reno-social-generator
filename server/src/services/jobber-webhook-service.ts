@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { query as dbQuery } from '../config/database.js';
 import { ActivityLogService } from './activity-log-service.js';
+import { JobberTokenStore } from './jobber-token-store.js';
 import type { JobberCustomerRequest } from 'shared';
 
 const JOBBER_GRAPHQL_URL = 'https://api.getjobber.com/api/graphql';
@@ -87,9 +88,11 @@ const REQUEST_DETAIL_QUERY = `
 
 export class JobberWebhookService {
   private activityLog: ActivityLogService;
+  private tokenStore: JobberTokenStore;
 
   constructor(activityLog: ActivityLogService) {
     this.activityLog = activityLog;
+    this.tokenStore = new JobberTokenStore();
   }
 
   /**
@@ -167,7 +170,18 @@ export class JobberWebhookService {
    * Fetch full request details from the Jobber GraphQL API.
    */
   private async fetchRequestDetail(requestId: string): Promise<RequestDetail | null> {
-    const accessToken = process.env.JOBBER_ACCESS_TOKEN;
+    let accessToken = process.env.JOBBER_ACCESS_TOKEN;
+
+    // Prefer the DB-persisted token (survives refreshes across restarts)
+    try {
+      const stored = await this.tokenStore.load();
+      if (stored) {
+        accessToken = stored.accessToken;
+      }
+    } catch {
+      // Fall back to process.env
+    }
+
     if (!accessToken) return null;
 
     const controller = new AbortController();

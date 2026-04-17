@@ -2,6 +2,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve } from 'path';
+import { JobberTokenStore } from '../services/jobber-token-store.js';
 
 const router = Router();
 
@@ -97,9 +98,17 @@ router.get('/callback', async (req, res) => {
     writeFileSync(envPath + '.tmp', envContent, 'utf-8');
     renameSync(envPath + '.tmp', envPath);
 
+    // Also persist to database (primary durable store)
+    try {
+      const tokenStore = new JobberTokenStore();
+      await tokenStore.save(data.access_token, data.refresh_token);
+    } catch (dbErr) {
+      console.error('[jobber-auth] Failed to persist tokens to database:', dbErr);
+    }
+
     res.send(
       '<h2>Jobber re-authenticated successfully!</h2>' +
-      '<p>New tokens have been saved to .env. Restart the server to pick them up, or they will be used on next token refresh.</p>' +
+      '<p>New tokens have been saved. They will be used automatically on the next API call.</p>' +
       '<p><a href="http://localhost:5173">Back to app</a></p>',
     );
   } catch (err) {

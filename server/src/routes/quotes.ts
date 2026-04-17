@@ -11,6 +11,7 @@ import {
   JobberWebSession,
   JobberWebhookService,
   RulesService,
+  JobberTokenStore,
 } from '../services/index.js';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
@@ -899,7 +900,14 @@ router.get('/jobber/requests/:id/form-data', async (req, res, next) => {
 router.post('/jobber/backfill', async (_req, res, next) => {
   try {
     // Direct API call to fetch requests with full details (bypasses rate-heavy pagination)
-    const accessToken = process.env.JOBBER_ACCESS_TOKEN;
+    // Prefer DB-persisted token (survives refreshes across restarts)
+    let accessToken = process.env.JOBBER_ACCESS_TOKEN;
+    try {
+      const tokenStore = new JobberTokenStore();
+      const stored = await tokenStore.load();
+      if (stored) accessToken = stored.accessToken;
+    } catch { /* fall back to process.env */ }
+
     if (!accessToken) {
       res.json({ message: 'No Jobber access token configured', processed: 0, failed: 0 });
       return;
@@ -1090,4 +1098,5 @@ async function fetchManualTemplates(userId: string): Promise<QuoteTemplate[]> {
   }));
 }
 
+export { jobberIntegration };
 export default router;

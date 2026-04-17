@@ -1,8 +1,7 @@
 import { ActivityLogService } from './activity-log-service.js';
 import { query as dbQuery } from '../config/database.js';
 import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
-import { readFileSync, writeFileSync, renameSync } from 'fs';
-import { resolve } from 'path';
+import { JobberTokenStore } from './jobber-token-store.js';
 
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const API_TIMEOUT_MS = 10_000;
@@ -167,6 +166,9 @@ export class JobberIntegration {
   private refreshToken: string;
   private clientId: string;
   private clientSecret: string;
+  private tokenStore: JobberTokenStore;
+  private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(activityLog: ActivityLogService, cacheTtlMs: number = DEFAULT_CACHE_TTL_MS) {
     this.activityLog = activityLog;
@@ -175,6 +177,40 @@ export class JobberIntegration {
     this.refreshToken = process.env.JOBBER_REFRESH_TOKEN || '';
     this.clientId = process.env.JOBBER_CLIENT_ID || '';
     this.clientSecret = process.env.JOBBER_CLIENT_SECRET || '';
+    this.tokenStore = new JobberTokenStore();
+  }
+
+  /**
+   * Load tokens from the database, falling back to process.env values.
+   * Called lazily on first API request. Safe to call multiple times.
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = (async () => {
+      try {
+        const stored = await this.tokenStore.load();
+        if (stored) {
+          this.accessToken = stored.accessToken;
+          this.refreshToken = stored.refreshToken;
+          console.log('[JobberIntegration] Loaded tokens from database');
+        } else if (this.accessToken) {
+          // Seed the DB from .env on first run
+          try {
+            await this.tokenStore.save(this.accessToken, this.refreshToken);
+            console.log('[JobberIntegration] Seeded database with tokens from .env');
+          } catch {
+            // Non-fatal — table may not exist yet
+          }
+        }
+      } catch (err) {
+        console.warn('[JobberIntegration] Could not load tokens from DB, using .env values:', err instanceof Error ? err.message : err);
+      }
+      this.initialized = true;
+    })();
+
+    return this.initPromise;
   }
 
   /**
@@ -194,6 +230,17 @@ export class JobberIntegration {
     this.customerRequestsCache = null;
   }
 
+  /**
+   * Reload tokens from the database. Call after an external OAuth reauth
+   * so the long-lived singleton picks up the newly persisted tokens.
+   */
+  async reloadTokens(): Promise<void> {
+    this.initialized = false;
+    this.initPromise = null;
+    this.invalidateCache();
+    await this.ensureInitialized();
+  }
+
   // ── Product Catalog ──────────────────────────────────────────────
 
   /**
@@ -201,6 +248,7 @@ export class JobberIntegration {
    * On API failure, logs the error, sets available = false, and returns an empty array.
    */
   async fetchProductCatalog(): Promise<ProductCatalogEntry[]> {
+    await this.ensureInitialized();
     if (this.productCatalogCache && !this.isCacheExpired(this.productCatalogCache)) {
       return this.productCatalogCache.data;
     }
@@ -273,6 +321,7 @@ export class JobberIntegration {
    * On API failure, logs the error, sets available = false, and returns an empty array.
    */
   async fetchTemplateLibrary(): Promise<QuoteTemplate[]> {
+    await this.ensureInitialized();
     if (this.templateLibraryCache && !this.isCacheExpired(this.templateLibraryCache)) {
       return this.templateLibraryCache.data;
     }
@@ -350,6 +399,7 @@ export class JobberIntegration {
    * On failure, logs the error and returns [] but does NOT set available = false.
    */
   async fetchCustomerRequests(): Promise<JobberCustomerRequest[]> {
+    await this.ensureInitialized();
     if (this.customerRequestsCache && !this.isCacheExpired(this.customerRequestsCache)) {
       return this.customerRequestsCache.data;
     }
@@ -440,6 +490,7 @@ export class JobberIntegration {
    * Returns the raw node data or null on failure.
    */
   async fetchRequestDetail(requestId: string): Promise<JobberRequestNode | null> {
+    await this.ensureInitialized();
     try {
       const data = await this.graphqlRequest<{ request: JobberRequestNode }>(
         `query FetchRequestDetail($id: EncodedId!) {
@@ -618,50 +669,16 @@ export class JobberIntegration {
         this.refreshToken = data.refresh_token;
       }
 
-      // Persist new tokens to .env so they survive server restarts
+      // Persist new tokens to PostgreSQL so they survive server restarts.
+      // If persistence fails, log critically but still return true — the in-memory
+      // tokens are valid and the current request should succeed. The durability
+      // problem will surface on next server restart.
       try {
-        const envPath = resolve(import.meta.dirname, '../../.env');
-        let envContent = '';
-        try {
-          envContent = readFileSync(envPath, 'utf-8');
-        } catch {
-          envContent = '';
-        }
-        const originalContent = envContent;
-
-        const accessTokenRegex = /^JOBBER_ACCESS_TOKEN=.*/m;
-        if (accessTokenRegex.test(envContent)) {
-          envContent = envContent.replace(
-            accessTokenRegex,
-            `JOBBER_ACCESS_TOKEN=${data.access_token}`,
-          );
-        } else {
-          console.warn('[JobberIntegration] JOBBER_ACCESS_TOKEN not found in .env — appending');
-          envContent += `\nJOBBER_ACCESS_TOKEN=${data.access_token}\n`;
-        }
-
-        if (data.refresh_token) {
-          const refreshTokenRegex = /^JOBBER_REFRESH_TOKEN=.*/m;
-          if (refreshTokenRegex.test(envContent)) {
-            envContent = envContent.replace(
-              refreshTokenRegex,
-              `JOBBER_REFRESH_TOKEN=${data.refresh_token}`,
-            );
-          } else {
-            console.warn('[JobberIntegration] JOBBER_REFRESH_TOKEN not found in .env — appending');
-            envContent += `\nJOBBER_REFRESH_TOKEN=${data.refresh_token}\n`;
-          }
-        }
-
-        if (envContent === originalContent) {
-          console.warn('[JobberIntegration] .env content unchanged after token replacement');
-        }
-
-        writeFileSync(envPath + '.tmp', envContent, 'utf-8');
-        renameSync(envPath + '.tmp', envPath);
-        console.log('[JobberIntegration] Tokens persisted to .env');
-      } catch (writeErr) {
-        console.error('[JobberIntegration] Failed to persist tokens to .env:', writeErr);
+        await this.tokenStore.save(this.accessToken, this.refreshToken);
+        console.log('[JobberIntegration] Tokens persisted to database');
+      } catch (dbErr) {
+        console.error('[JobberIntegration] CRITICAL: Token persistence failed after successful refresh.', dbErr);
+        console.error('[JobberIntegration] In-memory tokens are valid but will be lost on server restart.');
       }
 
       console.log('[JobberIntegration] Access token refreshed successfully');

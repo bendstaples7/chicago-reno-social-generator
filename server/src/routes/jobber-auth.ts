@@ -2,6 +2,8 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { resolve } from 'path';
+import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { jobberIntegration } from './quotes.js';
 
 const router = Router();
 
@@ -73,7 +75,10 @@ router.get('/callback', async (req, res) => {
       refresh_token: string;
     };
 
-    // Persist tokens to .env (append if keys don't exist)
+    // BACKWARD COMPAT: Persist tokens to .env as a fallback seed for first-run scenarios.
+    // The database (via JobberTokenStore) is the primary durable store and is always
+    // preferred on startup. This .env write should be removed once DB persistence is
+    // fully validated in production.
     const envPath = resolve(import.meta.dirname, '../../.env');
     let envContent = '';
     try {
@@ -97,9 +102,29 @@ router.get('/callback', async (req, res) => {
     writeFileSync(envPath + '.tmp', envContent, 'utf-8');
     renameSync(envPath + '.tmp', envPath);
 
+    // Persist to database (primary durable store) and reload into the
+    // long-lived JobberIntegration singleton so it picks up the new tokens.
+    let dbSaved = false;
+    try {
+      const tokenStore = new JobberTokenStore();
+      await tokenStore.save(data.access_token, data.refresh_token);
+      dbSaved = true;
+    } catch (dbErr) {
+      console.error('[jobber-auth] Failed to persist tokens to database:', dbErr);
+    }
+
+    if (dbSaved) {
+      // DB has the fresh tokens — reload them into the singleton
+      try {
+        await jobberIntegration.reloadTokens();
+      } catch {
+        // Best-effort — the next API call will pick them up via ensureInitialized
+      }
+    }
+
     res.send(
       '<h2>Jobber re-authenticated successfully!</h2>' +
-      '<p>New tokens have been saved to .env. Restart the server to pick them up, or they will be used on next token refresh.</p>' +
+      '<p>New tokens have been saved. They will be used automatically on the next API call.</p>' +
       '<p><a href="http://localhost:5173">Back to app</a></p>',
     );
   } catch (err) {

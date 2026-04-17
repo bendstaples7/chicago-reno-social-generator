@@ -365,6 +365,8 @@ export class JobberIntegration {
           ? 'Jobber API request timed out during fetchCustomerRequests'
           : `Jobber API error during fetchCustomerRequests: ${err instanceof Error ? err.message : 'Unknown error'}`;
 
+      console.error(`[JobberIntegration] fetchCustomerRequests failed: ${description}`);
+
       try {
         await this.activityLog.log({
           userId: 'system',

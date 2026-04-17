@@ -8,6 +8,7 @@ import {
   JobberIntegration,
   QuoteDraftService,
   ActivityLogService,
+  RulesService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -32,6 +33,113 @@ async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{
 }
 
 app.use('*', sessionMiddleware);
+
+// ── Rules CRUD endpoints ──────────────────────────────────────
+
+/**
+ * GET /rules
+ * List all rule groups with their nested rules.
+ */
+app.get('/rules', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const groups = await rulesService.getAllGroupedRules();
+  return c.json(groups);
+});
+
+/**
+ * POST /rules
+ * Create a new rule.
+ */
+app.post('/rules', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    ruleGroupId?: string;
+    isActive?: boolean;
+  };
+  const rule = await rulesService.createRule({
+    name: name ?? '',
+    description: description ?? '',
+    ruleGroupId: ruleGroupId ?? undefined,
+    isActive,
+  });
+  return c.json(rule, 201);
+});
+
+/**
+ * PUT /rules/:id
+ * Update an existing rule.
+ */
+app.put('/rules/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    ruleGroupId?: string;
+    isActive?: boolean;
+  };
+  const rule = await rulesService.updateRule(c.req.param('id'), {
+    name,
+    description,
+    ruleGroupId,
+    isActive,
+  });
+  return c.json(rule);
+});
+
+/**
+ * PUT /rules/:id/deactivate
+ * Deactivate a rule (soft delete).
+ */
+app.put('/rules/:id/deactivate', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const rule = await rulesService.deactivateRule(c.req.param('id'));
+  return c.json(rule);
+});
+
+/**
+ * POST /rules/groups
+ * Create a new rule group.
+ */
+app.post('/rules/groups', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description } = await c.req.json() as { name?: string; description?: string };
+  const group = await rulesService.createGroup({
+    name: name ?? '',
+    description,
+  });
+  return c.json(group, 201);
+});
+
+/**
+ * PUT /rules/groups/:id
+ * Update an existing rule group.
+ */
+app.put('/rules/groups/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, displayOrder } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    displayOrder?: number;
+  };
+  const group = await rulesService.updateGroup(c.req.param('id'), {
+    name,
+    description,
+    displayOrder,
+  });
+  return c.json(group);
+});
+
+/**
+ * DELETE /rules/groups/:id
+ * Delete a rule group (reassigns its rules to the "General" group).
+ */
+app.delete('/rules/groups/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  await rulesService.deleteGroup(c.req.param('id'));
+  return c.json({ success: true });
+});
 
 // ── Helper functions ──────────────────────────────────────────
 

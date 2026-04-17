@@ -18,3 +18,4 @@ export { QuoteDraftService } from './quote-draft-service.js';
 export { JobberWebhookService } from './jobber-webhook-service.js';
 export type { JobberWebhookPayload } from './jobber-webhook-service.js';
 export { InstagramSyncService } from './instagram-sync-service.js';
+export { RulesService } from './rules-service.js';

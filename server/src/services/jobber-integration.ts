@@ -670,17 +670,15 @@ export class JobberIntegration {
       }
 
       // Persist new tokens to PostgreSQL so they survive server restarts.
-      // If persistence fails, the old refresh token is already invalidated by Jobber,
-      // so we must treat this as a failed refresh to avoid silent token loss on restart.
+      // If persistence fails, log critically but still return true — the in-memory
+      // tokens are valid and the current request should succeed. The durability
+      // problem will surface on next server restart.
       try {
         await this.tokenStore.save(this.accessToken, this.refreshToken);
         console.log('[JobberIntegration] Tokens persisted to database');
       } catch (dbErr) {
         console.error('[JobberIntegration] CRITICAL: Token persistence failed after successful refresh.', dbErr);
-        console.error('[JobberIntegration] Tokens are valid in memory but will be lost on server restart.');
-        // Return false so callers know the refresh is not durably persisted.
-        // The in-memory tokens still work for this session.
-        return false;
+        console.error('[JobberIntegration] In-memory tokens are valid but will be lost on server restart.');
       }
 
       console.log('[JobberIntegration] Access token refreshed successfully');

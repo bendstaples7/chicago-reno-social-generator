@@ -102,20 +102,24 @@ router.get('/callback', async (req, res) => {
     writeFileSync(envPath + '.tmp', envContent, 'utf-8');
     renameSync(envPath + '.tmp', envPath);
 
-    // Also persist to database (primary durable store)
+    // Persist to database (primary durable store) and reload into the
+    // long-lived JobberIntegration singleton so it picks up the new tokens.
+    let dbSaved = false;
     try {
       const tokenStore = new JobberTokenStore();
       await tokenStore.save(data.access_token, data.refresh_token);
+      dbSaved = true;
     } catch (dbErr) {
       console.error('[jobber-auth] Failed to persist tokens to database:', dbErr);
     }
 
-    // Reload tokens into the long-lived JobberIntegration singleton
-    // so it picks up the new tokens without waiting for the next refresh cycle.
-    try {
-      await jobberIntegration.reloadTokens();
-    } catch {
-      // Best-effort — the next API call will pick them up via ensureInitialized
+    if (dbSaved) {
+      // DB has the fresh tokens — reload them into the singleton
+      try {
+        await jobberIntegration.reloadTokens();
+      } catch {
+        // Best-effort — the next API call will pick them up via ensureInitialized
+      }
     }
 
     res.send(

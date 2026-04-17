@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import {
@@ -8,6 +8,11 @@ import {
   JobberIntegration,
   QuoteDraftService,
   ActivityLogService,
+  RulesService,
+  RevisionEngine,
+  EmbeddingService,
+  SimilarityEngine,
+  QuoteSyncService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -32,6 +37,113 @@ async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{
 }
 
 app.use('*', sessionMiddleware);
+
+// ── Rules CRUD endpoints ──────────────────────────────────────
+
+/**
+ * GET /rules
+ * List all rule groups with their nested rules.
+ */
+app.get('/rules', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const groups = await rulesService.getAllGroupedRules();
+  return c.json(groups);
+});
+
+/**
+ * POST /rules
+ * Create a new rule.
+ */
+app.post('/rules', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    ruleGroupId?: string;
+    isActive?: boolean;
+  };
+  const rule = await rulesService.createRule({
+    name: name ?? '',
+    description: description ?? '',
+    ruleGroupId: ruleGroupId ?? undefined,
+    isActive,
+  });
+  return c.json(rule, 201);
+});
+
+/**
+ * PUT /rules/:id
+ * Update an existing rule.
+ */
+app.put('/rules/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    ruleGroupId?: string;
+    isActive?: boolean;
+  };
+  const rule = await rulesService.updateRule(c.req.param('id'), {
+    name,
+    description,
+    ruleGroupId,
+    isActive,
+  });
+  return c.json(rule);
+});
+
+/**
+ * PUT /rules/:id/deactivate
+ * Deactivate a rule (soft delete).
+ */
+app.put('/rules/:id/deactivate', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const rule = await rulesService.deactivateRule(c.req.param('id'));
+  return c.json(rule);
+});
+
+/**
+ * POST /rules/groups
+ * Create a new rule group.
+ */
+app.post('/rules/groups', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description } = await c.req.json() as { name?: string; description?: string };
+  const group = await rulesService.createGroup({
+    name: name ?? '',
+    description,
+  });
+  return c.json(group, 201);
+});
+
+/**
+ * PUT /rules/groups/:id
+ * Update an existing rule group.
+ */
+app.put('/rules/groups/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { name, description, displayOrder } = await c.req.json() as {
+    name?: string;
+    description?: string;
+    displayOrder?: number;
+  };
+  const group = await rulesService.updateGroup(c.req.param('id'), {
+    name,
+    description,
+    displayOrder,
+  });
+  return c.json(group);
+});
+
+/**
+ * DELETE /rules/groups/:id
+ * Delete a rule group (reassigns its rules to the "General" group).
+ */
+app.delete('/rules/groups/:id', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  await rulesService.deleteGroup(c.req.param('id'));
+  return c.json({ success: true });
+});
 
 // ── Helper functions ──────────────────────────────────────────
 
@@ -113,6 +225,35 @@ app.post('/generate', async (c) => {
     templates = body.manualTemplates ?? await fetchManualTemplates(db, userId);
   }
 
+  // Fetch active rules for prompt injection (graceful degradation)
+  const rulesService = new RulesService(db);
+  let activeRules: RuleGroupWithRules[] = [];
+  try {
+    activeRules = await rulesService.getActiveRulesGrouped();
+  } catch {
+    activeRules = [];
+  }
+
+  // Find similar past quotes from the corpus (graceful degradation)
+  let similarQuotes: SimilarQuote[] = [];
+  const trimmedCustomerText = (body.customerText ?? '').trim();
+  if (trimmedCustomerText) {
+    try {
+      const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
+      const similarityEngine = new SimilarityEngine(db, embeddingService);
+      const results = await similarityEngine.findSimilar(trimmedCustomerText);
+      similarQuotes = results.map((sq) => ({
+      jobberQuoteId: sq.jobberQuoteId,
+      quoteNumber: sq.quoteNumber,
+      title: sq.title,
+      message: sq.message,
+      similarityScore: sq.similarityScore,
+    }));
+    } catch {
+      similarQuotes = [];
+    }
+  }
+
   const result = await quoteEngine.generateQuote(
     {
       customerText: body.customerText ?? '',
@@ -121,9 +262,11 @@ app.post('/generate', async (c) => {
       catalogSource: source,
       manualCatalog: source === 'manual' ? catalog : undefined,
       manualTemplates: source === 'manual' ? templates : undefined,
+      similarQuotes,
     },
     catalog,
     templates,
+    activeRules,
   );
 
   if (body.jobberRequestId) {
@@ -182,6 +325,109 @@ app.delete('/drafts/:id', async (c) => {
   const quoteDraftService = new QuoteDraftService(c.env.DB);
   await quoteDraftService.delete(c.req.param('id'), c.get('user').id);
   return c.json({ success: true });
+});
+
+/**
+ * POST /drafts/:id/revise
+ * Submit feedback and get a revised draft.
+ */
+app.post('/drafts/:id/revise', async (c) => {
+  const userId = c.get('user').id;
+  const db = c.env.DB;
+  const draftId = c.req.param('id');
+  const { feedbackText, createRule: shouldCreateRule } = await c.req.json() as {
+    feedbackText?: string;
+    createRule?: boolean;
+  };
+
+  const trimmed = (feedbackText ?? '').trim();
+  if (!trimmed) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'revise',
+      description: 'Feedback text cannot be empty.',
+      recommendedActions: ['Enter feedback describing the changes you want'],
+    });
+  }
+
+  const quoteDraftService = new QuoteDraftService(db);
+  const revisionEngine = new RevisionEngine(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const rulesService = new RulesService(db);
+
+  // Load the current draft (verifies ownership)
+  const draft = await quoteDraftService.getById(draftId, userId);
+
+  // Fetch the product catalog
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
+  let catalog: ProductCatalogEntry[];
+  if (draft.catalogSource === 'jobber' && jobberIntegration.isAvailable()) {
+    catalog = await jobberIntegration.fetchProductCatalog();
+    if (!jobberIntegration.isAvailable()) {
+      catalog = await fetchManualCatalog(db, userId);
+    }
+  } else {
+    catalog = await fetchManualCatalog(db, userId);
+  }
+
+  // Fetch active rules for prompt injection
+  let activeRules: RuleGroupWithRules[] = [];
+  try {
+    activeRules = await rulesService.getActiveRulesGrouped();
+  } catch {
+    activeRules = [];
+  }
+
+  // Revise the draft
+  const revised = await revisionEngine.revise({
+    feedbackText: trimmed,
+    currentLineItems: draft.lineItems,
+    currentUnresolvedItems: draft.unresolvedItems,
+    catalog,
+    rules: activeRules,
+  });
+
+  // If the AI response couldn't be parsed, inform the user
+  if (revised.revisionFailed) {
+    throw new PlatformError({
+      severity: 'warning',
+      component: 'QuoteRoutes',
+      operation: 'revise',
+      description: 'The AI could not process your feedback. Your draft was not changed. Please try rephrasing your feedback.',
+      recommendedActions: ['Rephrase your feedback and try again'],
+    });
+  }
+
+  // Update the draft with revised line items
+  const updated = await quoteDraftService.update(draftId, userId, {
+    lineItems: revised.lineItems,
+    unresolvedItems: revised.unresolvedItems,
+  });
+
+  // Persist the revision history entry (after successful update)
+  await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
+
+  // Optionally create a rule from the feedback text
+  let ruleCreated: { id: string; name: string } | undefined;
+  let ruleCreationError: string | undefined;
+  if (shouldCreateRule) {
+    try {
+      const newRule = await rulesService.createRuleFromFeedback(trimmed);
+      ruleCreated = { id: newRule.id, name: newRule.name };
+    } catch (ruleErr) {
+      ruleCreationError = ruleErr instanceof PlatformError
+        ? ruleErr.description
+        : ruleErr instanceof Error
+          ? ruleErr.message
+          : 'Unknown error creating rule';
+    }
+  }
+
+  return c.json({
+    ...updated,
+    ...(ruleCreated ? { ruleCreated } : {}),
+    ...(ruleCreationError ? { ruleCreationError } : {}),
+  });
 });
 
 /**
@@ -311,6 +557,127 @@ app.post('/templates', async (c) => {
 
   const templates = await fetchManualTemplates(db, userId);
   return c.json({ templates });
+});
+
+/**
+ * POST /corpus/sync
+ * Trigger a manual corpus synchronization with Jobber.
+ */
+app.post('/corpus/sync', async (c) => {
+  const db = c.env.DB;
+
+  // Atomic concurrency guard: claim the lock only if not already running (or stale > 10 min)
+  const claimResult = await db.prepare(
+    `UPDATE quote_corpus_sync_status
+     SET last_sync_at = datetime('now'), last_sync_error = '__RUNNING__'
+     WHERE id = 1 AND (last_sync_error != '__RUNNING__' OR last_sync_error IS NULL
+       OR last_sync_at < datetime('now', '-10 minutes'))`
+  ).run();
+
+  if (!claimResult.meta.changes || claimResult.meta.changes === 0) {
+    return c.json({ error: 'A corpus sync is already in progress. Please wait and try again.' }, 409);
+  }
+
+  const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
+  const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
+
+  try {
+    const result = await quoteSyncService.sync();
+    return c.json(result);
+  } finally {
+    // Clear the running marker — sync() already calls updateSyncStatus on success/failure,
+    // but if something unexpected throws before that, ensure the lock is released.
+    try {
+      const stillRunning = await db.prepare(
+        "SELECT 1 FROM quote_corpus_sync_status WHERE id = 1 AND last_sync_error = '__RUNNING__'"
+      ).first();
+      if (stillRunning) {
+        await db.prepare(
+          "UPDATE quote_corpus_sync_status SET last_sync_error = 'Sync terminated unexpectedly' WHERE id = 1 AND last_sync_error = '__RUNNING__'"
+        ).run();
+      }
+    } catch { /* best-effort cleanup */ }
+  }
+});
+
+/**
+ * GET /corpus/status
+ * Get the current corpus status (quote count and last sync timestamp).
+ */
+app.get('/corpus/status', async (c) => {
+  const db = c.env.DB;
+  const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
+  const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
+  const status = await quoteSyncService.getStatus();
+  return c.json(status);
+});
+
+/**
+ * GET /jobber/requests/:id
+ * Fetch stored details for a single Jobber request.
+ */
+app.get('/jobber/requests/:id', async (c) => {
+  const db = c.env.DB;
+  const requestId = c.req.param('id');
+
+  const row = await db.prepare(
+    `SELECT jobber_request_id, title, client_name, description, image_urls, request_body
+     FROM jobber_webhook_requests
+     WHERE jobber_request_id = ?
+     ORDER BY processed_at DESC, received_at DESC
+     LIMIT 1`
+  ).bind(requestId).first() as Record<string, unknown> | null;
+
+  if (!row) {
+    return c.json({ request: null });
+  }
+
+  // Extract notes from the stored request_body
+  let notes: Array<{ message: string; createdBy: string; createdAt: string }> = [];
+  if (row.request_body) {
+    try {
+      const detail = JSON.parse(row.request_body as string);
+      const noteEdges = detail?.notes?.edges ?? [];
+      notes = noteEdges
+        .map((e: any) => e.node)
+        .filter((n: any) => n?.message && typeof n.message === 'string' && n.message.trim().length > 0)
+        .map((n: any) => {
+          const typeName = n.createdBy?.__typename ?? '';
+          let createdBy: 'team' | 'client' | 'system' = 'system';
+          if (typeName === 'User') createdBy = 'team';
+          else if (typeName === 'Client') createdBy = 'client';
+          return {
+            message: n.message,
+            createdBy,
+            createdAt: n.createdAt ?? '',
+          };
+        });
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Parse image_urls (stored as JSON text)
+  let imageUrls: string[] = [];
+  if (row.image_urls) {
+    try {
+      const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
+      imageUrls = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      imageUrls = [];
+    }
+  }
+
+  return c.json({
+    request: {
+      id: row.jobber_request_id as string,
+      title: (row.title as string) ?? '',
+      clientName: (row.client_name as string) ?? '',
+      description: (row.description as string) ?? '',
+      imageUrls,
+      notes,
+    },
+  });
 });
 
 /**

@@ -691,13 +691,75 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
   const requestId = c.req.param('id');
 
   // Build form data from webhook/API data stored in D1
-  const row = await db.prepare(
+  let row = await db.prepare(
     `SELECT title, client_name, description, request_body, image_urls
      FROM jobber_webhook_requests
      WHERE jobber_request_id = ?
      ORDER BY processed_at DESC, received_at DESC
      LIMIT 1`
   ).bind(requestId).first() as Record<string, unknown> | null;
+
+  // If not in D1, try fetching from the Jobber API and storing it
+  if (!row) {
+    try {
+      const { jobberIntegration } = await createJobberIntegration(db, c.env);
+      // Note: this query mirrors REQUEST_DETAIL_QUERY in jobber-webhook-service.ts
+      const detail = await jobberIntegration.graphqlRequest<Record<string, unknown>>(
+        `query FetchRequestDetail($id: EncodedId!) {
+          request(id: $id) {
+            id title companyName contactName phone email requestStatus createdAt jobberWebUri
+            client { id firstName lastName companyName }
+            notes(first: 20) { edges { node { ... on RequestNote { message createdAt createdBy { __typename } } } } }
+            noteAttachments(first: 20) { edges { node { url fileName contentType } } }
+          }
+        }`,
+        { id: requestId },
+      );
+      const request = (detail as any)?.request;
+      if (request) {
+        const noteMessages = (request.notes?.edges ?? [])
+          .map((e: any) => e.node?.message)
+          .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+        const description = noteMessages.join('\n\n');
+        const imageUrls = (request.noteAttachments?.edges ?? [])
+          .filter((e: any) => e.node.contentType.startsWith('image/'))
+          .map((e: any) => e.node.url);
+        const clientName = request.companyName || request.contactName
+          || (request.client ? `${request.client.firstName || ''} ${request.client.lastName || ''}`.trim() || request.client.companyName : null)
+          || null;
+
+        // Store in D1 for future requests
+        await db.prepare(
+          `INSERT INTO jobber_webhook_requests
+            (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+             title = excluded.title,
+             client_name = excluded.client_name,
+             description = excluded.description,
+             request_body = excluded.request_body,
+             image_urls = excluded.image_urls,
+             processed_at = excluded.processed_at`
+        ).bind(
+          crypto.randomUUID(), requestId, 'API_FETCH', '',
+          request.title ?? null, clientName, description || null,
+          JSON.stringify(request), JSON.stringify(imageUrls),
+          JSON.stringify({ source: 'api_fetch' }), new Date().toISOString(),
+        ).run();
+
+        // Re-query to use the same code path below
+        row = await db.prepare(
+          `SELECT title, client_name, description, request_body, image_urls
+           FROM jobber_webhook_requests
+           WHERE jobber_request_id = ?
+           ORDER BY processed_at DESC, received_at DESC
+           LIMIT 1`
+        ).bind(requestId).first() as Record<string, unknown> | null;
+      }
+    } catch (fetchErr) {
+      console.error('[quotes/form-data] API fallback failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
+    }
+  }
 
   if (!row) {
     return c.json({ formData: null });
@@ -769,6 +831,9 @@ app.get('/jobber/requests', async (c) => {
   if (jobberIntegration.isAvailable()) {
     requests = await jobberIntegration.fetchCustomerRequests();
     available = jobberIntegration.isAvailable();
+    console.log(`[quotes/requests] GraphQL returned ${requests.length} requests, available=${available}`);
+  } else {
+    console.log('[quotes/requests] Jobber API not available, skipping GraphQL call');
   }
 
   // Merge webhook data
@@ -780,8 +845,13 @@ app.get('/jobber/requests', async (c) => {
       refreshToken: c.env.JOBBER_REFRESH_TOKEN || '',
       tokenStore,
     });
-    await webhookService.loadPersistedTokens();
+    try {
+      await webhookService.loadPersistedTokens();
+    } catch (tokenErr) {
+      console.warn('[quotes/requests] Failed to load persisted tokens for webhook service:', tokenErr instanceof Error ? tokenErr.message : tokenErr);
+    }
     const webhookRequests = await webhookService.getWebhookRequests();
+    console.log(`[quotes/requests] Webhook merge: ${webhookRequests.length} webhook requests, ${requests.length} API requests`);
     const apiIds = new Set(requests.map((r) => r.id));
 
     for (const wr of webhookRequests) {
@@ -804,7 +874,8 @@ app.get('/jobber/requests', async (c) => {
 
     requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     if (webhookRequests.length > 0) available = true;
-  } catch {
+  } catch (webhookErr) {
+    console.error('[quotes/requests] Webhook enrichment failed:', webhookErr instanceof Error ? webhookErr.message : webhookErr);
     // Webhook enrichment is best-effort
   }
 

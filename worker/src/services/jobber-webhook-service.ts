@@ -358,51 +358,57 @@ export class JobberWebhookService {
        ORDER BY w.received_at DESC`
     ).all();
 
+    const rows = result.results as any[];
+    console.log(`[WebhookService] getWebhookRequests: ${rows.length} rows from D1`);
+
     // Backfill on read: for rows missing request_body, try fetching detail now.
     // This handles cases where the initial webhook processing failed (e.g., expired token).
-    // Limit to 5 per request to avoid slow responses when many rows are incomplete.
-    const rows = result.results as any[];
-    const incompleteIds = rows
-      .filter((r) => !r.request_body)
-      .map((r) => r.jobber_request_id as string)
-      .slice(0, 5);
+    // Limit to 3 per request to avoid slow responses when many rows are incomplete.
+    // Wrapped in a top-level try/catch so backfill failures never prevent returning stored data.
+    try {
+      const incompleteIds = rows
+        .filter((r) => !r.request_body)
+        .map((r) => r.jobber_request_id as string)
+        .slice(0, 3);
 
-    if (incompleteIds.length > 0 && this.accessToken) {
-      for (const id of incompleteIds) {
-        try {
-          const detail = await this.fetchRequestDetail(id);
-          if (!detail) continue;
+      if (incompleteIds.length > 0 && this.accessToken) {
+        console.log(`[WebhookService] Backfilling ${incompleteIds.length} incomplete rows`);
+        for (const id of incompleteIds) {
+          try {
+            const detail = await this.fetchRequestDetail(id);
+            if (!detail) continue;
 
-          const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
+            const { imageUrls, description, clientName } = this.parseRequestDetail(detail);
 
-          // Update the existing row with full detail
-          await this.db.prepare(
-            `UPDATE jobber_webhook_requests
-             SET title = ?, client_name = ?, description = ?, request_body = ?, image_urls = ?, processed_at = ?
-             WHERE jobber_request_id = ? AND request_body IS NULL`
-          ).bind(
-            detail.title ?? null,
-            clientName,
-            description || null,
-            JSON.stringify(detail),
-            JSON.stringify(imageUrls),
-            new Date().toISOString(),
-            id,
-          ).run();
+            await this.db.prepare(
+              `UPDATE jobber_webhook_requests
+               SET title = ?, client_name = ?, description = ?, request_body = ?, image_urls = ?, processed_at = ?
+               WHERE jobber_request_id = ? AND request_body IS NULL`
+            ).bind(
+              detail.title ?? null,
+              clientName,
+              description || null,
+              JSON.stringify(detail),
+              JSON.stringify(imageUrls),
+              new Date().toISOString(),
+              id,
+            ).run();
 
-          // Update the in-memory row so we don't need to re-query
-          const row = rows.find((r) => r.jobber_request_id === id);
-          if (row) {
-            row.title = detail.title;
-            row.client_name = clientName;
-            row.description = description;
-            row.request_body = JSON.stringify(detail);
-            row.image_urls = JSON.stringify(imageUrls);
+            const row = rows.find((r) => r.jobber_request_id === id);
+            if (row) {
+              row.title = detail.title;
+              row.client_name = clientName;
+              row.description = description;
+              row.request_body = JSON.stringify(detail);
+              row.image_urls = JSON.stringify(imageUrls);
+            }
+          } catch (err) {
+            console.warn(`[WebhookService] Backfill-on-read failed for ${id}:`, err instanceof Error ? err.message : err);
           }
-        } catch (err) {
-          console.warn(`[WebhookService] Backfill-on-read failed for ${id}:`, err);
         }
       }
+    } catch (err) {
+      console.warn('[WebhookService] Backfill-on-read crashed, continuing with stored data:', err instanceof Error ? err.message : err);
     }
 
     return rows.map((row): JobberCustomerRequest | null => {

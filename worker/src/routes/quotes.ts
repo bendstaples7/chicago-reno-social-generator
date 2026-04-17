@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import {
@@ -221,6 +221,16 @@ app.post('/generate', async (c) => {
     templates = body.manualTemplates ?? await fetchManualTemplates(db, userId);
   }
 
+  // Fetch active rules for prompt injection (graceful degradation)
+  const rulesService = new RulesService(db);
+  let activeRules: RuleGroupWithRules[] = [];
+  try {
+    activeRules = await rulesService.getActiveRulesGrouped();
+  } catch {
+    // Proceed without rules if fetch fails
+    activeRules = [];
+  }
+
   const result = await quoteEngine.generateQuote(
     {
       customerText: body.customerText ?? '',
@@ -232,6 +242,7 @@ app.post('/generate', async (c) => {
     },
     catalog,
     templates,
+    activeRules,
   );
 
   if (body.jobberRequestId) {

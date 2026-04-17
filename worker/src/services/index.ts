@@ -21,3 +21,8 @@ export { InstagramSyncService } from './instagram-sync-service.js';
 export { RulesService } from './rules-service.js';
 export { RevisionEngine } from './revision-engine.js';
 export type { RevisionInput, RevisionOutput } from './revision-engine.js';
+export { EmbeddingService } from './embedding-service.js';
+export { SimilarityEngine } from './similarity-engine.js';
+export type { SimilarQuoteResult } from './similarity-engine.js';
+export { QuoteSyncService } from './quote-sync-service.js';
+export type { SyncResult } from './quote-sync-service.js';

@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 30_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -11,10 +11,12 @@ export interface QuoteEngineInput {
   catalogSource: 'jobber' | 'manual';
   manualCatalog?: ProductCatalogEntry[];
   manualTemplates?: QuoteTemplate[];
+  similarQuotes?: SimilarQuote[];
 }
 
 export interface QuoteEngineOutput {
   draft: QuoteDraft;
+  similarQuotes?: SimilarQuote[];
 }
 
 interface AILineItem {
@@ -45,6 +47,7 @@ const SYSTEM_PROMPT = [
   '- Estimate quantities from the customer text when possible; default to 1.',
   '- Use unit prices from the catalog entry.',
   '- If a template matches the type of work, reference it by ID and name.',
+  '- When SIMILAR PAST QUOTES are provided, prefer their line items and pricing when they match the current customer request. Higher similarity scores indicate stronger matches.',
   '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
   'RESPONSE FORMAT (strict JSON):',
@@ -192,6 +195,17 @@ export class QuoteEngine {
       }
     }
 
+    // Include up to 3 similar past quotes when available
+    const similarQuotes = input.similarQuotes ?? [];
+    if (similarQuotes.length > 0) {
+      const topQuotes = similarQuotes.slice(0, 3);
+      parts.push('\nSIMILAR PAST QUOTES:');
+      for (const sq of topQuotes) {
+        const scorePercent = Math.round(sq.similarityScore * 100);
+        parts.push(`- [Score: ${scorePercent}%] Quote #${sq.quoteNumber} "${sq.title}" — ${sq.message}`);
+      }
+    }
+
     return parts.join('\n');
   }
 
@@ -261,6 +275,7 @@ export class QuoteEngine {
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
+    const similarQuotes = input.similarQuotes ?? [];
 
     const allItems: QuoteLineItem[] = aiResult.lineItems.map((item) => {
       const resolved = item.confidenceScore >= CONFIDENCE_THRESHOLD && item.productCatalogEntryId !== null;
@@ -292,11 +307,15 @@ export class QuoteEngine {
       catalogSource: input.catalogSource,
       jobberRequestId: null,
       status: 'draft',
+      similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: now,
       updatedAt: now,
     };
 
-    return { draft };
+    return {
+      draft,
+      similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
+    };
   }
 
   // ── Rules section builder ─────────────────────────────────────────

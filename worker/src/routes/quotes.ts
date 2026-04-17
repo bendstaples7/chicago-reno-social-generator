@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import {
@@ -10,6 +10,9 @@ import {
   ActivityLogService,
   RulesService,
   RevisionEngine,
+  EmbeddingService,
+  SimilarityEngine,
+  QuoteSyncService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -228,8 +231,24 @@ app.post('/generate', async (c) => {
   try {
     activeRules = await rulesService.getActiveRulesGrouped();
   } catch {
-    // Proceed without rules if fetch fails
     activeRules = [];
+  }
+
+  // Find similar past quotes from the corpus (graceful degradation)
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const similarityEngine = new SimilarityEngine(db, embeddingService);
+  let similarQuotes: SimilarQuote[] = [];
+  try {
+    const results = await similarityEngine.findSimilar(body.customerText ?? '');
+    similarQuotes = results.map((sq) => ({
+      jobberQuoteId: sq.jobberQuoteId,
+      quoteNumber: sq.quoteNumber,
+      title: sq.title,
+      message: sq.message,
+      similarityScore: sq.similarityScore,
+    }));
+  } catch {
+    similarQuotes = [];
   }
 
   const result = await quoteEngine.generateQuote(
@@ -240,6 +259,7 @@ app.post('/generate', async (c) => {
       catalogSource: source,
       manualCatalog: source === 'manual' ? catalog : undefined,
       manualTemplates: source === 'manual' ? templates : undefined,
+      similarQuotes,
     },
     catalog,
     templates,
@@ -527,19 +547,15 @@ app.post('/templates', async (c) => {
 
 /**
  * POST /corpus/sync
- * Corpus sync is not yet ported to the worker.
- * Returns a stub response so the client doesn't get a 404.
+ * Trigger a manual corpus synchronization with Jobber.
  */
 app.post('/corpus/sync', async (c) => {
-  return c.json({
-    totalFetched: 0,
-    newQuotes: 0,
-    updatedQuotes: 0,
-    unchangedQuotes: 0,
-    embeddingsGenerated: 0,
-    durationMs: 0,
-    error: 'Corpus sync is not yet available in the deployed environment. Use the development server to sync.',
-  });
+  const db = c.env.DB;
+  const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
+  const result = await quoteSyncService.sync();
+  return c.json(result);
 });
 
 /**
@@ -548,23 +564,11 @@ app.post('/corpus/sync', async (c) => {
  */
 app.get('/corpus/status', async (c) => {
   const db = c.env.DB;
-  try {
-    const row = await db.prepare(
-      'SELECT total_quotes, last_sync_at FROM quote_corpus_sync_status WHERE id = 1'
-    ).first() as { total_quotes: number; last_sync_at: string | null } | null;
-
-    if (!row) {
-      return c.json({ totalQuotes: 0, lastSyncAt: null });
-    }
-
-    return c.json({
-      totalQuotes: Number(row.total_quotes),
-      lastSyncAt: row.last_sync_at ? new Date(row.last_sync_at).toISOString() : null,
-    });
-  } catch {
-    // Table may not exist yet — return safe defaults
-    return c.json({ totalQuotes: 0, lastSyncAt: null });
-  }
+  const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
+  const status = await quoteSyncService.getStatus();
+  return c.json(status);
 });
 
 /**

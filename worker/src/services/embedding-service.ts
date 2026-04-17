@@ -5,7 +5,8 @@ const DIMENSIONS = 1536;
 const MAX_TOKENS = 8_000;
 const MAX_CHARS = MAX_TOKENS * 4; // ~32,000 chars
 const MAX_BATCH_SIZE = 20;
-const TIMEOUT_MS = 10_000;
+const BASE_TIMEOUT_MS = 10_000;
+const TIMEOUT_PER_ITEM_MS = 1_000;
 
 export class EmbeddingService {
   private readonly apiKey: string;
@@ -79,10 +80,11 @@ export class EmbeddingService {
       });
     }
 
-    // Use the OpenAI embeddings endpoint directly
+    // Scale timeout with batch size
+    const timeoutMs = BASE_TIMEOUT_MS + inputs.length * TIMEOUT_PER_ITEM_MS;
     const embeddingsUrl = 'https://api.openai.com/v1/embeddings';
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(embeddingsUrl, {
@@ -125,7 +127,7 @@ export class EmbeddingService {
         component: 'EmbeddingService',
         operation: 'embed',
         description: isAbort
-          ? 'Embedding generation timed out after 10 seconds.'
+          ? `Embedding generation timed out after ${Math.round(timeoutMs / 1000)} seconds.`
           : `Embedding generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
         recommendedActions: ['Try again'],
       });

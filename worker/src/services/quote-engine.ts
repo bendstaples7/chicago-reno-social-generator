@@ -1,4 +1,5 @@
 import { PlatformError } from '../errors/index.js';
+import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
 import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 30_000;
@@ -102,7 +103,7 @@ export class QuoteEngine {
 
     const userPrompt = this.buildPrompt(input, catalog, templates);
     const systemPrompt = rules && rules.length > 0
-      ? SYSTEM_PROMPT + '\n\n' + this.buildRulesSection(rules)
+      ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(rules)
       : SYSTEM_PROMPT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
@@ -292,7 +293,7 @@ export class QuoteEngine {
         originalText: item.originalText ?? '',
         resolved,
         unmatchedReason: resolved ? undefined : (item.unmatchedReason || 'Low confidence match'),
-        ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
+        ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
       };
     });
 
@@ -322,31 +323,4 @@ export class QuoteEngine {
   }
 
   // ── Rules section builder ─────────────────────────────────────────
-
-  /**
-   * Sanitize ruleIdsApplied from AI response — filter to valid UUID strings only.
-   */
-  private sanitizeRuleIds(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
-  }
-
-  /**
-   * Format active rules as a structured "BUSINESS RULES" prompt section,
-   * grouped by group name with each rule's ID and description listed.
-   */
-  buildRulesSection(rules: RuleGroupWithRules[]): string {
-    const parts: string[] = ['BUSINESS RULES:'];
-
-    for (const group of rules) {
-      if (group.rules.length === 0) continue;
-      parts.push(`\n[${group.name}]`);
-      for (const rule of group.rules) {
-        parts.push(`- (ID: ${rule.id}) ${rule.description}`);
-      }
-    }
-
-    return parts.join('\n');
-  }
 }

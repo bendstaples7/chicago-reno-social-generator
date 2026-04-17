@@ -27,6 +27,7 @@ interface CorpusRecord {
   title: string | null;
   message: string | null;
   quote_status: string;
+  has_embedding: boolean;
 }
 
 const QUOTES_QUERY = `
@@ -97,6 +98,7 @@ export class QuoteSyncService {
 
       const newQuotes: JobberQuoteNode[] = [];
       const changedQuotes: Array<{ node: JobberQuoteNode; textChanged: boolean }> = [];
+      const needsEmbedding: Array<{ quoteId: string; searchableText: string }> = [];
 
       for (const q of quotes) {
         const existing = existingMap.get(q.id);
@@ -110,14 +112,17 @@ export class QuoteSyncService {
           const textChanged = existing.title !== q.title || existing.message !== q.message;
           changedQuotes.push({ node: q, textChanged });
         } else {
+          // Re-enqueue unchanged quotes that are missing embeddings (e.g., from a previous failed batch)
+          if (!existing.has_embedding) {
+            const searchableText = buildSearchableText(q.title, q.message);
+            needsEmbedding.push({ quoteId: q.id, searchableText });
+          }
           result.unchangedQuotes++;
         }
       }
 
       result.newQuotes = newQuotes.length;
       result.updatedQuotes = changedQuotes.length;
-
-      const needsEmbedding: Array<{ quoteId: string; searchableText: string }> = [];
 
       // Upsert new quotes
       for (const q of newQuotes) {
@@ -234,7 +239,7 @@ export class QuoteSyncService {
 
   private async loadExistingCorpus(): Promise<Map<string, CorpusRecord>> {
     const result = await this.db.prepare(
-      'SELECT jobber_quote_id, title, message, quote_status FROM quote_corpus'
+      'SELECT jobber_quote_id, title, message, quote_status, (embedding IS NOT NULL) AS has_embedding FROM quote_corpus'
     ).all();
 
     const map = new Map<string, CorpusRecord>();
@@ -244,6 +249,7 @@ export class QuoteSyncService {
         title: row.title as string | null,
         message: row.message as string | null,
         quote_status: row.quote_status as string,
+        has_embedding: row.has_embedding === 1 || row.has_embedding === true,
       });
     }
     return map;

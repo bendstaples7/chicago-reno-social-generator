@@ -1,4 +1,5 @@
 import { PlatformError } from '../errors/index.js';
+import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
 import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
@@ -91,7 +92,7 @@ export class RevisionEngine {
 
     const userPrompt = this.buildPrompt(input);
     const systemPrompt = input.rules && input.rules.length > 0
-      ? SYSTEM_PROMPT + '\n\n' + this.buildRulesSection(input.rules)
+      ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(input.rules)
       : SYSTEM_PROMPT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);
@@ -229,7 +230,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
-          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else if (item.productCatalogEntryId) {
         const catalogEntry = catalog.find((c) => c.id === item.productCatalogEntryId);
@@ -243,7 +244,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
-          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
         };
       } else {
         finalItem = {
@@ -256,7 +257,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No catalog match',
-          ruleIdsApplied: this.sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
         };
       }
 
@@ -268,23 +269,5 @@ export class RevisionEngine {
     }
 
     return { lineItems, unresolvedItems };
-  }
-
-  private sanitizeRuleIds(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return raw.filter((id): id is string => typeof id === 'string' && uuidPattern.test(id));
-  }
-
-  buildRulesSection(rules: RuleGroupWithRules[]): string {
-    const parts: string[] = ['BUSINESS RULES:'];
-    for (const group of rules) {
-      if (group.rules.length === 0) continue;
-      parts.push(`\n[${group.name}]`);
-      for (const rule of group.rules) {
-        parts.push(`- (ID: ${rule.id}) ${rule.description}`);
-      }
-    }
-    return parts.join('\n');
   }
 }

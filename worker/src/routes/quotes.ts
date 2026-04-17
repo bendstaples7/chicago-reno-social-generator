@@ -566,29 +566,39 @@ app.post('/templates', async (c) => {
 app.post('/corpus/sync', async (c) => {
   const db = c.env.DB;
 
-  // Concurrency guard: check if a sync is already running (claimed within last 10 minutes)
-  const lockRow = await db.prepare(
-    "SELECT last_sync_at, last_sync_error FROM quote_corpus_sync_status WHERE id = 1 AND last_sync_error = '__RUNNING__'"
-  ).first() as { last_sync_at: string | null } | null;
-
-  if (lockRow && lockRow.last_sync_at) {
-    const claimedAt = new Date(lockRow.last_sync_at).getTime();
-    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-    if (claimedAt > tenMinutesAgo) {
-      return c.json({ error: 'A corpus sync is already in progress. Please wait and try again.' }, 409);
-    }
-  }
-
-  // Claim the lock
-  await db.prepare(
-    "UPDATE quote_corpus_sync_status SET last_sync_at = datetime('now'), last_sync_error = '__RUNNING__' WHERE id = 1"
+  // Atomic concurrency guard: claim the lock only if not already running (or stale > 10 min)
+  const claimResult = await db.prepare(
+    `UPDATE quote_corpus_sync_status
+     SET last_sync_at = datetime('now'), last_sync_error = '__RUNNING__'
+     WHERE id = 1 AND (last_sync_error != '__RUNNING__' OR last_sync_error IS NULL
+       OR last_sync_at < datetime('now', '-10 minutes'))`
   ).run();
+
+  if (!claimResult.meta.changes || claimResult.meta.changes === 0) {
+    return c.json({ error: 'A corpus sync is already in progress. Please wait and try again.' }, 409);
+  }
 
   const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
   const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
   const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
-  const result = await quoteSyncService.sync();
-  return c.json(result);
+
+  try {
+    const result = await quoteSyncService.sync();
+    return c.json(result);
+  } finally {
+    // Clear the running marker — sync() already calls updateSyncStatus on success/failure,
+    // but if something unexpected throws before that, ensure the lock is released.
+    try {
+      const stillRunning = await db.prepare(
+        "SELECT 1 FROM quote_corpus_sync_status WHERE id = 1 AND last_sync_error = '__RUNNING__'"
+      ).first();
+      if (stillRunning) {
+        await db.prepare(
+          "UPDATE quote_corpus_sync_status SET last_sync_error = 'Sync terminated unexpectedly' WHERE id = 1 AND last_sync_error = '__RUNNING__'"
+        ).run();
+      }
+    } catch { /* best-effort cleanup */ }
+  }
 });
 
 /**

@@ -15,6 +15,8 @@ export interface RevisionInput {
 export interface RevisionOutput {
   lineItems: QuoteLineItem[];
   unresolvedItems: QuoteLineItem[];
+  /** True when the AI response could not be parsed and the original items were returned unchanged. */
+  revisionFailed?: boolean;
 }
 
 interface AILineItem {
@@ -187,16 +189,20 @@ export class RevisionEngine {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
+      console.warn(`[RevisionEngine] Failed to parse AI response (first 200 chars): ${cleaned.slice(0, 200)}`);
       return {
         lineItems: input.currentLineItems,
         unresolvedItems: input.currentUnresolvedItems,
+        revisionFailed: true,
       };
     }
 
     if (!parsed.lineItems || !Array.isArray(parsed.lineItems)) {
+      console.warn('[RevisionEngine] AI response missing lineItems array');
       return {
         lineItems: input.currentLineItems,
         unresolvedItems: input.currentUnresolvedItems,
+        revisionFailed: true,
       };
     }
 
@@ -232,7 +238,7 @@ export class RevisionEngine {
           productCatalogEntryId: item.productCatalogEntryId,
           productName: catalogEntry?.name ?? item.productName,
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: catalogEntry?.unitPrice ?? item.unitPrice,
+          unitPrice: Math.max(0, catalogEntry?.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,

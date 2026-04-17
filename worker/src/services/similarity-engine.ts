@@ -62,22 +62,29 @@ export class SimilarityEngine {
     const scored: SimilarQuoteResult[] = [];
 
     for (const row of result.results as Record<string, unknown>[]) {
-      const corpusEmbedding: number[] =
-        typeof row.embedding === 'string'
-          ? JSON.parse(row.embedding as string)
-          : row.embedding as number[];
+      try {
+        const corpusEmbedding: number[] =
+          typeof row.embedding === 'string'
+            ? JSON.parse(row.embedding as string)
+            : row.embedding as number[];
 
-      const score = cosineSimilarity(queryEmbedding, corpusEmbedding);
+        const score = cosineSimilarity(queryEmbedding, corpusEmbedding);
 
-      if (score >= SIMILARITY_THRESHOLD) {
-        scored.push({
-          jobberQuoteId: row.jobber_quote_id as string,
-          quoteNumber: row.quote_number as string,
-          title: (row.title as string) ?? '',
-          message: (row.message as string) ?? '',
-          similarityScore: score,
-          searchableText: row.searchable_text as string,
-        });
+        if (score >= SIMILARITY_THRESHOLD) {
+          scored.push({
+            jobberQuoteId: row.jobber_quote_id as string,
+            quoteNumber: row.quote_number as string,
+            title: (row.title as string) ?? '',
+            message: (row.message as string) ?? '',
+            similarityScore: score,
+            searchableText: row.searchable_text as string,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[SimilarityEngine] Skipping malformed embedding for quote ${row.jobber_quote_id ?? row.quote_number}:`,
+          err instanceof Error ? err.message : err,
+        );
       }
     }
 

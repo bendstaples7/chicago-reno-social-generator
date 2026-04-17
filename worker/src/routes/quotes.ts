@@ -235,20 +235,23 @@ app.post('/generate', async (c) => {
   }
 
   // Find similar past quotes from the corpus (graceful degradation)
-  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
-  const similarityEngine = new SimilarityEngine(db, embeddingService);
   let similarQuotes: SimilarQuote[] = [];
-  try {
-    const results = await similarityEngine.findSimilar(body.customerText ?? '');
-    similarQuotes = results.map((sq) => ({
+  const trimmedCustomerText = (body.customerText ?? '').trim();
+  if (trimmedCustomerText) {
+    try {
+      const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
+      const similarityEngine = new SimilarityEngine(db, embeddingService);
+      const results = await similarityEngine.findSimilar(trimmedCustomerText);
+      similarQuotes = results.map((sq) => ({
       jobberQuoteId: sq.jobberQuoteId,
       quoteNumber: sq.quoteNumber,
       title: sq.title,
       message: sq.message,
       similarityScore: sq.similarityScore,
     }));
-  } catch {
-    similarQuotes = [];
+    } catch {
+      similarQuotes = [];
+    }
   }
 
   const result = await quoteEngine.generateQuote(
@@ -384,14 +387,25 @@ app.post('/drafts/:id/revise', async (c) => {
     rules: activeRules,
   });
 
-  // Persist the revision history entry
-  await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
+  // If the AI response couldn't be parsed, inform the user
+  if (revised.revisionFailed) {
+    throw new PlatformError({
+      severity: 'warning',
+      component: 'QuoteRoutes',
+      operation: 'revise',
+      description: 'The AI could not process your feedback. Your draft was not changed. Please try rephrasing your feedback.',
+      recommendedActions: ['Rephrase your feedback and try again'],
+    });
+  }
 
   // Update the draft with revised line items
   const updated = await quoteDraftService.update(draftId, userId, {
     lineItems: revised.lineItems,
     unresolvedItems: revised.unresolvedItems,
   });
+
+  // Persist the revision history entry (after successful update)
+  await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
 
   // Optionally create a rule from the feedback text
   let ruleCreated: { id: string; name: string } | undefined;
@@ -551,8 +565,27 @@ app.post('/templates', async (c) => {
  */
 app.post('/corpus/sync', async (c) => {
   const db = c.env.DB;
+
+  // Concurrency guard: check if a sync is already running (claimed within last 10 minutes)
+  const lockRow = await db.prepare(
+    "SELECT last_sync_at, last_sync_error FROM quote_corpus_sync_status WHERE id = 1 AND last_sync_error = '__RUNNING__'"
+  ).first() as { last_sync_at: string | null } | null;
+
+  if (lockRow && lockRow.last_sync_at) {
+    const claimedAt = new Date(lockRow.last_sync_at).getTime();
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    if (claimedAt > tenMinutesAgo) {
+      return c.json({ error: 'A corpus sync is already in progress. Please wait and try again.' }, 409);
+    }
+  }
+
+  // Claim the lock
+  await db.prepare(
+    "UPDATE quote_corpus_sync_status SET last_sync_at = datetime('now'), last_sync_error = '__RUNNING__' WHERE id = 1"
+  ).run();
+
   const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
-  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
   const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
   const result = await quoteSyncService.sync();
   return c.json(result);
@@ -565,7 +598,7 @@ app.post('/corpus/sync', async (c) => {
 app.get('/corpus/status', async (c) => {
   const db = c.env.DB;
   const { jobberIntegration, activityLog } = await createJobberIntegration(db, c.env);
-  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+  const embeddingService = new EmbeddingService(c.env.AI_TEXT_API_KEY);
   const quoteSyncService = new QuoteSyncService(db, embeddingService, activityLog, jobberIntegration);
   const status = await quoteSyncService.getStatus();
   return c.json(status);

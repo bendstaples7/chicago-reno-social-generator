@@ -200,16 +200,19 @@ export class QuoteSyncService {
    * paginated GraphQL helper. Filters to approved/converted status.
    */
   private async fetchAllQuotes(): Promise<JobberQuoteNode[]> {
-    // Use the integration's graphql infrastructure by fetching templates
-    // (which uses the same quotes query) — but we need the raw nodes.
-    // Instead, we'll do our own paginated fetch using the Jobber API directly.
     const allQuotes: JobberQuoteNode[] = [];
     let after: string | null = null;
     const PAGE_SIZE = 50;
 
     do {
-      const response = await this.executeGraphql(after, PAGE_SIZE);
-      const connection = response?.quotes;
+      const data = await this.jobberIntegration.graphqlRequest<{
+        quotes: {
+          edges: Array<{ node: JobberQuoteNode }>;
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      }>(QUOTES_QUERY, { first: PAGE_SIZE, after });
+
+      const connection = data?.quotes;
       if (!connection || !connection.edges) break;
 
       for (const edge of connection.edges) {
@@ -227,82 +230,6 @@ export class QuoteSyncService {
     } while (true);
 
     return allQuotes;
-  }
-
-  /**
-   * Execute a GraphQL query against the Jobber API.
-   * Reuses the access token from the JobberIntegration instance.
-   */
-  private async executeGraphql(
-    after: string | null,
-    pageSize: number,
-  ): Promise<{
-    quotes: {
-      edges: Array<{ node: JobberQuoteNode }>;
-      pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    };
-  }> {
-    // Access the integration's token by making a test call
-    // We need to use fetch directly since the integration doesn't expose raw graphql
-    const accessToken = (this.jobberIntegration as any).accessToken as string;
-    const apiUrl = (this.jobberIntegration as any).apiUrl as string || 'https://api.getjobber.com/api/graphql';
-
-    if (!accessToken) {
-      throw new Error('Jobber access token is not available');
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
-    try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
-        },
-        body: JSON.stringify({
-          query: QUOTES_QUERY,
-          variables: { first: pageSize, after },
-        }),
-        signal: controller.signal,
-      });
-
-      if (response.status === 429) {
-        // Rate limited — wait and retry
-        await new Promise((r) => setTimeout(r, 20_000));
-        return this.executeGraphql(after, pageSize);
-      }
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Jobber API error (${response.status}): ${text}`);
-      }
-
-      const json = (await response.json()) as {
-        data?: {
-          quotes: {
-            edges: Array<{ node: JobberQuoteNode }>;
-            pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          };
-        };
-        errors?: Array<{ message: string }>;
-      };
-
-      if (json.errors && json.errors.length > 0) {
-        const isThrottled = json.errors.some((e) => /throttle/i.test(e.message));
-        if (isThrottled) {
-          await new Promise((r) => setTimeout(r, 20_000));
-          return this.executeGraphql(after, pageSize);
-        }
-        throw new Error(`Jobber GraphQL error: ${json.errors[0].message}`);
-      }
-
-      return json.data!;
-    } finally {
-      clearTimeout(timeout);
-    }
   }
 
   private async loadExistingCorpus(): Promise<Map<string, CorpusRecord>> {
@@ -323,23 +250,17 @@ export class QuoteSyncService {
   }
 
   private async upsertQuote(node: JobberQuoteNode, searchableText: string): Promise<void> {
-    const existing = await this.db.prepare(
-      'SELECT id FROM quote_corpus WHERE jobber_quote_id = ?'
-    ).bind(node.id).first();
-
-    if (existing) {
-      await this.db.prepare(
-        `UPDATE quote_corpus SET
-           quote_number = ?, title = ?, message = ?, quote_status = ?,
-           searchable_text = ?, updated_at = datetime('now')
-         WHERE jobber_quote_id = ?`
-      ).bind(node.quoteNumber, node.title, node.message, node.quoteStatus, searchableText, node.id).run();
-    } else {
-      await this.db.prepare(
-        `INSERT INTO quote_corpus (id, jobber_quote_id, quote_number, title, message, quote_status, searchable_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(crypto.randomUUID(), node.id, node.quoteNumber, node.title, node.message, node.quoteStatus, searchableText).run();
-    }
+    await this.db.prepare(
+      `INSERT INTO quote_corpus (id, jobber_quote_id, quote_number, title, message, quote_status, searchable_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(jobber_quote_id) DO UPDATE SET
+         quote_number = excluded.quote_number,
+         title = excluded.title,
+         message = excluded.message,
+         quote_status = excluded.quote_status,
+         searchable_text = excluded.searchable_text,
+         updated_at = datetime('now')`
+    ).bind(crypto.randomUUID(), node.id, node.quoteNumber, node.title, node.message, node.quoteStatus, searchableText).run();
   }
 
   private async generateEmbeddings(

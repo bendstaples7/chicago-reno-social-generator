@@ -52,17 +52,13 @@ export class RulesService {
     const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
     const id = crypto.randomUUID();
 
-    // Assign priority_order to one past the current max in the group
-    const orderRow = await this.db.prepare(
-      'SELECT COALESCE(MAX(priority_order), -1) + 1 AS next_order FROM rules WHERE rule_group_id = ?'
-    ).bind(groupId).first() as { next_order: number } | null;
-    const nextOrder = orderRow?.next_order ?? 0;
-
     try {
+      // Atomic INSERT with computed priority_order to avoid race conditions
       await this.db.prepare(
         `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(id, data.name.trim(), data.description.trim(), groupId, nextOrder, (data.isActive ?? true) ? 1 : 0).run();
+         SELECT ?, ?, ?, ?, COALESCE(MAX(priority_order), -1) + 1, ?
+         FROM rules WHERE rule_group_id = ?`
+      ).bind(id, data.name.trim(), data.description.trim(), groupId, (data.isActive ?? true) ? 1 : 0, groupId).run();
 
       const row = await this.db.prepare(
         'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules WHERE id = ?'
@@ -227,17 +223,13 @@ export class RulesService {
 
     const id = crypto.randomUUID();
 
-    // Place new group after existing ones
-    const orderRow = await this.db.prepare(
-      'SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM rule_groups'
-    ).first() as { next_order: number } | null;
-    const nextOrder = orderRow?.next_order ?? 0;
-
     try {
+      // Atomic INSERT with computed display_order to avoid race conditions
       await this.db.prepare(
         `INSERT INTO rule_groups (id, name, description, display_order)
-         VALUES (?, ?, ?, ?)`
-      ).bind(id, data.name.trim(), data.description?.trim() ?? null, nextOrder).run();
+         SELECT ?, ?, ?, COALESCE(MAX(display_order), -1) + 1
+         FROM rule_groups`
+      ).bind(id, data.name.trim(), data.description?.trim() ?? null).run();
 
       const row = await this.db.prepare(
         'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
@@ -274,6 +266,35 @@ export class RulesService {
         description: 'Group name cannot be empty.',
         recommendedActions: ['Provide a non-empty name'],
       });
+    }
+
+    // Prevent renaming the default "General" group
+    if (data.name !== undefined) {
+      const defaultGroupId = await this.getDefaultGroupId();
+      if (groupId === defaultGroupId) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'RulesService',
+          operation: 'updateGroup',
+          description: "The default 'General' group cannot be renamed.",
+          recommendedActions: ['Create a new group instead'],
+        });
+      }
+
+      // Check for duplicate group name (case-insensitive), excluding the current group
+      const duplicate = await this.db.prepare(
+        'SELECT id FROM rule_groups WHERE name = ? COLLATE NOCASE AND id != ?'
+      ).bind(data.name.trim(), groupId).first();
+
+      if (duplicate) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'RulesService',
+          operation: 'updateGroup',
+          description: `A group named '${data.name.trim()}' already exists.`,
+          recommendedActions: ['Choose a different name'],
+        });
+      }
     }
 
     const setClauses: string[] = [];
@@ -351,7 +372,9 @@ export class RulesService {
       });
     }
 
-    if (group.name === 'General') {
+    const defaultGroupId = await this.getDefaultGroupId();
+
+    if (group.id === defaultGroupId) {
       throw new PlatformError({
         severity: 'error',
         component: 'RulesService',
@@ -360,8 +383,6 @@ export class RulesService {
         recommendedActions: ['Delete or reassign rules individually instead'],
       });
     }
-
-    const defaultGroupId = await this.getDefaultGroupId();
 
     // Use batch to reassign rules then delete the group atomically
     await this.db.batch([

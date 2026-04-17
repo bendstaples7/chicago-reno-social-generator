@@ -12,5 +12,5 @@ CREATE TABLE IF NOT EXISTS quote_corpus (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_quote_corpus_jobber_id ON quote_corpus(jobber_quote_id);
+-- Note: jobber_quote_id already has a UNIQUE constraint which creates an implicit index
 CREATE INDEX IF NOT EXISTS idx_quote_corpus_status ON quote_corpus(quote_status);

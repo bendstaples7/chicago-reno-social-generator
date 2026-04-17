@@ -129,6 +129,7 @@ export class QuoteDraftService {
     // Replace line items if provided
     if (updates.lineItems !== undefined || updates.unresolvedItems !== undefined) {
       statements.push(
+        this.db.prepare('DELETE FROM line_item_rules WHERE quote_draft_id = ?').bind(draftId),
         this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
       );
 
@@ -177,6 +178,8 @@ export class QuoteDraftService {
   async delete(draftId: string, userId: string): Promise<boolean> {
     // D1 doesn't support CASCADE reliably in all cases, so delete line items first
     await this.db.batch([
+      this.db.prepare('DELETE FROM line_item_rules WHERE quote_draft_id = ?').bind(draftId),
+      this.db.prepare('DELETE FROM quote_revision_history WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM quote_media WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM quote_line_items WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM quote_drafts WHERE id = ? AND user_id = ?').bind(draftId, userId),
@@ -204,8 +207,20 @@ export class QuoteDraftService {
    * Persist a revision history entry for a draft.
    */
   async addRevisionEntry(draftId: string, userId: string, feedbackText: string): Promise<{ id: string; quoteDraftId: string; feedbackText: string; createdAt: Date }> {
-    // Verify ownership
-    await this.getById(draftId, userId);
+    // Lightweight ownership check
+    const exists = await this.db.prepare(
+      'SELECT id FROM quote_drafts WHERE id = ? AND user_id = ?'
+    ).bind(draftId, userId).first();
+
+    if (!exists) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteDraftService',
+        operation: 'addRevisionEntry',
+        description: 'The quote draft was not found or you do not have permission.',
+        recommendedActions: ['Verify the draft exists in your quotes list'],
+      });
+    }
 
     const id = crypto.randomUUID();
     await this.db.prepare(

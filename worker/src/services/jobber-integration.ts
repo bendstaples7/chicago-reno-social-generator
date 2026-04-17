@@ -393,7 +393,7 @@ export class JobberIntegration {
    * Automatically refreshes the access token on 401 and retries once.
    * Retries on throttle errors with exponential backoff.
    */
-  private async graphqlRequest<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  async graphqlRequest<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
     const MAX_RETRIES = 3;
     const BASE_DELAY_MS = 2000;
 

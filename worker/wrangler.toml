@@ -27,8 +27,19 @@ max_retries = 2
 AI_TEXT_API_URL = "https://api.openai.com/v1/chat/completions"
 S3_PUBLIC_URL = "https://pub-afd5afa0999c424cac970f4b4e671bd6.r2.dev"
 
-# Secrets (set via `wrangler secret put`):
-# AI_TEXT_API_KEY
-# FB_PAGE_ACCESS_TOKEN# IG_BUSINESS_ACCOUNT_ID
-# CHANNEL_ENCRYPTION_KEY
-# INSTAGRAM_CLIENT_SECRET
+# Secrets (set via `wrangler secret put <NAME>`):
+# All secrets below are REQUIRED for the deployed worker to function correctly.
+# Missing secrets cause silent failures (e.g. token refresh fails with empty credentials).
+#
+# AI_TEXT_API_KEY           — OpenAI API key for text generation and embeddings
+# CHANNEL_ENCRYPTION_KEY   — AES key for encrypting stored Instagram tokens
+# FB_PAGE_ACCESS_TOKEN     — Facebook Page access token for Instagram publishing
+# IG_BUSINESS_ACCOUNT_ID   — Instagram Business account ID
+# INSTAGRAM_CLIENT_ID      — Instagram OAuth app client ID
+# INSTAGRAM_CLIENT_SECRET  — Instagram OAuth app client secret
+# JOBBER_CLIENT_ID         — Jobber OAuth app client ID (required for token refresh)
+# JOBBER_CLIENT_SECRET     — Jobber OAuth app client secret (required for token refresh)
+# JOBBER_ACCESS_TOKEN      — Jobber API access token (initial; refreshed automatically)
+# JOBBER_REFRESH_TOKEN     — Jobber API refresh token (initial; rotated automatically)
+# JOBBER_WEB_EMAIL         — Jobber login email (used by cookie refresh workflow)
+# JOBBER_WEB_PASSWORD      — Jobber login password (used by cookie refresh workflow)

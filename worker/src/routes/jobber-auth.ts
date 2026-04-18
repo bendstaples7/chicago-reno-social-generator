@@ -49,6 +49,11 @@ app.get('/callback', async (c) => {
 
   const clientId = c.env.JOBBER_CLIENT_ID;
   const clientSecret = c.env.JOBBER_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return c.json({ error: 'JOBBER_CLIENT_ID or JOBBER_CLIENT_SECRET is not configured' }, 500);
+  }
+
   const redirectUri = new URL('/api/jobber-auth/callback', c.req.url).toString();
 
   // Exchange authorization code for tokens
@@ -91,9 +96,7 @@ app.get('/callback', async (c) => {
       <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
         <h2>Jobber OAuth Tokens Refreshed</h2>
         <p>Tokens have been saved to your local D1 database. The worker will use these automatically.</p>
-        <p>You can also update your <code>.dev.vars</code> file with these values:</p>
-        <pre style="background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto;">JOBBER_ACCESS_TOKEN=${data.access_token}
-JOBBER_REFRESH_TOKEN=${data.refresh_token}</pre>
+        <p>Tokens have also been persisted to D1. If you need to update <code>.dev.vars</code>, run <code>node scripts/sync-tokens.mjs</code> to pull the latest tokens.</p>
         <p style="color: #666; font-size: 14px;">Tokens expire periodically. The worker will auto-refresh them and persist new tokens to D1.</p>
       </body>
     </html>

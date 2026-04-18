@@ -39,7 +39,8 @@ export function parseTarget(args) {
   if (idx === -1 || idx + 1 >= args.length) return 'both';
   const value = args[idx + 1];
   if (['local', 'remote', 'both'].includes(value)) return value;
-  return 'both';
+  console.error(`[sync-cookies] ERROR: Invalid --target value '${value}'. Must be 'local', 'remote', or 'both'.`);
+  process.exit(1);
 }
 
 /**
@@ -92,7 +93,7 @@ function checkCookies(location) {
     const parsed = JSON.parse(result);
     const rows = parsed[0]?.results || [];
     if (rows.length > 0) {
-      const expiresAt = new Date(rows[0].expires_at + 'Z').getTime();
+      const expiresAt = new Date(rows[0].expires_at).getTime();
       if (Date.now() < expiresAt) {
         return { valid: true, cookies: rows[0].cookies, expiresAt: rows[0].expires_at };
       }
@@ -210,11 +211,17 @@ async function validateCookies(cookieString) {
       'Cookie': cookieString,
       'User-Agent': USER_AGENT,
     },
-    body: JSON.stringify({ query: '{ __typename }' }),
+    body: JSON.stringify({ query: '{ account { id } }' }),
   });
+  if (!testResp.ok) {
+    throw new Error(`Cookie validation failed: HTTP ${testResp.status}`);
+  }
   const testData = await testResp.json();
   if (testData?.errors?.length > 0) {
     throw new Error(`Cookie validation failed: ${testData.errors[0]?.message}`);
+  }
+  if (!testData?.data?.account?.id) {
+    throw new Error('Cookie validation failed: no account data returned (cookies may not be authenticated)');
   }
   console.log('[sync-cookies] Cookie validation passed.');
 }

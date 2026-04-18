@@ -95,6 +95,7 @@ export default function QuoteInputPage() {
   };
 
   const handleRequestClear = () => {
+    ++selectTokenRef.current;
     setJobberRequestId(null);
     setFormData(null);
     setLoadingFormData(false);
@@ -104,10 +105,12 @@ export default function QuoteInputPage() {
 
   const handleReconnected = useCallback(async () => {
     if (!jobberRequestId) return;
+    const token = selectTokenRef.current;
     setSessionExpired(false);
     setLoadingFormData(true);
     try {
       const { formData: fetchedFormData, sessionExpired: expired } = await fetchJobberRequestFormData(jobberRequestId);
+      if (token !== selectTokenRef.current) return;
       setSessionExpired(expired);
       if (fetchedFormData) {
         setFormData(fetchedFormData);
@@ -116,9 +119,12 @@ export default function QuoteInputPage() {
         }
       }
     } catch {
+      if (token !== selectTokenRef.current) return;
       // Keep existing state on failure
     } finally {
-      setLoadingFormData(false);
+      if (token === selectTokenRef.current) {
+        setLoadingFormData(false);
+      }
     }
   }, [jobberRequestId]);
 

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler d1 migrations apply DB --local && node scripts/sync-tokens.mjs && node scripts/sync-cookies.mjs && wrangler dev",
+    "dev": "wrangler d1 migrations apply DB --local && node scripts/sync-tokens.mjs && node scripts/sync-cookies.mjs --target local && wrangler dev",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "build": "tsc -b"
   },

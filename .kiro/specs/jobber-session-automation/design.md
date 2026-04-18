@@ -156,7 +156,7 @@ The existing script is refactored to support a `--target` flag while preserving 
 
 **Key functions (conceptual):**
 
-```
+```typescript
 parseTarget(args: string[]): 'local' | 'remote' | 'both'
 readCredentials(): { email: string, password: string } | null
 checkExistingCookies(target: 'local' | 'remote'): boolean
@@ -197,7 +197,7 @@ async getStatus(): Promise<{ configured: boolean; expired: boolean }> {
 
   if (!row) return { configured: false, expired: false };
 
-  const expiresAt = new Date(row.expires_at + 'Z').getTime();
+  const expiresAt = new Date(row.expires_at).getTime();
   const expired = Date.now() > expiresAt;
   return { configured: true, expired };
 }
@@ -220,7 +220,7 @@ interface FormDataResponse {
 
 **Logic changes:**
 
-```
+```text
 1. Load cookies from D1
 2. If cookies are null (expired or missing):
    a. Set sessionExpired = true

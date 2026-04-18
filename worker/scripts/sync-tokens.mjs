@@ -38,7 +38,9 @@ function queryTokens(flag) {
 }
 
 function upsertTokens(flag, accessToken, refreshToken) {
-  const sql = `INSERT INTO jobber_tokens (id, access_token, refresh_token, updated_at) VALUES ('default', '${accessToken}', '${refreshToken}', datetime('now')) ON CONFLICT (id) DO UPDATE SET access_token = excluded.access_token, refresh_token = excluded.refresh_token, updated_at = excluded.updated_at;`;
+  const escapedAccess = accessToken.replace(/'/g, "''");
+  const escapedRefresh = refreshToken.replace(/'/g, "''");
+  const sql = `INSERT INTO jobber_tokens (id, access_token, refresh_token, updated_at) VALUES ('default', '${escapedAccess}', '${escapedRefresh}', datetime('now')) ON CONFLICT (id) DO UPDATE SET access_token = excluded.access_token, refresh_token = excluded.refresh_token, updated_at = excluded.updated_at;`;
   const tmpFile = join(tmpdir(), `sync-tokens-${Date.now()}.sql`);
   try {
     writeFileSync(tmpFile, sql, 'utf8');
@@ -77,8 +79,8 @@ try {
     console.log('[sync-tokens] Copied tokens from local → production.');
   } else {
     // Both have tokens — newer wins
-    const localTime = new Date(local.updated_at + 'Z').getTime();
-    const remoteTime = new Date(remote.updated_at + 'Z').getTime();
+    const localTime = new Date(local.updated_at).getTime();
+    const remoteTime = new Date(remote.updated_at).getTime();
 
     if (localTime > remoteTime) {
       upsertTokens('--remote', local.access_token, local.refresh_token);

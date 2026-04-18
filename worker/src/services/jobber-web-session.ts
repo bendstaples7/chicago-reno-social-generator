@@ -73,7 +73,7 @@ export class JobberWebSession {
 
       if (!row) return { configured: false, expired: false };
 
-      const expiresAt = new Date(row.expires_at + 'Z').getTime();
+      const expiresAt = new Date(row.expires_at).getTime();
       const expired = Date.now() > expiresAt;
       return { configured: true, expired };
     } catch {
@@ -107,7 +107,7 @@ export class JobberWebSession {
 
       if (!row) return null;
 
-      const expiresAt = new Date(row.expires_at + 'Z').getTime();
+      const expiresAt = new Date(row.expires_at).getTime();
       if (Date.now() > expiresAt) return null;
 
       return row.cookies;

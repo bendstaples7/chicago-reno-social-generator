@@ -13,6 +13,7 @@ export default function SessionExpiredBanner({ onReconnected }: SessionExpiredBa
   const [dismissed, setDismissed] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingInFlightRef = useRef(false);
 
   const stopPolling = () => {
     if (intervalRef.current) {
@@ -27,7 +28,7 @@ export default function SessionExpiredBanner({ onReconnected }: SessionExpiredBa
   };
 
   const handleReconnectClick = () => {
-    window.open('/api/jobber-auth/set-cookies', '_blank');
+    window.open('/api/jobber-auth/set-cookies', '_blank', 'noopener,noreferrer');
     setPolling(true);
   };
 
@@ -35,15 +36,19 @@ export default function SessionExpiredBanner({ onReconnected }: SessionExpiredBa
     if (!polling) return;
 
     intervalRef.current = setInterval(async () => {
+      if (pollingInFlightRef.current) return;
+      pollingInFlightRef.current = true;
       try {
         const status = await checkJobberSessionStatus();
-        if (!status.expired) {
+        if (status.configured && !status.expired) {
           stopPolling();
           setDismissed(true);
           onReconnected();
         }
       } catch {
         // Silently retry on next interval
+      } finally {
+        pollingInFlightRef.current = false;
       }
     }, POLL_INTERVAL_MS);
 

@@ -14,16 +14,17 @@
  *   0 — all secrets synced (or dry-run completed)
  *   1 — failure (missing .dev.vars, wrangler errors)
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
-function run(cmd, input) {
-  return execSync(cmd, {
+function runWrangler(args, input) {
+  return execFileSync('npx', ['wrangler', ...args], {
     encoding: 'utf8',
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
+    shell: true,
   });
 }
 
@@ -52,10 +53,11 @@ function parseDevVars() {
 
 function getExistingSecrets() {
   try {
-    const output = run('npx wrangler secret list');
+    const output = runWrangler(['secret', 'list']);
     const secrets = JSON.parse(output);
     return new Set(secrets.map((s) => s.name));
-  } catch {
+  } catch (err) {
+    console.warn('[sync-secrets] Could not list existing secrets:', err.message || err);
     return new Set();
   }
 }
@@ -74,7 +76,7 @@ if (DRY_RUN) {
 
 const existing = getExistingSecrets();
 let synced = 0;
-let skipped = 0;
+let planned = 0;
 let failed = 0;
 
 for (const { key, value } of vars) {
@@ -82,12 +84,12 @@ for (const { key, value } of vars) {
 
   if (DRY_RUN) {
     console.log(`  ${status === 'create' ? '+ CREATE' : '~ UPDATE'} ${key}`);
-    synced++;
+    planned++;
     continue;
   }
 
   try {
-    run(`npx wrangler secret put ${key}`, value);
+    runWrangler(['secret', 'put', key], value);
     console.log(`  ✅ ${key} (${status}d)`);
     synced++;
   } catch (err) {
@@ -96,5 +98,9 @@ for (const { key, value } of vars) {
   }
 }
 
-console.log(`\n[sync-secrets] Done. ${synced} synced, ${skipped} skipped, ${failed} failed.`);
+if (DRY_RUN) {
+  console.log(`\n[sync-secrets] Dry run complete. ${planned} secret(s) would be synced.`);
+} else {
+  console.log(`\n[sync-secrets] Done. ${synced} synced, ${failed} failed.`);
+}
 if (failed > 0) process.exit(1);

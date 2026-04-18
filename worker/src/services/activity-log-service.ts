@@ -8,18 +8,24 @@ export class ActivityLogService {
   }
 
   async log(entry: Omit<ActivityLogEntry, 'id' | 'createdAt'>): Promise<void> {
-    const id = crypto.randomUUID();
-    await this.db.prepare(
-      'INSERT INTO activity_log_entries (id, user_id, component, operation, severity, description, recommended_action) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(
-      id,
-      entry.userId,
-      entry.component,
-      entry.operation,
-      entry.severity,
-      entry.description,
-      entry.recommendedAction ?? null,
-    ).run();
+    try {
+      const id = crypto.randomUUID();
+      await this.db.prepare(
+        'INSERT INTO activity_log_entries (id, user_id, component, operation, severity, description, recommended_action) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(
+        id,
+        entry.userId,
+        entry.component,
+        entry.operation,
+        entry.severity,
+        entry.description,
+        entry.recommendedAction ?? null,
+      ).run();
+    } catch (err) {
+      // Log failures are non-fatal — don't crash the caller
+      // (e.g. userId='system' violates FK constraint on activity_log_entries)
+      console.warn('[ActivityLog] Failed to write log entry:', err instanceof Error ? err.message : err);
+    }
   }
 
   async getEntries(userId: string, pagination: PaginationParams): Promise<ActivityLogEntry[]> {

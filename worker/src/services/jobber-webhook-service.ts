@@ -319,13 +319,13 @@ export class JobberWebhookService {
         (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
-         title = excluded.title,
-         client_name = excluded.client_name,
-         description = excluded.description,
-         request_body = excluded.request_body,
-         image_urls = excluded.image_urls,
+         title = COALESCE(excluded.title, jobber_webhook_requests.title),
+         client_name = COALESCE(excluded.client_name, jobber_webhook_requests.client_name),
+         description = COALESCE(excluded.description, jobber_webhook_requests.description),
+         request_body = COALESCE(excluded.request_body, jobber_webhook_requests.request_body),
+         image_urls = COALESCE(excluded.image_urls, jobber_webhook_requests.image_urls),
          raw_payload = excluded.raw_payload,
-         processed_at = excluded.processed_at`
+         processed_at = COALESCE(excluded.processed_at, jobber_webhook_requests.processed_at)`
     ).bind(
       crypto.randomUUID(),
       jobberRequestId,

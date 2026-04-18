@@ -3,12 +3,6 @@ name: Deploy Worker
 on:
   push:
     branches: [main]
-    paths:
-      - 'worker/**'
-      - 'shared/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tests/**'
   workflow_dispatch:
 
 jobs:

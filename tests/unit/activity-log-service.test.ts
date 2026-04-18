@@ -83,15 +83,22 @@ describe('ActivityLogService', () => {
         return stmt;
       });
 
-      await expect(
-        service.log({
-          userId: 'user-789',
-          component: 'AuthModule',
-          operation: 'login',
-          severity: 'warning',
-          description: 'Slow login.',
-        }),
-      ).rejects.toThrow('connection refused');
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await service.log({
+        userId: 'user-789',
+        component: 'AuthModule',
+        operation: 'login',
+        severity: 'warning',
+        description: 'Slow login.',
+      });
+
+      // log() swallows errors to avoid crashing callers (e.g. system-level activity logs)
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[ActivityLog] Failed to write log entry:',
+        'connection refused',
+      );
+      consoleSpy.mockRestore();
     });
   });
 

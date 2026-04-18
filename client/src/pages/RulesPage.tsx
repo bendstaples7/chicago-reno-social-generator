@@ -37,6 +37,7 @@ export default function RulesPage() {
   const [savingGroup, setSavingGroup] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     setLoadError(null);
     try {
       const data = await fetchRules();
@@ -374,7 +375,7 @@ export default function RulesPage() {
         </p>
       )}
 
-      {loadError && groups.length === 0 && (
+      {loadError && (
         <div
           role="alert"
           style={{

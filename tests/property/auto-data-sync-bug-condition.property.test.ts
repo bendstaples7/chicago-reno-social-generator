@@ -197,6 +197,9 @@ describe('Scenario B — Rules page shows error with retry on fetch failure', ()
     // BUG: empty-state IS shown with no error message → FAILS on unfixed code
     const errorEl = screen.queryByText(/failed to load|error|try again/i);
     expect(errorEl).not.toBeNull();
+
+    // The misleading empty-state text must NOT be rendered when an error occurred
+    expect(screen.queryByText(/No rule groups found/)).toBeNull();
   });
 });
 
@@ -211,7 +214,7 @@ describe('Scenario B — Rules page shows error with retry on fetch failure', ()
 /** A request is "incomplete" when it lacks description, notes, AND images. */
 function isIncompleteRequest(req: JobberCustomerRequest): boolean {
   const hasDescription = !!req.description && req.description.trim().length > 0;
-  const hasNotes = req.notes && req.notes.length > 0;
+  const hasNotes = (req.notes && req.notes.length > 0) || (req.structuredNotes && req.structuredNotes.length > 0);
   const hasImages = req.imageUrls && req.imageUrls.length > 0;
   return !hasDescription && !hasNotes && !hasImages;
 }
@@ -253,9 +256,11 @@ const arbMixedRequestList: fc.Arbitrary<JobberCustomerRequest[]> = fc
     fc.array(arbCompleteRequest, { minLength: 0, maxLength: 5 }),
     fc.array(arbIncompleteRequest, { minLength: 1, maxLength: 5 }),
   )
-  .map(([complete, incomplete]) =>
-    [...complete, ...incomplete].sort(() => Math.random() - 0.5),
-  );
+  .chain(([complete, incomplete]) => {
+    const combined = [...complete, ...incomplete];
+    // Use fc-controlled shuffle for reproducibility
+    return fc.shuffledSubarray(combined, { minLength: combined.length, maxLength: combined.length });
+  });
 
 describe('Scenario A — Jobber request list auto-enrichment', () => {
   it('isIncompleteRequest correctly identifies incomplete requests (property)', () => {

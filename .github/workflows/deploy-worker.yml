@@ -20,7 +20,7 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npx vitest --run --exclude 'tests/property/auto-data-sync-bug-condition.property.test.ts'
+        run: npm test
 
       - name: Apply D1 migrations
         run: npx wrangler d1 migrations apply DB --remote

@@ -311,9 +311,9 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
       ? routeSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
       : routeSource.slice(handlerStart);
 
-    // BUG: The handler does NOT contain any fetchRequestDetail call.
-    // On unfixed code this assertion FAILS because the enrichment logic is missing.
-    expect(handlerBody).toMatch(/fetchRequestDetail/);
+    // The handler enriches requests by merging webhook data (description, notes, images).
+    // On unfixed code this assertion FAILS because the webhook merge enrichment logic is missing.
+    expect(handlerBody).toMatch(/webhookRequests|getWebhookRequests/i);
   });
 
   it('enrichment should be triggered for incomplete requests in a mixed list (property)', async () => {
@@ -344,8 +344,8 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
           ? routeSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
           : routeSource.slice(handlerStart);
 
-        // BUG: No enrichment logic → FAILS on unfixed code
-        expect(handlerBody).toMatch(/fetchRequestDetail/);
+        // The handler enriches via webhook merge — FAILS on unfixed code
+        expect(handlerBody).toMatch(/webhookRequests|getWebhookRequests/i);
 
         // Additionally verify the enrichment is capped at 5
         expect(enrichmentCandidates.length).toBeLessThanOrEqual(5);

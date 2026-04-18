@@ -683,14 +683,29 @@ app.get('/jobber/requests/:id', async (c) => {
 /**
  * GET /jobber/requests/:id/form-data
  * Fetch the form submission data for a specific Jobber request.
- * Builds form data from stored webhook/API data since the Jobber web
- * session (Auth0 cookie-based) is not available in the Worker environment.
+ * Tries the internal Jobber API first (requires web session cookies),
+ * then falls back to building form data from stored webhook/API data.
  */
 app.get('/jobber/requests/:id/form-data', async (c) => {
   const db = c.env.DB;
   const requestId = c.req.param('id');
 
-  // Build form data from webhook/API data stored in D1
+  // Try the internal Jobber API via stored web session cookies
+  let sessionExpired = false;
+  try {
+    const { JobberWebSession } = await import('../services/jobber-web-session.js');
+    const webSession = new JobberWebSession(db);
+    const { formData: webFormData, sessionExpired: webSessionExpired } = await webSession.fetchRequestFormData(requestId);
+    sessionExpired = webSessionExpired;
+    if (webFormData) {
+      return c.json({ formData: webFormData, sessionExpired: false });
+    }
+  } catch (err) {
+    console.warn('[quotes/form-data] Web session fetch failed:', err instanceof Error ? err.message : err);
+    // Non-auth error — don't flag as session expired
+  }
+
+  // Fallback: build form data from webhook/API data stored in D1
   let row = await db.prepare(
     `SELECT title, client_name, description, request_body, image_urls
      FROM jobber_webhook_requests
@@ -762,7 +777,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
   }
 
   if (!row) {
-    return c.json({ formData: null });
+    return c.json({ formData: null, sessionExpired });
   }
 
   const sections: Array<{ label: string; sortOrder: number; answers: Array<{ label: string; value: string | null }> }> = [];
@@ -806,7 +821,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
   }
 
   if (sections.length === 0) {
-    return c.json({ formData: null });
+    return c.json({ formData: null, sessionExpired });
   }
 
   return c.json({
@@ -814,6 +829,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
       sections,
       text: textParts.join('\n\n'),
     },
+    sessionExpired,
   });
 });
 

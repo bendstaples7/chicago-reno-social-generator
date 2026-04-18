@@ -296,15 +296,20 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
       'utf-8',
     );
 
-    // Extract the GET /jobber/requests handler body.
-    // It starts after "app.get('/jobber/requests'" and ends before the next
-    // "app.get('/jobber/requests/:id'" handler.
-    const handlerStart = routeSource.indexOf("app.get('/jobber/requests'");
-    const nextHandler = routeSource.indexOf(
-      "app.get('/jobber/requests/:id'",
-      handlerStart + 1,
-    );
-    const handlerBody = routeSource.slice(handlerStart, nextHandler);
+    // Extract the GET /jobber/requests LIST handler body (not the /:id handler).
+    // Use a regex to match the exact list route signature: app.get('/jobber/requests',
+    // This avoids matching /jobber/requests/:id routes that appear earlier in the file.
+    const listRouteRegex = /app\.get\('\/jobber\/requests'\s*,/;
+    const listRouteMatch = routeSource.match(listRouteRegex);
+    expect(listRouteMatch).not.toBeNull();
+    const handlerStart = listRouteMatch!.index!;
+
+    // Find the next top-level route definition after the list handler
+    const restOfFile = routeSource.slice(handlerStart + 1);
+    const nextRouteOffset = restOfFile.search(/\napp\./);
+    const handlerBody = nextRouteOffset > -1
+      ? routeSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
+      : routeSource.slice(handlerStart);
 
     // BUG: The handler does NOT contain any fetchRequestDetail call.
     // On unfixed code this assertion FAILS because the enrichment logic is missing.
@@ -327,14 +332,17 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
           resolve(__dirname, '../../worker/src/routes/quotes.ts'),
           'utf-8',
         );
-        const handlerStart = routeSource.indexOf(
-          "app.get('/jobber/requests'",
-        );
-        const nextHandler = routeSource.indexOf(
-          "app.get('/jobber/requests/:id'",
-          handlerStart + 1,
-        );
-        const handlerBody = routeSource.slice(handlerStart, nextHandler);
+        // Match the exact list route: app.get('/jobber/requests', (not /:id)
+        const listRouteRegex = /app\.get\('\/jobber\/requests'\s*,/;
+        const listRouteMatch = routeSource.match(listRouteRegex);
+        expect(listRouteMatch).not.toBeNull();
+        const handlerStart = listRouteMatch!.index!;
+
+        const restOfFile = routeSource.slice(handlerStart + 1);
+        const nextRouteOffset = restOfFile.search(/\napp\./);
+        const handlerBody = nextRouteOffset > -1
+          ? routeSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
+          : routeSource.slice(handlerStart);
 
         // BUG: No enrichment logic → FAILS on unfixed code
         expect(handlerBody).toMatch(/fetchRequestDetail/);

@@ -43,15 +43,15 @@ npm run test:watch
 
 # Dev servers (run these manually in separate terminals)
 npm run dev:client    # Vite dev server on :5173, proxies /api to :8787
-npm run dev:worker    # wrangler dev on :8787
+npm run dev:worker    # applies D1 migrations then starts wrangler dev on :8787
 
 # Build
 npm run build:client
 npm run build:worker
 
 # Worker (from worker/ directory)
-npm run dev           # wrangler dev
-npm run deploy        # wrangler deploy
+npm run dev           # applies local D1 migrations + wrangler dev
+npm run deploy        # applies remote D1 migrations + wrangler deploy
 npm run build         # tsc -b
 ```
 

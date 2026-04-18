@@ -9,4 +9,11 @@
 - [x] **Task 7: Migrate property tests.** In `tests/property/auto-data-sync-preservation.property.test.ts` and `tests/property/auto-data-sync-bug-condition.property.test.ts`, change all `readFileSync` paths from `server/src/` to `worker/src/`. Verify structural assertions still pass against worker source files. Run `npm test` to confirm.
 - [x] **Task 8: Update steering files.** Rewrite `.kiro/steering/tech.md` — remove Express/PostgreSQL sections, update to three-package monorepo (client, worker, shared), update Common Commands. Rewrite `.kiro/steering/structure.md` — remove server/ from directory layout, update architecture patterns to reference worker only. Delete `.kiro/steering/server-worker-parity.md`. Review `.kiro/steering/product.md` for any server references.
 - [x] **Task 9: Clean up agent hook and GitHub Actions.** Delete `.kiro/hooks/server-worker-parity-check.kiro.hook`. Review `.github/workflows/deploy-worker.yml` to verify paths trigger is correct (no changes expected).
-- [x] **Task 10: Final verification.** Run `npm install`, `npm test` (all tests pass), `npm run build:client`, `npm run build:worker`. Grep the codebase for any remaining `server/src` references. Commit and push branch.
+- [ ] **Task 10: Final verification.** Run `npm install`, `npm test` (all tests pass), `npm run build:client`, `npm run build:worker`. Grep the codebase for any remaining `server/src` references. Commit and push branch.
+  - **Note:** `npm run build:worker` fails with 7 pre-existing TypeScript errors in files not touched by this spec:
+    - `src/routes/content-ideas.ts` (2 errors): `string` not assignable to `ContentType` parameter
+    - `src/routes/posts.ts` (1 error): `string` not assignable to `ContentType` parameter
+    - `src/services/quote-draft-service.ts` (1 error): missing `draftNumber` property on `QuoteDraft`
+    - `src/services/quote-engine.ts` (1 error): missing `draftNumber` property on `QuoteDraft`
+    - `src/services/quote-sync-service.ts` (2 errors): implicit `any` types on `data` and `connection`
+  - All other verification steps pass: `npm install`, `npm test` (163 pass), `npm run build:client`, codebase grep clean.

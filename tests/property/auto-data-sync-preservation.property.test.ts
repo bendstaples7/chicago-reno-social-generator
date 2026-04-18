@@ -404,10 +404,20 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
       'utf-8',
     );
 
+    // Scope to the POST /generate handler where the catalog fallback lives
+    const generateHandlerMatch = quotesSource.match(/app\.post\('\/generate'\s*,/);
+    expect(generateHandlerMatch).not.toBeNull();
+    const handlerStart = generateHandlerMatch!.index!;
+    const restOfFile = quotesSource.slice(handlerStart + 1);
+    const nextRouteOffset = restOfFile.search(/\napp\./);
+    const handlerBody = nextRouteOffset > -1
+      ? quotesSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
+      : quotesSource.slice(handlerStart);
+
     // The route handler checks isAvailable() after fetchProductCatalog
     // and falls back to fetchManualCatalog when Jobber is unavailable
-    expect(quotesSource).toMatch(/jobberIntegration\.isAvailable\(\)/);
-    expect(quotesSource).toMatch(/fetchManualCatalog/);
+    expect(handlerBody).toMatch(/jobberIntegration\.isAvailable\(\)/);
+    expect(handlerBody).toMatch(/fetchManualCatalog/);
   });
 
   it('fetchTemplateLibrary also catches errors and returns empty array', () => {
@@ -434,8 +444,18 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
       'utf-8',
     );
 
+    // Scope to the GET /templates handler where the template fallback lives
+    const templatesHandlerMatch = quotesSource.match(/app\.get\('\/templates'\s*,/);
+    expect(templatesHandlerMatch).not.toBeNull();
+    const handlerStart = templatesHandlerMatch!.index!;
+    const restOfFile = quotesSource.slice(handlerStart + 1);
+    const nextRouteOffset = restOfFile.search(/\napp\./);
+    const handlerBody = nextRouteOffset > -1
+      ? quotesSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
+      : quotesSource.slice(handlerStart);
+
     // The route handler checks isAvailable() and falls back to fetchManualTemplates
-    expect(quotesSource).toMatch(/fetchManualTemplates/);
+    expect(handlerBody).toMatch(/fetchManualTemplates/);
   });
 });
 

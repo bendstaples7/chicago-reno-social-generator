@@ -34,9 +34,10 @@ Eliminate the Express server entirely. All local development and production depl
 - Property tests (`auto-data-sync-preservation.property.test.ts`, `auto-data-sync-bug-condition.property.test.ts`) — update `readFileSync` paths from `server/src/` to `worker/src/`
 
 ### REQ-5: Create .dev.vars setup documentation
-- Verify `worker/.dev.vars` exists and contains all necessary environment variables
-- Create a `worker/.dev.vars.example` file listing all required variables (mirroring what `server/.env.example` had, minus PostgreSQL/S3-specific vars)
-- Add `.dev.vars` to `.gitignore` if not already present
+- `worker/.dev.vars` is a local-only secrets file and must NOT be committed to version control
+- Ensure `worker/.dev.vars` (or the pattern `.dev.vars`) is listed in `.gitignore`
+- Create a committed `worker/.dev.vars.example` file listing all required environment variable keys (no values), mirroring what `server/.env.example` had minus PostgreSQL/S3-specific vars
+- Include instructions: copy `worker/.dev.vars.example` to `worker/.dev.vars` and populate with real secrets locally
 
 ### REQ-6: Update steering files
 - Update `.kiro/steering/tech.md` — remove Server (Express) section, update monorepo description to three packages (client, worker, shared), update Common Commands

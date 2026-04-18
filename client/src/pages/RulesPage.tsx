@@ -23,6 +23,7 @@ export default function RulesPage() {
   const [loading, setLoading] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Which rule is being edited (null = none, 'new' = creating)
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -36,11 +37,12 @@ export default function RulesPage() {
   const [savingGroup, setSavingGroup] = useState(false);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const data = await fetchRules();
       setGroups(data);
     } catch {
-      // handled by global error display
+      setLoadError('Failed to load rules. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -366,10 +368,44 @@ export default function RulesPage() {
         </section>
       ))}
 
-      {groups.length === 0 && (
+      {groups.length === 0 && !loadError && (
         <p style={{ color: '#999', textAlign: 'center', marginTop: '2rem' }}>
           No rule groups found. Create a group to get started.
         </p>
+      )}
+
+      {loadError && groups.length === 0 && (
+        <div
+          role="alert"
+          style={{
+            background: '#fff3e0',
+            border: '1px solid #ffb74d',
+            borderRadius: 8,
+            padding: '1.25rem',
+            marginTop: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+          }}
+        >
+          <span style={{ color: '#e65100', fontWeight: 500 }}>{loadError}</span>
+          <button
+            onClick={load}
+            style={{
+              background: '#e65100',
+              color: '#fff',
+              border: 'none',
+              padding: '0.5rem 1rem',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
+            Retry
+          </button>
+        </div>
       )}
     </div>
   );

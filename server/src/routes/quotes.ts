@@ -627,6 +627,60 @@ router.get('/jobber/requests', async (_req, res, next) => {
       // Webhook enrichment is best-effort
     }
 
+    // Fire-and-forget background enrichment for incomplete requests.
+    // Identify requests missing detailed data and fetch from the Jobber public API.
+    const incompleteRequests = requests.filter((r) => {
+      const hasDescription = r.description && r.description.trim().length > 0;
+      const hasNotes = (r.notes && r.notes.length > 0) || (r.structuredNotes && r.structuredNotes.length > 0);
+      const hasImages = r.imageUrls && r.imageUrls.length > 0;
+      return !hasDescription && !hasNotes && !hasImages;
+    }).slice(0, 5);
+
+    for (const req of incompleteRequests) {
+      // Each enrichment is independent — failures don't affect others or the response
+      jobberIntegration.fetchRequestDetail(req.id).then(async (detail) => {
+        if (!detail) return;
+        try {
+          const noteMessages = (detail.notes?.edges ?? [])
+            .map((e: any) => e.node?.message)
+            .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+          const description = noteMessages.join('\n\n');
+          const imageUrls = (detail.noteAttachments?.edges ?? [])
+            .filter((e: any) => e.node.contentType.startsWith('image/'))
+            .map((e: any) => e.node.url);
+
+          await query(
+            `INSERT INTO jobber_webhook_requests
+              (jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+             ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+               title = COALESCE(EXCLUDED.title, jobber_webhook_requests.title),
+               client_name = COALESCE(EXCLUDED.client_name, jobber_webhook_requests.client_name),
+               description = COALESCE(EXCLUDED.description, jobber_webhook_requests.description),
+               request_body = COALESCE(EXCLUDED.request_body, jobber_webhook_requests.request_body),
+               image_urls = COALESCE(EXCLUDED.image_urls, jobber_webhook_requests.image_urls),
+               processed_at = NOW()`,
+            [
+              req.id,
+              'API_FETCH',
+              '',
+              detail.title ?? null,
+              detail.companyName || detail.contactName || null,
+              description || null,
+              JSON.stringify(detail),
+              JSON.stringify(imageUrls),
+              JSON.stringify({ source: 'api_fetch_enrichment' }),
+            ],
+          );
+          console.log(`[jobber/requests] enriched request ${req.id}`);
+        } catch (storeErr) {
+          console.error(`[jobber/requests] failed to store enrichment for ${req.id}:`, storeErr instanceof Error ? storeErr.message : storeErr);
+        }
+      }).catch((fetchErr) => {
+        console.error(`[jobber/requests] enrichment fetch failed for ${req.id}:`, fetchErr instanceof Error ? fetchErr.message : fetchErr);
+      });
+    }
+
     res.json({ requests, available });
   } catch (err) {
     next(err);

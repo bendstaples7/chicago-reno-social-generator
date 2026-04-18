@@ -36,10 +36,15 @@ jobs:
 
       - name: Verify deployment
         run: |
-          sleep 5
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://social-media-cross-poster.chicago-reno.workers.dev/health)
-          if [ "$STATUS" != "200" ]; then
-            echo "::error::Health check failed with status $STATUS"
-            exit 1
-          fi
-          echo "Health check passed (HTTP $STATUS)"
+          URL="https://social-media-cross-poster.chicago-reno.workers.dev/health"
+          for i in 1 2 3 4 5; do
+            sleep 5
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP $STATUS) on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying..."
+          done
+          echo "::error::Health check failed after 5 attempts"
+          exit 1

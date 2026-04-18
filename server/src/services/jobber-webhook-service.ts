@@ -127,7 +127,7 @@ export class JobberWebhookService {
       const detail = await this.fetchRequestDetail(itemId);
 
       if (!detail) {
-        await this.logEvent('warn', 'processWebhook',
+        await this.logEvent('warning', 'processWebhook',
           `Could not fetch request detail for ${itemId} (topic: ${topic})`);
         // Still store the raw webhook even without detail
         await this.storeWebhookData(itemId, topic, accountId, null, payload);
@@ -370,7 +370,7 @@ export class JobberWebhookService {
     }).filter((r): r is JobberCustomerRequest => r !== null);
   }
 
-  private async logEvent(severity: 'info' | 'warn' | 'error', operation: string, description: string): Promise<void> {
+  private async logEvent(severity: 'info' | 'warning' | 'error', operation: string, description: string): Promise<void> {
     try {
       await this.activityLog.log({
         userId: 'system',

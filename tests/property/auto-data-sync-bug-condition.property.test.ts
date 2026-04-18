@@ -292,16 +292,16 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
     //
     // This structural test confirms the bug exists by checking the source.
     const routeSource = readFileSync(
-      resolve(__dirname, '../../server/src/routes/quotes.ts'),
+      resolve(__dirname, '../../worker/src/routes/quotes.ts'),
       'utf-8',
     );
 
     // Extract the GET /jobber/requests handler body.
-    // It starts after "router.get('/jobber/requests'" and ends before the next
-    // "router.get('/jobber/requests/:id'" handler.
-    const handlerStart = routeSource.indexOf("router.get('/jobber/requests'");
+    // It starts after "app.get('/jobber/requests'" and ends before the next
+    // "app.get('/jobber/requests/:id'" handler.
+    const handlerStart = routeSource.indexOf("app.get('/jobber/requests'");
     const nextHandler = routeSource.indexOf(
-      "router.get('/jobber/requests/:id'",
+      "app.get('/jobber/requests/:id'",
       handlerStart + 1,
     );
     const handlerBody = routeSource.slice(handlerStart, nextHandler);
@@ -324,14 +324,14 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
         // On UNFIXED code, the handler does not perform this step.
         // We verify by checking the source (same as the test above).
         const routeSource = readFileSync(
-          resolve(__dirname, '../../server/src/routes/quotes.ts'),
+          resolve(__dirname, '../../worker/src/routes/quotes.ts'),
           'utf-8',
         );
         const handlerStart = routeSource.indexOf(
-          "router.get('/jobber/requests'",
+          "app.get('/jobber/requests'",
         );
         const nextHandler = routeSource.indexOf(
-          "router.get('/jobber/requests/:id'",
+          "app.get('/jobber/requests/:id'",
           handlerStart + 1,
         );
         const handlerBody = routeSource.slice(handlerStart, nextHandler);

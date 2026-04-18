@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PlatformError } from '../../server/src/errors/platform-error.js';
-import { formatErrorResponse } from '../../server/src/errors/format-error.js';
-import { errorHandler } from '../../server/src/middleware/error-handler.js';
-import type { Request, Response, NextFunction } from 'express';
+import { PlatformError } from '../../worker/src/errors/platform-error.js';
+import { formatErrorResponse } from '../../worker/src/errors/format-error.js';
+import { errorHandler } from '../../worker/src/middleware/error-handler.js';
+import { createMockD1 } from './helpers/mock-d1.js';
 
 describe('PlatformError class', () => {
   it('creates an instance with all required fields', () => {
@@ -99,19 +99,33 @@ describe('formatErrorResponse', () => {
 });
 
 describe('errorHandler middleware', () => {
-  function createMockRes() {
-    const res = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn().mockReturnThis(),
-    } as unknown as Response;
-    return res;
+  /**
+   * Creates a minimal mock Hono context for testing the error handler.
+   * The handler calls c.json(), c.env.DB, and c.get('user').
+   */
+  function createMockContext() {
+    const db = createMockD1();
+    let capturedBody: unknown = null;
+    let capturedStatus: number | undefined;
+
+    const c = {
+      env: { DB: db },
+      get: vi.fn().mockReturnValue(undefined),
+      json: vi.fn().mockImplementation((body: unknown, status?: number) => {
+        capturedBody = body;
+        capturedStatus = status;
+        return new Response(JSON.stringify(body), {
+          status: status ?? 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    };
+
+    return { c, db, getCaptured: () => ({ body: capturedBody, status: capturedStatus }) };
   }
 
-  const mockReq = {} as Request;
-  const mockNext = vi.fn() as NextFunction;
-
-  it('handles PlatformError and returns formatted response with status 500 for errors', () => {
-    const res = createMockRes();
+  it('handles PlatformError and returns formatted response with status 500 for errors', async () => {
+    const { c, getCaptured } = createMockContext();
     const err = new PlatformError({
       severity: 'error',
       component: 'CrossPoster',
@@ -120,10 +134,11 @@ describe('errorHandler middleware', () => {
       recommendedActions: ['Retry manually'],
     });
 
-    errorHandler(err, mockReq, res, mockNext);
+    await errorHandler(err, c as any);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith({
+    const { body, status } = getCaptured();
+    expect(status).toBe(500);
+    expect(body).toEqual({
       severity: 'error',
       component: 'CrossPoster',
       operation: 'publish',
@@ -132,8 +147,8 @@ describe('errorHandler middleware', () => {
     });
   });
 
-  it('returns status 400 for warnings', () => {
-    const res = createMockRes();
+  it('returns status 400 for warnings', async () => {
+    const { c, getCaptured } = createMockContext();
     const err = new PlatformError({
       severity: 'warning',
       component: 'ContentGenerator',
@@ -142,19 +157,21 @@ describe('errorHandler middleware', () => {
       recommendedActions: ['Try again'],
     });
 
-    errorHandler(err, mockReq, res, mockNext);
+    await errorHandler(err, c as any);
 
-    expect(res.status).toHaveBeenCalledWith(400);
+    const { status } = getCaptured();
+    expect(status).toBe(400);
   });
 
-  it('wraps non-PlatformError in a generic PlatformError', () => {
-    const res = createMockRes();
+  it('wraps non-PlatformError in a generic PlatformError', async () => {
+    const { c, getCaptured } = createMockContext();
     const err = new Error('Something broke');
 
-    errorHandler(err, mockReq, res, mockNext);
+    await errorHandler(err, c as any);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(
+    const { body, status } = getCaptured();
+    expect(status).toBe(500);
+    expect(body).toEqual(
       expect.objectContaining({
         severity: 'error',
         component: 'Server',
@@ -163,5 +180,41 @@ describe('errorHandler middleware', () => {
         actions: expect.arrayContaining([expect.any(String)]),
       }),
     );
+  });
+
+  it('respects statusCode override on PlatformError', async () => {
+    const { c, getCaptured } = createMockContext();
+    const err = new PlatformError({
+      severity: 'error',
+      component: 'MediaService',
+      operation: 'upload',
+      description: 'Not found.',
+      recommendedActions: ['Check the ID'],
+      statusCode: 404,
+    });
+
+    await errorHandler(err, c as any);
+
+    const { status } = getCaptured();
+    expect(status).toBe(404);
+  });
+
+  it('logs error to activity_log_entries via D1', async () => {
+    const { c, db } = createMockContext();
+    const err = new PlatformError({
+      severity: 'error',
+      component: 'CrossPoster',
+      operation: 'publish',
+      description: 'Publishing failed.',
+      recommendedActions: ['Retry manually'],
+    });
+
+    await errorHandler(err, c as any);
+
+    expect(db.prepare).toHaveBeenCalled();
+    const insertCall = db.prepare.mock.calls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && call[0].includes('INSERT INTO activity_log_entries'),
+    );
+    expect(insertCall).toBeDefined();
   });
 });

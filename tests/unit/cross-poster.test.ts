@@ -1,15 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('../../server/src/config/database.js', () => ({
-  query: vi.fn(),
-}));
-
-import { CrossPoster } from '../../server/src/services/cross-poster.js';
-import { PlatformError } from '../../server/src/errors/index.js';
-import { query } from '../../server/src/config/database.js';
+import { CrossPoster } from '../../worker/src/services/cross-poster.js';
+import { PlatformError } from '../../worker/src/errors/index.js';
+import { createMockD1 } from './helpers/mock-d1.js';
+import type { MockD1Database } from './helpers/mock-d1.js';
 import type { Post, FormattedPost, PublishResult, ChannelInterface } from '../../shared/src/types/index.js';
-
-const mockedQuery = vi.mocked(query);
 
 function makePost(overrides: Partial<Post> = {}): Post {
   return {
@@ -41,14 +35,16 @@ function makeFormattedPost(overrides: Partial<FormattedPost> = {}): FormattedPos
 function createMocks() {
   const post = makePost();
   const formatted = makeFormattedPost();
+  const db = createMockD1();
 
   const postService = {
     getById: vi.fn().mockResolvedValue(post),
     transitionStatus: vi.fn().mockResolvedValue(post),
+    setExternalPostId: vi.fn().mockResolvedValue(undefined),
   };
 
   const approvalService = {
-    isApproved: vi.fn().mockResolvedValue(true),
+    markPublishingIfApproved: vi.fn().mockResolvedValue(true),
   };
 
   const channel: ChannelInterface = {
@@ -70,7 +66,7 @@ function createMocks() {
 
   const delayFn = vi.fn().mockResolvedValue(undefined);
 
-  return { postService, approvalService, channel, activityLog, delayFn, post, formatted };
+  return { db, postService, approvalService, channel, activityLog, delayFn, post, formatted };
 }
 
 describe('CrossPoster', () => {
@@ -79,9 +75,9 @@ describe('CrossPoster', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedQuery.mockResolvedValue({ rows: [], rowCount: 1 } as never);
     mocks = createMocks();
     crossPoster = new CrossPoster({
+      db: mocks.db as unknown as D1Database,
       postService: mocks.postService as any,
       approvalService: mocks.approvalService as any,
       channel: mocks.channel,
@@ -92,14 +88,13 @@ describe('CrossPoster', () => {
 
   describe('publish()', () => {
     it('rejects unapproved posts', async () => {
-      mocks.approvalService.isApproved.mockResolvedValue(false);
+      mocks.approvalService.markPublishingIfApproved.mockResolvedValue(false);
 
       await expect(crossPoster.publish('post-1', 'user-1')).rejects.toThrow(PlatformError);
       await expect(crossPoster.publish('post-1', 'user-1')).rejects.toThrow('not been approved');
 
       // Should not attempt to publish
       expect(mocks.channel.publish).not.toHaveBeenCalled();
-      expect(mocks.postService.transitionStatus).not.toHaveBeenCalled();
     });
 
     it('completes successful publish flow: approval → format → publish → status update', async () => {
@@ -110,8 +105,7 @@ describe('CrossPoster', () => {
 
       // Verify flow order
       expect(mocks.postService.getById).toHaveBeenCalledWith('post-1', 'user-1');
-      expect(mocks.approvalService.isApproved).toHaveBeenCalledWith('post-1');
-      expect(mocks.postService.transitionStatus).toHaveBeenCalledWith('post-1', 'user-1', 'publishing');
+      expect(mocks.approvalService.markPublishingIfApproved).toHaveBeenCalledWith('post-1', 'user-1');
       expect(mocks.channel.formatPost).toHaveBeenCalledWith(mocks.post);
       expect(mocks.channel.publish).toHaveBeenCalledWith(mocks.formatted);
       expect(mocks.postService.transitionStatus).toHaveBeenCalledWith('post-1', 'user-1', 'published');
@@ -120,18 +114,13 @@ describe('CrossPoster', () => {
     it('sets post status to published on success', async () => {
       await crossPoster.publish('post-1', 'user-1');
 
-      const transitionCalls = mocks.postService.transitionStatus.mock.calls;
-      expect(transitionCalls[0]).toEqual(['post-1', 'user-1', 'publishing']);
-      expect(transitionCalls[1]).toEqual(['post-1', 'user-1', 'published']);
+      expect(mocks.postService.transitionStatus).toHaveBeenCalledWith('post-1', 'user-1', 'published');
     });
 
-    it('updates external_post_id in DB on success', async () => {
+    it('updates external_post_id via PostService on success', async () => {
       await crossPoster.publish('post-1', 'user-1');
 
-      expect(mockedQuery).toHaveBeenCalledWith(
-        expect.stringContaining('external_post_id'),
-        ['ig-123', 'post-1'],
-      );
+      expect(mocks.postService.setExternalPostId).toHaveBeenCalledWith('post-1', 'user-1', 'ig-123');
     });
 
     it('logs success to ActivityLog', async () => {

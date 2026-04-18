@@ -262,16 +262,16 @@ describe('Property 1 — Rules Success Preservation', () => {
 describe('Property 2 — Quick Post Sync Preservation', () => {
   it('the quick-start handler contains a fire-and-forget Instagram sync call', () => {
     const postsSource = readFileSync(
-      resolve(__dirname, '../../server/src/routes/posts.ts'),
+      resolve(__dirname, '../../worker/src/routes/posts.ts'),
       'utf-8',
     );
 
     // Extract the quick-start handler body
-    const handlerStart = postsSource.indexOf("router.post('/quick-start'");
+    const handlerStart = postsSource.indexOf("app.post('/quick-start'");
     expect(handlerStart).toBeGreaterThan(-1);
 
     // Find the next route handler after quick-start
-    const nextHandler = postsSource.indexOf('router.', handlerStart + 1);
+    const nextHandler = postsSource.indexOf('app.', handlerStart + 1);
     const handlerBody = nextHandler > -1
       ? postsSource.slice(handlerStart, nextHandler)
       : postsSource.slice(handlerStart);
@@ -289,12 +289,12 @@ describe('Property 2 — Quick Post Sync Preservation', () => {
 
   it('the sync call uses the userId from the request', () => {
     const postsSource = readFileSync(
-      resolve(__dirname, '../../server/src/routes/posts.ts'),
+      resolve(__dirname, '../../worker/src/routes/posts.ts'),
       'utf-8',
     );
 
-    const handlerStart = postsSource.indexOf("router.post('/quick-start'");
-    const nextHandler = postsSource.indexOf('router.', handlerStart + 1);
+    const handlerStart = postsSource.indexOf("app.post('/quick-start'");
+    const nextHandler = postsSource.indexOf('app.', handlerStart + 1);
     const handlerBody = nextHandler > -1
       ? postsSource.slice(handlerStart, nextHandler)
       : postsSource.slice(handlerStart);
@@ -317,7 +317,7 @@ describe('Property 2 — Quick Post Sync Preservation', () => {
 describe('Property 3 — Sync Cooldown Preservation', () => {
   it('InstagramSyncService has a static SYNC_COOLDOWN_MS of 5 minutes', () => {
     const syncSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/instagram-sync-service.ts'),
+      resolve(__dirname, '../../worker/src/services/instagram-sync-service.ts'),
       'utf-8',
     );
 
@@ -327,7 +327,7 @@ describe('Property 3 — Sync Cooldown Preservation', () => {
 
   it('InstagramSyncService has a static lastAttemptByUser Map', () => {
     const syncSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/instagram-sync-service.ts'),
+      resolve(__dirname, '../../worker/src/services/instagram-sync-service.ts'),
       'utf-8',
     );
 
@@ -337,7 +337,7 @@ describe('Property 3 — Sync Cooldown Preservation', () => {
 
   it('syncRecentPosts returns no-op result when within cooldown', () => {
     const syncSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/instagram-sync-service.ts'),
+      resolve(__dirname, '../../worker/src/services/instagram-sync-service.ts'),
       'utf-8',
     );
 
@@ -350,7 +350,7 @@ describe('Property 3 — Sync Cooldown Preservation', () => {
 
   it('cooldown check happens before any API call (property)', () => {
     const syncSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/instagram-sync-service.ts'),
+      resolve(__dirname, '../../worker/src/services/instagram-sync-service.ts'),
       'utf-8',
     );
 
@@ -376,9 +376,9 @@ describe('Property 3 — Sync Cooldown Preservation', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Property 4 — Jobber Fallback Preservation', () => {
-  it('fetchProductCatalog falls back to loadImportedProducts when API fails', () => {
+  it('fetchProductCatalog catches API errors and sets available to false', () => {
     const integrationSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/jobber-integration.ts'),
+      resolve(__dirname, '../../worker/src/services/jobber-integration.ts'),
       'utf-8',
     );
 
@@ -386,60 +386,56 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
     const methodStart = integrationSource.indexOf('async fetchProductCatalog()');
     expect(methodStart).toBeGreaterThan(-1);
 
-    // Find the next method (loadImportedProducts)
-    const nextMethod = integrationSource.indexOf('private async loadImportedProducts', methodStart + 1);
+    // Find the next method
+    const nextMethod = integrationSource.indexOf('async fetchTemplateLibrary()', methodStart + 1);
     const methodBody = integrationSource.slice(methodStart, nextMethod);
 
-    // Verify the fallback pattern: if catalog is empty, load from DB
-    expect(methodBody).toMatch(/loadImportedProducts/);
-    expect(methodBody).toMatch(/catalog\.length\s*===\s*0/);
-  });
-
-  it('loadImportedProducts queries the jobber_products table', () => {
-    const integrationSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/jobber-integration.ts'),
-      'utf-8',
-    );
-
-    // Verify the DB query targets the correct table
-    expect(integrationSource).toMatch(/FROM\s+jobber_products\s+WHERE\s+active\s*=\s*true/);
-  });
-
-  it('fetchProductCatalog catches API errors and still attempts fallback', () => {
-    const integrationSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/jobber-integration.ts'),
-      'utf-8',
-    );
-
-    const methodStart = integrationSource.indexOf('async fetchProductCatalog()');
-    const nextMethod = integrationSource.indexOf('private async loadImportedProducts', methodStart + 1);
-    const methodBody = integrationSource.slice(methodStart, nextMethod);
-
-    // The API call is wrapped in try/catch with handleApiError
+    // Verify the error handling pattern: catch block calls handleApiError
     expect(methodBody).toMatch(/catch\s*\(err\)/);
     expect(methodBody).toMatch(/handleApiError/);
 
-    // After the catch, the fallback check happens
-    const catchPos = methodBody.indexOf('handleApiError');
-    const fallbackPos = methodBody.indexOf('loadImportedProducts');
-    expect(catchPos).toBeGreaterThan(-1);
-    expect(fallbackPos).toBeGreaterThan(-1);
-    expect(fallbackPos).toBeGreaterThan(catchPos);
+    // Verify it returns empty array on failure (route handler does the fallback)
+    expect(methodBody).toMatch(/return\s*\[\]/);
   });
 
-  it('fetchTemplateLibrary also has a DB fallback (loadCachedTemplates)', () => {
+  it('route handler falls back to manual catalog when Jobber is unavailable', () => {
+    const quotesSource = readFileSync(
+      resolve(__dirname, '../../worker/src/routes/quotes.ts'),
+      'utf-8',
+    );
+
+    // The route handler checks isAvailable() after fetchProductCatalog
+    // and falls back to fetchManualCatalog when Jobber is unavailable
+    expect(quotesSource).toMatch(/jobberIntegration\.isAvailable\(\)/);
+    expect(quotesSource).toMatch(/fetchManualCatalog/);
+  });
+
+  it('fetchTemplateLibrary also catches errors and returns empty array', () => {
     const integrationSource = readFileSync(
-      resolve(__dirname, '../../server/src/services/jobber-integration.ts'),
+      resolve(__dirname, '../../worker/src/services/jobber-integration.ts'),
       'utf-8',
     );
 
     const methodStart = integrationSource.indexOf('async fetchTemplateLibrary()');
     expect(methodStart).toBeGreaterThan(-1);
 
-    const nextMethod = integrationSource.indexOf('private async cacheTemplatesToDb', methodStart + 1);
+    // Find the next method after fetchTemplateLibrary
+    const nextMethod = integrationSource.indexOf('async fetchCustomerRequests()', methodStart + 1);
     const methodBody = integrationSource.slice(methodStart, nextMethod);
 
-    expect(methodBody).toMatch(/loadCachedTemplates/);
+    // Verify the same error handling pattern
+    expect(methodBody).toMatch(/handleApiError/);
+    expect(methodBody).toMatch(/return\s*\[\]/);
+  });
+
+  it('route handler falls back to manual templates when Jobber is unavailable', () => {
+    const quotesSource = readFileSync(
+      resolve(__dirname, '../../worker/src/routes/quotes.ts'),
+      'utf-8',
+    );
+
+    // The route handler checks isAvailable() and falls back to fetchManualTemplates
+    expect(quotesSource).toMatch(/fetchManualTemplates/);
   });
 });
 
@@ -581,13 +577,13 @@ describe('Property 5 — Webhook Merge Preservation', () => {
 
   it('the source code merge logic matches our pure implementation', () => {
     const quotesSource = readFileSync(
-      resolve(__dirname, '../../server/src/routes/quotes.ts'),
+      resolve(__dirname, '../../worker/src/routes/quotes.ts'),
       'utf-8',
     );
 
     // Extract the GET /jobber/requests handler
-    const handlerStart = quotesSource.indexOf("router.get('/jobber/requests'");
-    const nextHandler = quotesSource.indexOf("router.get('/jobber/requests/:id'", handlerStart + 1);
+    const handlerStart = quotesSource.indexOf("app.get('/jobber/requests'");
+    const nextHandler = quotesSource.indexOf("app.get('/jobber/requests/:id'", handlerStart + 1);
     const handlerBody = quotesSource.slice(handlerStart, nextHandler);
 
     // Verify the merge pattern exists

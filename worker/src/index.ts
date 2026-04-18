@@ -35,8 +35,33 @@ app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 // Override with 50 MB limit for media upload endpoints
 app.use('/api/media/*', bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
-// Health check
-app.get('/health', (c) => c.json({ status: 'ok' }));
+// Health check — also validates critical environment bindings on each call
+app.get('/health', (c) => {
+  const missing: string[] = [];
+  const critical = [
+    'AI_TEXT_API_KEY',
+    'CHANNEL_ENCRYPTION_KEY',
+    'FB_PAGE_ACCESS_TOKEN',
+    'IG_BUSINESS_ACCOUNT_ID',
+    'INSTAGRAM_CLIENT_ID',
+    'INSTAGRAM_CLIENT_SECRET',
+    'JOBBER_CLIENT_ID',
+    'JOBBER_CLIENT_SECRET',
+    'JOBBER_ACCESS_TOKEN',
+    'JOBBER_REFRESH_TOKEN',
+  ] as const;
+
+  for (const key of critical) {
+    if (!c.env[key]) missing.push(key);
+  }
+
+  if (missing.length > 0) {
+    console.warn(`[health] Missing worker secrets: ${missing.join(', ')}. Set them via: npm run sync-secrets (from worker/)`);
+    return c.json({ status: 'degraded', missing }, 200);
+  }
+
+  return c.json({ status: 'ok' });
+});
 
 // API routes
 app.route('/api/auth', authRoutes);

@@ -42,18 +42,21 @@ export default function QuoteInputPage() {
 
   const [formData, setFormData] = useState<import('shared').JobberRequestFormData | null>(null);
   const [loadingFormData, setLoadingFormData] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const selectTokenRef = useRef(0);
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     const token = ++selectTokenRef.current;
     setJobberRequestId(request.id);
     setFormData(null);
+    setSessionExpired(false);
     setLoadingFormData(true);
 
     // Fetch form data from the internal API
     try {
-      const { formData: fetchedFormData } = await fetchJobberRequestFormData(request.id);
+      const { formData: fetchedFormData, sessionExpired: expired } = await fetchJobberRequestFormData(request.id);
       if (token !== selectTokenRef.current) return; // stale — a newer selection superseded this one
+      setSessionExpired(expired);
       if (fetchedFormData) {
         setFormData(fetchedFormData);
         if (fetchedFormData.text) {
@@ -92,11 +95,38 @@ export default function QuoteInputPage() {
   };
 
   const handleRequestClear = () => {
+    ++selectTokenRef.current;
     setJobberRequestId(null);
     setFormData(null);
     setLoadingFormData(false);
+    setSessionExpired(false);
     setCustomerText('');
   };
+
+  const handleReconnected = useCallback(async () => {
+    if (!jobberRequestId) return;
+    const token = selectTokenRef.current;
+    setSessionExpired(false);
+    setLoadingFormData(true);
+    try {
+      const { formData: fetchedFormData, sessionExpired: expired } = await fetchJobberRequestFormData(jobberRequestId);
+      if (token !== selectTokenRef.current) return;
+      setSessionExpired(expired);
+      if (fetchedFormData) {
+        setFormData(fetchedFormData);
+        if (fetchedFormData.text) {
+          setCustomerText(fetchedFormData.text);
+        }
+      }
+    } catch {
+      if (token !== selectTokenRef.current) return;
+      // Keep existing state on failure
+    } finally {
+      if (token === selectTokenRef.current) {
+        setLoadingFormData(false);
+      }
+    }
+  }, [jobberRequestId]);
 
   const hasText = customerText.trim().length > 0;
   const hasImages = images.length > 0;
@@ -191,6 +221,8 @@ export default function QuoteInputPage() {
           formData={formData}
           formDataLoaded={!!formData}
           loadingFormData={loadingFormData}
+          sessionExpired={sessionExpired}
+          onReconnected={handleReconnected}
         />
       )}
 

@@ -524,8 +524,15 @@ export async function fetchJobberRequests(): Promise<{ requests: JobberCustomerR
   return handleResponse(res);
 }
 
-export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null }> {
+export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null; sessionExpired: boolean }> {
   const res = await fetch(API_BASE + '/api/quotes/jobber/requests/' + requestId + '/form-data', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function checkJobberSessionStatus(): Promise<{ configured: boolean; expired: boolean }> {
+  const res = await fetch(API_BASE + '/api/jobber-auth/session-cookies/status', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);

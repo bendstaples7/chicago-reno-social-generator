@@ -16,4 +16,6 @@ export interface Bindings {
   JOBBER_ACCESS_TOKEN: string;
   JOBBER_REFRESH_TOKEN: string;
   JOBBER_API_URL: string;
+  JOBBER_WEB_EMAIL: string;
+  JOBBER_WEB_PASSWORD: string;
 }

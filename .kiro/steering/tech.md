@@ -1,8 +1,7 @@
 # Tech Stack & Build System
 
 ## Monorepo Structure
-- **npm workspaces** with three packages: `client`, `server`, `shared`
-- A fourth package `worker` exists as a Cloudflare Workers deployment target (migration in progress)
+- **npm workspaces** with three packages: `client`, `worker`, `shared`
 - Shared base TypeScript config in `tsconfig.base.json` (ES2022, ESNext modules, bundler resolution, strict mode)
 
 ## Client
@@ -12,27 +11,20 @@
 - No state management library — uses React context (`AuthContext`, `ErrorToastProvider`)
 - API layer in `client/src/api.ts` — plain `fetch` calls with Bearer token auth via localStorage
 
-## Server (Express — legacy/dev)
-- **Express 4** with **TypeScript**
-- **tsx** for dev mode (`tsx watch`)
-- **PostgreSQL** via `pg` driver
-- **AWS S3** via `@aws-sdk/client-s3` for media storage
-- **dotenv** for environment config
-- Routes under `server/src/routes/`, services under `server/src/services/`
-
-## Worker (Cloudflare Workers — production target)
+## Worker (Cloudflare Workers)
 - **Hono** web framework
 - **Cloudflare D1** (SQLite) for database
 - **Cloudflare R2** for object storage
 - **Cloudflare Queues** for async image generation jobs
-- **Wrangler** for dev/deploy
+- **Wrangler** for local dev and deployment
 - SQL migrations in `worker/src/migrations/`
 - Bindings typed in `worker/src/bindings.ts`
+- Environment variables in `worker/.dev.vars` (see `worker/.dev.vars.example` for required keys)
 
 ## Shared Package
 - Pure TypeScript types — no runtime dependencies
 - Exports all types from `shared/src/types/`
-- Used by both client and server via workspace dependency
+- Used by both client and worker via workspace dependency
 
 ## Testing
 - **Vitest** (v2) as test runner, configured at repo root
@@ -50,16 +42,16 @@ npm test
 npm run test:watch
 
 # Dev servers (run these manually in separate terminals)
-npm run dev:client    # Vite dev server on :5173, proxies /api to :3001
-npm run dev:server    # Express via tsx watch on :3001
+npm run dev:client    # Vite dev server on :5173, proxies /api to :8787
+npm run dev:worker    # applies D1 migrations then starts wrangler dev on :8787
 
 # Build
 npm run build:client
-npm run build:server
+npm run build:worker
 
 # Worker (from worker/ directory)
-npm run dev           # wrangler dev
-npm run deploy        # wrangler deploy
+npm run dev           # applies local D1 migrations + wrangler dev
+npm run deploy        # applies remote D1 migrations + wrangler deploy
 npm run build         # tsc -b
 ```
 

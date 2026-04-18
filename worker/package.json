@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler d1 migrations apply DB --local && node scripts/sync-tokens.mjs && node scripts/sync-cookies.mjs --target local && wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "build": "tsc -b"
   },
   "dependencies": {
@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
-    "wrangler": "^3.99.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "wrangler": "^3.99.0"
   }
 }

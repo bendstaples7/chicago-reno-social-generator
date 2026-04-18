@@ -283,14 +283,14 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
 
   it('the GET /jobber/requests handler contains enrichment logic for incomplete requests', () => {
     // Read the actual route handler source to verify the enrichment code path.
-    // On UNFIXED code, the handler ends with `res.json({ requests, available })`
-    // after the webhook merge — no fetchRequestDetail calls for incomplete requests.
+    // The handler enriches requests by merging webhook data via
+    // webhookService.getWebhookRequests() — merging description, structuredNotes,
+    // and imageUrls from stored webhook payloads into the API response.
     //
-    // After the fix, the handler should contain logic that:
-    // 1. Identifies incomplete requests (missing description, notes, images)
-    // 2. Calls fetchRequestDetail for up to 5 of them (fire-and-forget)
+    // Note: fetchRequestDetail is used separately in the form-data endpoint for
+    // backfill-on-read, not in this list handler.
     //
-    // This structural test confirms the bug exists by checking the source.
+    // This structural test confirms the enrichment exists by checking the source.
     const routeSource = readFileSync(
       resolve(__dirname, '../../worker/src/routes/quotes.ts'),
       'utf-8',
@@ -311,9 +311,10 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
       ? routeSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
       : routeSource.slice(handlerStart);
 
-    // The handler enriches requests by merging webhook data (description, notes, images).
-    // On unfixed code this assertion FAILS because the webhook merge enrichment logic is missing.
-    expect(handlerBody).toMatch(/webhookRequests|getWebhookRequests/i);
+    // The handler enriches requests by merging webhook data (description, notes, images)
+    // via webhookService.getWebhookRequests(). On unfixed code this assertion FAILS
+    // because the webhook merge enrichment logic is missing.
+    expect(handlerBody).toMatch(/getWebhookRequests/i);
   });
 
   it('enrichment should be triggered for incomplete requests in a mixed list (property)', async () => {
@@ -322,8 +323,8 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
         const incomplete = requests.filter(isIncompleteRequest);
         expect(incomplete.length).toBeGreaterThan(0);
 
-        // Simulate what the FIXED handler should do: for each incomplete request
-        // (up to 5), fire-and-forget a fetchRequestDetail call.
+        // The handler enriches incomplete requests via webhook data merge.
+        // Verify the enrichment code path exists in the handler source.
         const enrichmentCandidates = incomplete.slice(0, 5);
 
         // On UNFIXED code, the handler does not perform this step.
@@ -345,7 +346,7 @@ describe('Scenario A — Jobber request list auto-enrichment', () => {
           : routeSource.slice(handlerStart);
 
         // The handler enriches via webhook merge — FAILS on unfixed code
-        expect(handlerBody).toMatch(/webhookRequests|getWebhookRequests/i);
+        expect(handlerBody).toMatch(/getWebhookRequests/i);
 
         // Additionally verify the enrichment is capped at 5
         expect(enrichmentCandidates.length).toBeLessThanOrEqual(5);

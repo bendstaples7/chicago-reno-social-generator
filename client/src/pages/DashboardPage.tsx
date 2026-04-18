@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { fetchPosts, fetchChannels } from '../api';
+import { fetchPosts, fetchChannels, syncInstagramPosts } from '../api';
 import type { Post, ChannelConnection } from 'shared';
 
 const cardStyle: React.CSSProperties = {
@@ -33,6 +33,8 @@ export default function DashboardPage() {
       fetchPosts().then((r) => setPosts(r.posts)).catch(() => {}),
       fetchChannels().then((r) => setChannels(r.channels)).catch(() => {}),
     ]).finally(() => setLoading(false));
+    // Fire-and-forget Instagram sync — non-blocking, cooldown-protected
+    syncInstagramPosts().catch(() => {});
   }, []);
 
   const drafts = posts.filter((p) => p.status === 'draft');

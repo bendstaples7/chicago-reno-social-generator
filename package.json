@@ -12,10 +12,13 @@
     "dev:client": "npm run dev --workspace=client",
     "dev:worker": "npm run dev --workspace=worker",
     "build:client": "npm run build --workspace=client",
-    "build:worker": "npm run build --workspace=worker"
+    "build:worker": "npm run build --workspace=worker",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260317.1",
+    "@playwright/test": "^1.52.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -23,6 +26,7 @@
     "jsdom": "^29.0.2",
     "puppeteer": "^24.41.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "wait-on": "^8.0.0"
   }
 }

@@ -1,18 +1,22 @@
 /**
- * Bidirectional Jobber OAuth token sync between local and production D1.
+ * Pull Jobber OAuth tokens from production D1 to local D1.
  *
  * Called automatically by `npm run dev` before starting wrangler dev.
  * Requires wrangler to be authenticated (`wrangler login`).
  *
- * Logic:
- * - Reads tokens from both local and production D1
- * - Whichever has the newer updated_at wins and is copied to the other
- * - If only one side has tokens, copies to the other
+ * Production is the single source of truth for Jobber tokens.
+ * The deployed worker refreshes tokens automatically and persists
+ * them to remote D1. This script pulls those tokens to local so
+ * local dev always has fresh credentials.
+ *
+ * IMPORTANT: This script never pushes local tokens to production.
+ * Jobber uses single-use refresh tokens — pushing a stale local
+ * refresh token to production would invalidate the worker's valid one.
  *
  * Gracefully skips if:
  * - Not authenticated with Cloudflare
  * - No network access
- * - No tokens in either D1
+ * - No tokens in production D1
  */
 import { execSync } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
@@ -51,48 +55,20 @@ function upsertTokens(flag, accessToken, refreshToken) {
 }
 
 try {
-  console.log('[sync-tokens] Syncing Jobber tokens between local and production D1...');
+  console.log('[sync-tokens] Pulling Jobber tokens from production D1...');
 
-  // Read from both sides
-  const local = queryTokens('--local');
+  const remote = queryTokens('--remote');
 
-  let remote;
-  try {
-    remote = queryTokens('--remote');
-  } catch {
-    console.log('[sync-tokens] Could not reach production D1. Skipping.');
+  if (!remote) {
+    console.log('[sync-tokens] No tokens in production D1. Skipping.');
     process.exit(0);
   }
 
-  if (!local && !remote) {
-    console.log('[sync-tokens] No tokens in either local or production D1. Skipping.');
-    process.exit(0);
-  }
+  // Always overwrite local with production tokens
+  upsertTokens('--local', remote.access_token, remote.refresh_token);
+  console.log('[sync-tokens] Pulled tokens from production → local.');
 
-  if (!local && remote) {
-    // Production has tokens, local doesn't — copy to local
-    upsertTokens('--local', remote.access_token, remote.refresh_token);
-    console.log('[sync-tokens] Copied tokens from production → local.');
-  } else if (local && !remote) {
-    // Local has tokens, production doesn't — copy to production
-    upsertTokens('--remote', local.access_token, local.refresh_token);
-    console.log('[sync-tokens] Copied tokens from local → production.');
-  } else {
-    // Both have tokens — newer wins
-    const localTime = new Date(local.updated_at).getTime();
-    const remoteTime = new Date(remote.updated_at).getTime();
-
-    if (localTime > remoteTime) {
-      upsertTokens('--remote', local.access_token, local.refresh_token);
-      console.log('[sync-tokens] Local tokens are newer — pushed to production.');
-    } else if (remoteTime > localTime) {
-      upsertTokens('--local', remote.access_token, remote.refresh_token);
-      console.log('[sync-tokens] Production tokens are newer — pulled to local.');
-    } else {
-      console.log('[sync-tokens] Tokens are in sync.');
-    }
-  }
 } catch (err) {
-  console.log(`[sync-tokens] Unexpected error: ${err.message}. Skipping.`);
+  console.log(`[sync-tokens] Could not reach production D1: ${err.message}. Skipping.`);
   process.exit(0);
 }

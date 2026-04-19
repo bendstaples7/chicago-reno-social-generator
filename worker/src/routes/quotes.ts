@@ -683,29 +683,13 @@ app.get('/jobber/requests/:id', async (c) => {
 /**
  * GET /jobber/requests/:id/form-data
  * Fetch the form submission data for a specific Jobber request.
- * Tries the internal Jobber API first (requires web session cookies),
- * then falls back to building form data from stored webhook/API data.
+ * Server-side fallback chain: D1 → Jobber public GraphQL API fetch + store → null.
  */
 app.get('/jobber/requests/:id/form-data', async (c) => {
   const db = c.env.DB;
   const requestId = c.req.param('id');
 
-  // Try the internal Jobber API via stored web session cookies
-  let sessionExpired = false;
-  try {
-    const { JobberWebSession } = await import('../services/jobber-web-session.js');
-    const webSession = new JobberWebSession(db);
-    const { formData: webFormData, sessionExpired: webSessionExpired } = await webSession.fetchRequestFormData(requestId);
-    sessionExpired = webSessionExpired;
-    if (webFormData) {
-      return c.json({ formData: webFormData, sessionExpired: false });
-    }
-  } catch (err) {
-    console.warn('[quotes/form-data] Web session fetch failed:', err instanceof Error ? err.message : err);
-    // Non-auth error — don't flag as session expired
-  }
-
-  // Fallback: build form data from webhook/API data stored in D1
+  // Step 1: Check D1 jobber_webhook_requests for stored data
   let row = await db.prepare(
     `SELECT title, client_name, description, request_body, image_urls
      FROM jobber_webhook_requests
@@ -714,11 +698,10 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
      LIMIT 1`
   ).bind(requestId).first() as Record<string, unknown> | null;
 
-  // If not in D1 or row has no request_body (partial webhook row), try fetching from the Jobber API
+  // Step 2: If not in D1 or row has no request_body (partial webhook row), fetch from Jobber public GraphQL API
   if (!row || row.request_body == null) {
     try {
       const { jobberIntegration } = await createJobberIntegration(db, c.env);
-      // Note: this query mirrors REQUEST_DETAIL_QUERY in jobber-webhook-service.ts
       const detail = await jobberIntegration.graphqlRequest<Record<string, unknown>>(
         `query FetchRequestDetail($id: EncodedId!) {
           request(id: $id) {
@@ -772,14 +755,16 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
         ).bind(requestId).first() as Record<string, unknown> | null;
       }
     } catch (fetchErr) {
-      console.error('[quotes/form-data] API fallback failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
+      console.error('[quotes/form-data] API fetch failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
     }
   }
 
+  // Step 3: If still no data, return null
   if (!row) {
-    return c.json({ formData: null, sessionExpired });
+    return c.json({ formData: null });
   }
 
+  // Build form data from stored D1 row
   const sections: Array<{ label: string; sortOrder: number; answers: Array<{ label: string; value: string | null }> }> = [];
   const textParts: string[] = [];
 
@@ -821,7 +806,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
   }
 
   if (sections.length === 0) {
-    return c.json({ formData: null, sessionExpired });
+    return c.json({ formData: null });
   }
 
   return c.json({
@@ -829,7 +814,6 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
       sections,
       text: textParts.join('\n\n'),
     },
-    sessionExpired,
   });
 });
 
@@ -893,6 +877,69 @@ app.get('/jobber/requests', async (c) => {
   } catch (webhookErr) {
     console.error('[quotes/requests] Webhook enrichment failed:', webhookErr instanceof Error ? webhookErr.message : webhookErr);
     // Webhook enrichment is best-effort
+  }
+
+  // Background enrichment: identify incomplete requests and fetch full details from Jobber API
+  const incomplete = requests.filter(
+    (r) => !r.description && r.structuredNotes.length === 0 && r.imageUrls.length === 0
+  );
+  const toEnrich = incomplete.slice(0, 5);
+
+  if (toEnrich.length > 0 && jobberIntegration.isAvailable() && c.executionCtx?.waitUntil) {
+    c.executionCtx.waitUntil(
+      Promise.allSettled(
+        toEnrich.map(async (req) => {
+          try {
+            const detail = await jobberIntegration.graphqlRequest<Record<string, unknown>>(
+              `query FetchRequestDetail($id: EncodedId!) {
+                request(id: $id) {
+                  id title companyName contactName phone email requestStatus createdAt jobberWebUri
+                  client { id firstName lastName companyName }
+                  notes(first: 20) { edges { node { ... on RequestNote { message createdAt createdBy { __typename } } } } }
+                  noteAttachments(first: 20) { edges { node { url fileName contentType } } }
+                }
+              }`,
+              { id: req.id },
+            );
+            const request = (detail as any)?.request;
+            if (!request) return;
+
+            const noteMessages = (request.notes?.edges ?? [])
+              .map((e: any) => e.node?.message)
+              .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
+            const description = noteMessages.join('\n\n');
+            const imageUrls = (request.noteAttachments?.edges ?? [])
+              .filter((e: any) => e.node?.contentType?.startsWith('image/'))
+              .map((e: any) => e.node.url);
+            const clientName = request.companyName || request.contactName
+              || (request.client ? `${request.client.firstName || ''} ${request.client.lastName || ''}`.trim() || request.client.companyName : null)
+              || null;
+
+            await db.prepare(
+              `INSERT INTO jobber_webhook_requests
+                (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
+                 title = excluded.title,
+                 client_name = excluded.client_name,
+                 description = excluded.description,
+                 request_body = excluded.request_body,
+                 image_urls = excluded.image_urls,
+                 processed_at = excluded.processed_at`
+            ).bind(
+              crypto.randomUUID(), req.id, 'API_FETCH', '',
+              request.title ?? null, clientName, description || null,
+              JSON.stringify(request), JSON.stringify(imageUrls),
+              JSON.stringify({ source: 'background_enrichment' }), new Date().toISOString(),
+            ).run();
+
+            console.log(`[quotes/requests] Enriched request ${req.id}`);
+          } catch (err) {
+            console.error(`[quotes/requests] Enrichment failed for ${req.id}:`, err instanceof Error ? err.message : err);
+          }
+        })
+      )
+    );
   }
 
   return c.json({ requests, available });

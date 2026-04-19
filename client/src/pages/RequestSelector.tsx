@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { JobberCustomerRequest, JobberRequestFormData } from 'shared';
 import { fetchJobberRequests } from '../api';
-import SessionExpiredBanner from './SessionExpiredBanner';
 
 interface RequestSelectorProps {
   onSelect: (request: JobberCustomerRequest) => void;
@@ -10,11 +9,9 @@ interface RequestSelectorProps {
   formData?: JobberRequestFormData | null;
   formDataLoaded?: boolean;
   loadingFormData?: boolean;
-  sessionExpired?: boolean;
-  onReconnected?: () => void;
 }
 
-export default function RequestSelector({ onSelect, onClear, selectedRequestId, formData, formDataLoaded, loadingFormData, sessionExpired, onReconnected }: RequestSelectorProps) {
+export default function RequestSelector({ onSelect, onClear, selectedRequestId, formData, formDataLoaded, loadingFormData }: RequestSelectorProps) {
   const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,11 +161,6 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             <div style={{ fontSize: '0.85rem', color: '#6d4c00', background: '#fff3e0', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
               The form details for this request aren't available via the Jobber API. Open the request in Jobber and paste the details below.
             </div>
-          )}
-
-          {/* Session expired banner */}
-          {sessionExpired && onReconnected && (
-            <SessionExpiredBanner onReconnected={onReconnected} />
           )}
 
           {/* Link to Jobber */}

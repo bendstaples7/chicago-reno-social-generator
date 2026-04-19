@@ -1,5 +1,10 @@
 # Tech Stack & Build System
 
+## IMPORTANT: Production Architecture
+- **The Cloudflare Worker (`worker/`) is the sole production API backend.** There is no Express server.
+- **All server-side changes must be made in `worker/src/`.** Any `server/` directory is legacy and not deployed.
+- **Always verify your local branch is up to date with `origin/main` before starting work.** The codebase evolves rapidly — stale local checkouts will lead to changes against deleted or outdated code.
+
 ## Monorepo Structure
 - **npm workspaces** with three packages: `client`, `worker`, `shared`
 - Shared base TypeScript config in `tsconfig.base.json` (ES2022, ESNext modules, bundler resolution, strict mode)

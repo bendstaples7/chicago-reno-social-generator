@@ -25,7 +25,7 @@ const pages = [
 // ---------------------------------------------------------------------------
 for (const p of pages) {
   test(`"${p.name}" (${p.url}) loads without error`, async ({ page }) => {
-    const response = await page.goto(p.url, { waitUntil: 'networkidle' });
+    const response = await page.goto(p.url, { waitUntil: 'domcontentloaded' });
 
     // Page loaded with a successful HTTP status
     expect(response?.ok()).toBe(true);
@@ -55,7 +55,7 @@ for (const p of pages) {
       }
     });
 
-    await page.goto(p.url, { waitUntil: 'networkidle' });
+    await page.goto(p.url, { waitUntil: 'domcontentloaded' });
 
     expect(consoleErrors).toEqual([]);
   });

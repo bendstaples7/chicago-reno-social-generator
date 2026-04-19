@@ -45,8 +45,7 @@ jobs:
           npm run dev:client &
 
           # Start the worker directly with wrangler (skip sync scripts)
-          cd worker && npx wrangler dev &
-          cd ..
+          (cd worker && npx wrangler dev) &
 
           # Wait for both servers to be ready
           echo "Waiting for client on :5173..."

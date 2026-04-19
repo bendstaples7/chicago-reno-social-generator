@@ -30,9 +30,10 @@ for (const p of pages) {
     // Page loaded with a successful HTTP status
     expect(response?.ok()).toBe(true);
 
-    // No error toast appeared
-    const errorToasts = page.locator('[role="alert"]');
-    await expect(errorToasts).toHaveCount(0);
+    // No global error toast appeared (the fixed-position toast container at top-right)
+    const errorToastContainer = page.locator('[aria-live="polite"]');
+    const toastCount = await errorToastContainer.locator('[role="alert"]').count();
+    expect(toastCount).toBe(0);
 
     // Page has visible content (not a blank page)
     const body = page.locator('body');
@@ -64,8 +65,9 @@ for (const p of pages) {
 // Smoke: API health check
 // ---------------------------------------------------------------------------
 test('API /health returns ok', async ({ request }) => {
-  // Hit the worker health endpoint directly via the Vite proxy
-  const response = await request.get('/health');
+  // Hit the worker health endpoint directly (not via Vite proxy since /health isn't proxied)
+  const workerUrl = process.env.WORKER_URL ?? 'http://localhost:8787';
+  const response = await request.get(`${workerUrl}/health`);
 
   expect(response.ok()).toBe(true);
 

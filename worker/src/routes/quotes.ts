@@ -3,6 +3,7 @@ import type { Bindings } from '../bindings.js';
 import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
+import { JobberWebSession } from '../services/jobber-web-session.js';
 import {
   QuoteEngine,
   JobberIntegration,
@@ -683,13 +684,27 @@ app.get('/jobber/requests/:id', async (c) => {
 /**
  * GET /jobber/requests/:id/form-data
  * Fetch the form submission data for a specific Jobber request.
- * Server-side fallback chain: D1 → Jobber public GraphQL API fetch + store → null.
+ * Primary: Jobber internal API via web session cookies (requestDetails.form).
+ * Fallback: D1 stored data → Jobber public API fetch + store → null.
  */
 app.get('/jobber/requests/:id/form-data', async (c) => {
   const db = c.env.DB;
   const requestId = c.req.param('id');
 
-  // Step 1: Check D1 jobber_webhook_requests for stored data
+  // Step 1: Try the internal Jobber API using web session cookies
+  // This is the only way to get requestDetails.form (customer form submissions)
+  try {
+    const webSession = new JobberWebSession(db);
+    const result = await webSession.fetchRequestFormData(requestId);
+    if (result.formData) {
+      return c.json({ formData: result.formData });
+    }
+    // If sessionExpired or no data, fall through to fallback
+  } catch (err) {
+    console.warn('[quotes/form-data] Web session fetch failed:', err instanceof Error ? err.message : err);
+  }
+
+  // Step 2: Fallback — check D1 for stored webhook/API data
   let row = await db.prepare(
     `SELECT title, client_name, description, request_body, image_urls
      FROM jobber_webhook_requests
@@ -698,7 +713,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
      LIMIT 1`
   ).bind(requestId).first() as Record<string, unknown> | null;
 
-  // Step 2: If not in D1 or row has no request_body (partial webhook row), fetch from Jobber public GraphQL API
+  // Step 3: If not in D1, fetch from Jobber public GraphQL API and store
   if (!row || row.request_body == null) {
     try {
       const { jobberIntegration } = await createJobberIntegration(db, c.env);
@@ -726,18 +741,13 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
           || (request.client ? `${request.client.firstName || ''} ${request.client.lastName || ''}`.trim() || request.client.companyName : null)
           || null;
 
-        // Store in D1 for future requests
         await db.prepare(
           `INSERT INTO jobber_webhook_requests
             (id, jobber_request_id, topic, account_id, title, client_name, description, request_body, image_urls, raw_payload, processed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (jobber_request_id, topic) DO UPDATE SET
-             title = excluded.title,
-             client_name = excluded.client_name,
-             description = excluded.description,
-             request_body = excluded.request_body,
-             image_urls = excluded.image_urls,
-             processed_at = excluded.processed_at`
+             title = excluded.title, client_name = excluded.client_name, description = excluded.description,
+             request_body = excluded.request_body, image_urls = excluded.image_urls, processed_at = excluded.processed_at`
         ).bind(
           crypto.randomUUID(), requestId, 'API_FETCH', '',
           request.title ?? null, clientName, description || null,
@@ -745,30 +755,25 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
           JSON.stringify({ source: 'api_fetch' }), new Date().toISOString(),
         ).run();
 
-        // Re-query to use the same code path below
         row = await db.prepare(
           `SELECT title, client_name, description, request_body, image_urls
-           FROM jobber_webhook_requests
-           WHERE jobber_request_id = ?
-           ORDER BY processed_at DESC, received_at DESC
-           LIMIT 1`
+           FROM jobber_webhook_requests WHERE jobber_request_id = ?
+           ORDER BY processed_at DESC, received_at DESC LIMIT 1`
         ).bind(requestId).first() as Record<string, unknown> | null;
       }
     } catch (fetchErr) {
-      console.error('[quotes/form-data] API fetch failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
+      console.error('[quotes/form-data] API fallback failed:', fetchErr instanceof Error ? fetchErr.message : fetchErr);
     }
   }
 
-  // Step 3: If still no data, return null
+  // Step 4: Build form data from D1 row (notes + description)
   if (!row) {
     return c.json({ formData: null });
   }
 
-  // Build form data from stored D1 row
   const sections: Array<{ label: string; sortOrder: number; answers: Array<{ label: string; value: string | null }> }> = [];
   const textParts: string[] = [];
 
-  // Extract notes from the stored request body
   if (row.request_body) {
     try {
       const detail = JSON.parse(row.request_body as string);
@@ -776,32 +781,23 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
       const noteMessages = noteEdges
         .map((e: any) => e.node?.message)
         .filter((m: unknown): m is string => typeof m === 'string' && (m as string).trim().length > 0);
-
       if (noteMessages.length > 0) {
         sections.push({
           label: 'Notes',
           sortOrder: 2,
-          answers: noteMessages.map((msg: string, i: number) => ({
-            label: `Note ${i + 1}`,
-            value: msg,
-          })),
+          answers: noteMessages.map((msg: string, i: number) => ({ label: `Note ${i + 1}`, value: msg })),
         });
         textParts.push(...noteMessages);
       }
     } catch { /* ignore parse errors */ }
   }
 
-  // Add description if available and not already covered by notes
   const description = ((row.description as string) || '').trim();
   const descriptionAlreadyCovered = description.length > 0 && textParts.some(t =>
     t.includes(description) || description.includes(t)
   );
   if (description && !descriptionAlreadyCovered) {
-    sections.unshift({
-      label: 'Request Description',
-      sortOrder: 1,
-      answers: [{ label: 'Description', value: description }],
-    });
+    sections.unshift({ label: 'Request Description', sortOrder: 1, answers: [{ label: 'Description', value: description }] });
     textParts.unshift(description);
   }
 
@@ -809,12 +805,7 @@ app.get('/jobber/requests/:id/form-data', async (c) => {
     return c.json({ formData: null });
   }
 
-  return c.json({
-    formData: {
-      sections,
-      text: textParts.join('\n\n'),
-    },
-  });
+  return c.json({ formData: { sections, text: textParts.join('\n\n') } });
 });
 
 /**

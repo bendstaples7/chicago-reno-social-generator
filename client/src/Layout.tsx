@@ -110,7 +110,7 @@ function InstagramBanner({ instagram, onSkip, onSettings }: {
 }
 
 export default function Layout() {
-  const { user, logout, systemsStatus, recheckSystems, skipInstagram } = useAuth();
+  const { user, logout, systemsStatus, recheckSystems, skipInstagram, skipJobberSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = getActiveTab(location.pathname);
@@ -174,6 +174,46 @@ export default function Layout() {
         >
           Connect Jobber
         </a>
+      </SystemsCheckOverlay>
+    );
+  }
+
+  if (systemsStatus.state === 'jobber_session_expired') {
+    return (
+      <SystemsCheckOverlay>
+        <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🍪</div>
+        <h2 style={{ margin: '0 0 0.75rem', color: '#333' }}>Refresh Jobber Session</h2>
+        <p style={{ color: '#666', marginBottom: '1rem', lineHeight: 1.5 }}>
+          Jobber session cookies are expired or missing. These are needed to fetch
+          customer request form submissions. Refresh them to get full request details.
+        </p>
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <a
+            href="/api/jobber-auth/set-cookies"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-block', background: '#00a89d', color: '#fff',
+              padding: '0.65rem 1.5rem', borderRadius: 6, textDecoration: 'none',
+              fontWeight: 600, fontSize: '0.95rem',
+            }}
+          >
+            Refresh Cookies
+          </a>
+          <button
+            onClick={skipJobberSession}
+            style={{
+              background: 'transparent', color: '#666', border: '1px solid #ccc',
+              padding: '0.65rem 1.5rem', borderRadius: 6, cursor: 'pointer',
+              fontWeight: 500, fontSize: '0.95rem',
+            }}
+          >
+            Skip for now
+          </button>
+        </div>
+        <p style={{ color: '#999', fontSize: '0.8rem', marginTop: '1rem' }}>
+          Skipping means some request details may be incomplete.
+        </p>
       </SystemsCheckOverlay>
     );
   }

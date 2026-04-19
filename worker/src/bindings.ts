@@ -18,4 +18,5 @@ export interface Bindings {
   JOBBER_API_URL: string;
   JOBBER_WEB_EMAIL: string;
   JOBBER_WEB_PASSWORD: string;
+  FRONTEND_URL: string;
 }

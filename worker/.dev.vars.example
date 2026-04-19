@@ -13,3 +13,7 @@ JOBBER_ACCESS_TOKEN=
 JOBBER_REFRESH_TOKEN=
 JOBBER_WEB_EMAIL=
 JOBBER_WEB_PASSWORD=
+
+# Frontend URL for OAuth callback redirects (defaults to worker origin if unset)
+# In production, set to the Cloudflare Pages URL (e.g., https://chicago-reno-social-generator.pages.dev)
+FRONTEND_URL=

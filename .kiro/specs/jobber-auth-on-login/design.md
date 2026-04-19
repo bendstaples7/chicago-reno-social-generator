@@ -44,7 +44,7 @@ flowchart TD
 
 ### Component Tree (Auth Flow)
 
-```
+```text
 BrowserRouter
   └── AuthProvider (manages user + systemsStatus)
        └── ErrorToastProvider

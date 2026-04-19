@@ -9,6 +9,10 @@ export interface SystemsStatusResponse {
   jobber: {
     available: boolean;
   };
+  jobberSession: {
+    configured: boolean;
+    expired: boolean;
+  };
   instagram: {
     status: 'connected' | 'expired' | 'not_connected';
     accountName?: string;

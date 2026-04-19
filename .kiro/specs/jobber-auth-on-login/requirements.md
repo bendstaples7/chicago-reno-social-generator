@@ -62,7 +62,7 @@ This feature introduces a unified systems check at login/app startup that verifi
 
 1. THE Quote_Input_Page SHALL not call `checkJobberSessionStatus` or `fetchJobberRequestFormData` with session expiration handling logic.
 2. THE client API module SHALL not export the `checkJobberSessionStatus` function.
-3. WHEN `fetchJobberRequestFormData` returns `sessionExpired: true`, THE Quote_Input_Page SHALL ignore the session expiration flag and continue with available data (description, notes fallback).
+3. THE `fetchJobberRequestFormData` client API function SHALL return only `{ formData }` without any `sessionExpired` field, and THE Quote_Input_Page SHALL fall back to available data (description, notes) from the request object when `formData` is null, without any session-expiration handling.
 
 ### Requirement 5: OAuth Callback Return Handling
 

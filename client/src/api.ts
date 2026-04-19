@@ -146,7 +146,7 @@ export async function generateImages(description: string, style?: ImageStyle, co
     const statusRes = await fetch(API_BASE + '/api/media/generate-status/' + jobId, {
       headers: { ...authHeaders() },
     });
-    const status = await handleResponseWithToast<{
+    const status = await handleResponse<{
       jobId: string;
       status: string;
       error?: string;
@@ -424,7 +424,7 @@ export async function useContentIdea(ideaId: string): Promise<{ idea: ContentIde
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function dismissContentIdea(ideaId: string): Promise<{ success: boolean }> {
@@ -432,7 +432,7 @@ export async function dismissContentIdea(ideaId: string): Promise<{ success: boo
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 // ── Quote Generation ──
@@ -471,7 +471,7 @@ export async function updateDraft(id: string, updates: QuoteDraftUpdate): Promis
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(updates),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function reviseDraft(
@@ -492,7 +492,7 @@ export async function deleteDraft(id: string): Promise<void> {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  await handleResponse(res);
+  await handleResponseWithToast(res);
 }
 
 export async function fetchCatalog(): Promise<ProductCatalogEntry[]> {
@@ -552,6 +552,13 @@ export async function fetchJobberRequests(): Promise<{ requests: JobberCustomerR
 
 export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null }> {
   const res = await fetch(API_BASE + '/api/quotes/jobber/requests/' + requestId + '/form-data', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
+export async function checkJobberSessionStatus(): Promise<{ configured: boolean; expired: boolean }> {
+  const res = await fetch(API_BASE + '/api/jobber-auth/session-cookies/status', {
     headers: { ...authHeaders() },
   });
   return handleResponse(res);

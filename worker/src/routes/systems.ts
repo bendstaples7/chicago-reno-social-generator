@@ -3,29 +3,52 @@ import type { Bindings } from '../bindings.js';
 import type { User, SystemsStatusResponse } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { JobberIntegration, ActivityLogService } from '../services/index.js';
+import { JobberWebSession } from '../services/jobber-web-session.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
 app.use('*', sessionMiddleware);
 
 /**
- * GET /
+ * GET /status
  * Returns aggregated status of all external service connections.
- * Jobber: checks if valid OAuth tokens exist in D1.
+ * Jobber OAuth: makes a lightweight API call to verify tokens are valid.
+ * Jobber Session: checks if web session cookies exist and are not expired.
  * Instagram: checks channel_connections for the authenticated user.
  */
-app.get('/', async (c) => {
+app.get('/status', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
 
-  // ── Jobber token availability (fail-closed: unavailable on error) ──
+  // ── Jobber OAuth token validity (fail-closed: unavailable on error) ──
   let jobberAvailable = false;
   try {
     const tokenStore = new JobberTokenStore(db);
     const tokens = await tokenStore.load();
-    jobberAvailable = tokens !== null;
+    if (tokens) {
+      const activityLog = new ActivityLogService(db);
+      const jobber = new JobberIntegration(activityLog, {
+        clientId: c.env.JOBBER_CLIENT_ID || '',
+        clientSecret: c.env.JOBBER_CLIENT_SECRET || '',
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        tokenStore,
+      });
+      await jobber.graphqlRequest('{ account { name } }', {});
+      jobberAvailable = jobber.isAvailable();
+    }
   } catch {
-    // D1 error — fail-closed, report unavailable
+    jobberAvailable = false;
+  }
+
+  // ── Jobber web session cookies (fail-open: not configured on error) ──
+  let jobberSession: SystemsStatusResponse['jobberSession'] = { configured: false, expired: false };
+  try {
+    const webSession = new JobberWebSession(db);
+    jobberSession = await webSession.getStatus();
+  } catch {
+    // D1 error — fail-open, report not configured
   }
 
   // ── Instagram channel status (fail-open: not_connected on error) ──
@@ -53,6 +76,7 @@ app.get('/', async (c) => {
 
   const response: SystemsStatusResponse = {
     jobber: { available: jobberAvailable },
+    jobberSession,
     instagram: instagramStatus,
   };
 

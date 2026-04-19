@@ -12,8 +12,13 @@ setup('authenticate', async ({ page }) => {
   // Wait for redirect to the social dashboard after login
   await page.waitForURL('**/social/dashboard', { timeout: 15_000 });
 
-  // Verify we actually landed on the authenticated page
-  await expect(page.locator('nav')).toBeVisible();
+  // After login the app runs a systems check before showing the main shell.
+  // In CI (no real Jobber/Instagram tokens) this lands on an overlay screen
+  // (e.g. "Connect Jobber") rather than the nav sidebar.  We just need to
+  // confirm we're past the login page and the authenticated app rendered.
+  await expect(
+    page.locator('nav, [aria-label="Verifying connections"], h2:has-text("Connect Jobber"), h2:has-text("Connection Error")')
+  ).toBeVisible({ timeout: 10_000 });
 
   // Persist auth state (localStorage + cookies) for subsequent tests
   await page.context().storageState({ path: AUTH_FILE });

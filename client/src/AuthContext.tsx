@@ -7,6 +7,7 @@ export type SystemsStatus =
   | { state: 'checking' }
   | { state: 'ready' }
   | { state: 'jobber_unavailable' }
+  | { state: 'jobber_session_expired' }
   | { state: 'instagram_issue'; instagram: { status: 'expired' | 'not_connected'; accountName?: string } }
   | { state: 'error'; message: string };
 
@@ -18,6 +19,7 @@ interface AuthState {
   logout: () => Promise<void>;
   recheckSystems: () => Promise<void>;
   skipInstagram: () => void;
+  skipJobberSession: () => void;
   error: ErrorResponse | null;
   clearError: () => void;
 }
@@ -27,6 +29,9 @@ const AuthContext = createContext<AuthState | null>(null);
 function evaluateSystemsStatus(response: SystemsStatusResponse): SystemsStatus {
   if (!response.jobber.available) {
     return { state: 'jobber_unavailable' };
+  }
+  if (response.jobberSession && (!response.jobberSession.configured || response.jobberSession.expired)) {
+    return { state: 'jobber_session_expired' };
   }
   if (response.instagram.status === 'expired' || response.instagram.status === 'not_connected') {
     return {
@@ -69,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false);
 
           if (oauthError) {
-            setSystemsStatus({ state: 'error', message: decodeURIComponent(oauthError) });
+            setSystemsStatus({ state: 'error', message: oauthError });
             // Clean up the query parameter
             const url = new URL(window.location.href);
             url.searchParams.delete('oauth_error');
@@ -115,12 +120,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSystemsStatus({ state: 'ready' });
   }, []);
 
+  const skipJobberSession = useCallback(() => {
+    setSystemsStatus({ state: 'ready' });
+  }, []);
+
   const clearError = useCallback(() => setError(null), []);
 
   return (
     <AuthContext.Provider value={{
       user, loading, systemsStatus, login, logout,
-      recheckSystems, skipInstagram, error, clearError,
+      recheckSystems, skipInstagram, skipJobberSession, error, clearError,
     }}>
       {children}
     </AuthContext.Provider>

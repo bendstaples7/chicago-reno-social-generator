@@ -21,6 +21,37 @@ const ACCEPTED_MIME_TYPES = new Set([
 const ACCEPTED_FORMATS_LABEL = 'JPEG, PNG, HEIC, WebP';
 const MAX_IMAGES = 10;
 
+/**
+ * Build customer text directly from the request object.
+ * Single source of truth — no separate API call needed.
+ */
+function buildCustomerText(request: JobberCustomerRequest): string {
+  const parts: string[] = [];
+
+  // Use description if it adds content beyond what's in the notes
+  if (request.description) {
+    const trimmedDesc = request.description.trim();
+    if (trimmedDesc) {
+      // Check if the description is just a concatenation of the notes
+      const noteTexts = request.structuredNotes.map((n) => n.message.trim());
+      const descriptionIsJustNotes = noteTexts.length > 0 && noteTexts.every((nt) => trimmedDesc.includes(nt));
+      if (!descriptionIsJustNotes) {
+        parts.push(trimmedDesc);
+      }
+    }
+  }
+
+  // Add structured notes with author labels
+  for (const note of request.structuredNotes) {
+    const trimmed = note.message.trim();
+    if (!trimmed) continue;
+    const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
+    parts.push(`${label} ${trimmed}`);
+  }
+
+  return parts.join('\n\n') || request.title?.trim() || '';
+}
+
 export default function QuoteInputPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,62 +71,33 @@ export default function QuoteInputPage() {
       .catch(() => setJobberAvailable(false));
   }, []);
 
-  const [formData, setFormData] = useState<import('shared').JobberRequestFormData | null>(null);
-  const [loadingFormData, setLoadingFormData] = useState(false);
   const selectTokenRef = useRef(0);
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     const token = ++selectTokenRef.current;
     setJobberRequestId(request.id);
-    setFormData(null);
-    setLoadingFormData(true);
 
-    // Fetch form data from the internal API
+    // Try the form-data endpoint first (uses web session cookies for requestDetails.form)
     try {
-      const { formData: fetchedFormData } = await fetchJobberRequestFormData(request.id);
-      if (token !== selectTokenRef.current) return; // stale — a newer selection superseded this one
-      if (fetchedFormData) {
-        setFormData(fetchedFormData);
-        if (fetchedFormData.text) {
-          setCustomerText(fetchedFormData.text);
-          setLoadingFormData(false);
-          return;
-        }
+      const { formData } = await fetchJobberRequestFormData(request.id);
+      if (token !== selectTokenRef.current) return; // stale
+      if (formData && formData.text) {
+        setCustomerText(formData.text);
+        return;
       }
     } catch {
       if (token !== selectTokenRef.current) return;
-      // Fall through to fallback
-    } finally {
-      if (token === selectTokenRef.current) {
-        setLoadingFormData(false);
-      }
+      // Fall through to local extraction
     }
 
     if (token !== selectTokenRef.current) return;
-
-    // Fallback to title + description + notes
-    const parts: string[] = [];
-    if (request.description) {
-      const trimmedDesc = request.description.trim();
-      if (trimmedDesc) {
-        parts.push(trimmedDesc);
-      }
-    }
-    for (const note of request.structuredNotes) {
-      const trimmed = note.message.trim();
-      if (!trimmed) continue;
-      const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
-      parts.push(`${label} ${trimmed}`);
-    }
-    // Only set customer text if we have actual content beyond just the title
-    setCustomerText(parts.join('\n\n') || request.title?.trim() || '');
+    // Fallback: build text from the request object's notes/description
+    setCustomerText(buildCustomerText(request));
   };
 
   const handleRequestClear = () => {
     ++selectTokenRef.current;
     setJobberRequestId(null);
-    setFormData(null);
-    setLoadingFormData(false);
     setCustomerText('');
   };
 
@@ -189,20 +191,17 @@ export default function QuoteInputPage() {
           onSelect={handleRequestSelect}
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
-          formData={formData}
-          formDataLoaded={!!formData}
-          loadingFormData={loadingFormData}
         />
       )}
 
-      {/* Customer request text area — editable when no Jobber request, or shows extracted text when one is selected */}
+      {/* Customer request text area */}
       <label style={labelStyle}>
         Customer Request
         <textarea
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
           placeholder={jobberRequestId
-            ? 'Loading request details… If empty, paste the customer\'s request details here.'
+            ? 'Request details loaded above. Edit as needed or paste additional details.'
             : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}

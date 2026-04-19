@@ -27,7 +27,20 @@ export default function SessionExpiredBanner({ onReconnected }: SessionExpiredBa
     setPolling(false);
   };
 
-  const handleReconnectClick = () => {
+  const handleReconnectClick = async () => {
+    // First check if the session was already refreshed (e.g. by the automated cookie refresh)
+    try {
+      const status = await checkJobberSessionStatus();
+      if (status.configured && !status.expired) {
+        setDismissed(true);
+        onReconnected();
+        return;
+      }
+    } catch {
+      // Fall through to manual reconnect
+    }
+
+    // Session still expired — open the manual cookie paste page and start polling
     window.open('/api/jobber-auth/set-cookies', '_blank', 'noopener,noreferrer');
     setPolling(true);
   };

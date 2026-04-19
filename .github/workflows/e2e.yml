@@ -49,10 +49,10 @@ jobs:
 
           # Wait for both servers to be ready
           echo "Waiting for client on :5173..."
-          npx wait-on --timeout 60000 http-get://127.0.0.1:5173
+          npx wait-on --timeout 60000 http-get://localhost:5173
 
           echo "Waiting for worker on :8787..."
-          npx wait-on --timeout 60000 http-get://127.0.0.1:8787/health
+          npx wait-on --timeout 60000 http-get://localhost:8787/health
 
       - name: Run Playwright tests
         run: npx playwright test

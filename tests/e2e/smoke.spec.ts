@@ -30,10 +30,12 @@ for (const p of pages) {
     // Page loaded with a successful HTTP status
     expect(response?.ok()).toBe(true);
 
-    // No global error toast appeared (the fixed-position toast container at top-right)
+    // Wait for main content to render before checking for error toasts
+    await expect(page.locator('main')).toBeVisible();
+
+    // No global error toast appeared (auto-retrying assertion waits for async API calls to settle)
     const errorToastContainer = page.locator('[aria-live="polite"]');
-    const toastCount = await errorToastContainer.locator('[role="alert"]').count();
-    expect(toastCount).toBe(0);
+    await expect(errorToastContainer.locator('[role="alert"]')).toHaveCount(0);
 
     // Page has visible content (not a blank page)
     const body = page.locator('body');

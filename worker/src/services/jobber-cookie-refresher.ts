@@ -193,7 +193,11 @@ export class JobberCookieRefresher {
           if (data.id === id) {
             clearTimeout(timeout);
             ws.removeEventListener('message', handler);
-            resolve(data);
+            if (data.error) {
+              reject(new Error(`CDP ${method} error (${data.error.code}): ${data.error.message}`));
+            } else {
+              resolve(data);
+            }
           }
         };
         ws.addEventListener('message', handler);
@@ -215,8 +219,12 @@ export class JobberCookieRefresher {
       // Wait for the page to load (login form)
       await new Promise(r => setTimeout(r, 5000));
 
+      // Helper to extract the string value from a Runtime.evaluate result
+      const evalValue = (resp: CDPResponse): string =>
+        (resp.result as any)?.result?.value as string ?? '';
+
       // Fill the username field
-      await sendCommand('Runtime.evaluate', {
+      const usernameResult = await sendCommand('Runtime.evaluate', {
         expression: `
           const field = document.querySelector('#username')
             || document.querySelector('input[name="username"]')
@@ -231,9 +239,13 @@ export class JobberCookieRefresher {
           } else { 'no_field'; }
         `,
       });
+      if (evalValue(usernameResult) === 'no_field') {
+        console.error('[JobberCookieRefresher] Username field not found on login page');
+        return null;
+      }
 
       // Fill the password field
-      await sendCommand('Runtime.evaluate', {
+      const passwordResult = await sendCommand('Runtime.evaluate', {
         expression: `
           const field = document.querySelector('#password')
             || document.querySelector('input[name="password"]')
@@ -247,15 +259,23 @@ export class JobberCookieRefresher {
           } else { 'no_field'; }
         `,
       });
+      if (evalValue(passwordResult) === 'no_field') {
+        console.error('[JobberCookieRefresher] Password field not found on login page');
+        return null;
+      }
 
       // Click submit
-      await sendCommand('Runtime.evaluate', {
+      const submitResult = await sendCommand('Runtime.evaluate', {
         expression: `
           const btn = document.querySelector('button[type="submit"]')
             || document.querySelector('button[name="action"]');
           if (btn) { btn.click(); 'ok'; } else { 'no_button'; }
         `,
       });
+      if (evalValue(submitResult) === 'no_button') {
+        console.error('[JobberCookieRefresher] Submit button not found on login page');
+        return null;
+      }
 
       // Wait for navigation after login
       await new Promise(r => setTimeout(r, 8000));

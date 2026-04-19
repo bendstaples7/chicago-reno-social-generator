@@ -17,3 +17,9 @@ JOBBER_WEB_PASSWORD=
 # Frontend URL for OAuth callback redirects (defaults to worker origin if unset)
 # In production, set to the Cloudflare Pages URL (e.g., https://chicago-reno-social-generator.pages.dev)
 FRONTEND_URL=
+
+# Cloudflare credentials for Browser Rendering REST API (automated cookie refresh)
+# Get your account ID from the Cloudflare dashboard URL
+# Create an API token with Browser Rendering - Edit permissions
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=

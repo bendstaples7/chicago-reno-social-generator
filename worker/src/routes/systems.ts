@@ -5,6 +5,7 @@ import { sessionMiddleware } from '../middleware/session.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
 import { JobberIntegration, ActivityLogService } from '../services/index.js';
 import { JobberWebSession } from '../services/jobber-web-session.js';
+import { JobberCookieRefresher } from '../services/jobber-cookie-refresher.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -14,7 +15,7 @@ app.use('*', sessionMiddleware);
  * GET /status
  * Returns aggregated status of all external service connections.
  * Jobber OAuth: makes a lightweight API call to verify tokens are valid.
- * Jobber Session: checks if web session cookies exist and are not expired.
+ * Jobber Session: checks cookies, auto-refreshes via Browser Rendering if expired.
  * Instagram: checks channel_connections for the authenticated user.
  */
 app.get('/status', async (c) => {
@@ -42,13 +43,35 @@ app.get('/status', async (c) => {
     jobberAvailable = false;
   }
 
-  // ── Jobber web session cookies (fail-open: not configured on error) ──
+  // ── Jobber web session cookies (auto-refresh if expired) ──
   let jobberSession: SystemsStatusResponse['jobberSession'] = { configured: false, expired: false };
   try {
     const webSession = new JobberWebSession(db);
     jobberSession = await webSession.getStatus();
-  } catch {
-    // D1 error — fail-open, report not configured
+
+    // Auto-refresh cookies if expired or missing, using Cloudflare Browser Rendering
+    if (!jobberSession.configured || jobberSession.expired) {
+      const email = c.env.JOBBER_WEB_EMAIL;
+      const password = c.env.JOBBER_WEB_PASSWORD;
+      const accountId = c.env.CLOUDFLARE_ACCOUNT_ID;
+      const apiToken = c.env.CLOUDFLARE_API_TOKEN;
+
+      if (email && password && accountId && apiToken) {
+        console.log('[systems/status] Cookies expired/missing — attempting auto-refresh via Browser Rendering');
+        const refresher = new JobberCookieRefresher(db, { email, password, accountId, apiToken });
+        const result = await refresher.refresh();
+
+        if (result.success) {
+          jobberSession = await webSession.getStatus();
+          console.log('[systems/status] Cookie auto-refresh succeeded');
+        } else {
+          console.warn('[systems/status] Cookie auto-refresh failed:', result.error);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[systems/status] Jobber session check failed:', err instanceof Error ? err.message : err);
+    // fail-open: report not configured
   }
 
   // ── Instagram channel status (fail-open: not_connected on error) ──

@@ -57,15 +57,21 @@ app.get('/status', async (c) => {
       const apiToken = c.env.CLOUDFLARE_API_TOKEN;
 
       if (email && password && accountId && apiToken) {
-        console.log('[systems/status] Cookies expired/missing — attempting auto-refresh via Browser Rendering');
         const refresher = new JobberCookieRefresher(db, { email, password, accountId, apiToken });
-        const result = await refresher.refresh();
 
-        if (result.success) {
-          jobberSession = await webSession.getStatus();
-          console.log('[systems/status] Cookie auto-refresh succeeded');
+        // Check negative cache before attempting refresh
+        if (!(await refresher.shouldSkipRefresh())) {
+          console.log('[systems/status] Cookies expired/missing — attempting auto-refresh via Browser Rendering CDP');
+          const result = await refresher.refresh();
+
+          if (result.success) {
+            jobberSession = await webSession.getStatus();
+            console.log('[systems/status] Cookie auto-refresh succeeded');
+          } else {
+            console.warn('[systems/status] Cookie auto-refresh failed:', result.error);
+          }
         } else {
-          console.warn('[systems/status] Cookie auto-refresh failed:', result.error);
+          console.log('[systems/status] Skipping cookie refresh — recent attempt failed (backoff)');
         }
       }
     }

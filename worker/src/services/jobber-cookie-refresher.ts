@@ -1,20 +1,34 @@
 /**
  * Jobber Cookie Refresher
  *
- * Uses Cloudflare Browser Rendering REST API to automatically log into Jobber
- * and extract session cookies. This runs entirely server-side inside the Worker
- * without requiring a browser binding (works in both local and remote mode).
+ * Uses Cloudflare Browser Rendering CDP (Chrome DevTools Protocol) sessions
+ * to automatically log into Jobber and extract session cookies — including
+ * HttpOnly cookies that aren't accessible via document.cookie.
  *
- * The refresher is triggered on-demand by the systems check when cookies
- * are expired or missing.
+ * Flow: create browser session → open tab → navigate to login → fill form
+ * via CDP → submit → extract cookies via Network.getAllCookies → validate → store.
  *
  * Requires: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN secrets.
  */
 import { JobberWebSession } from './jobber-web-session.js';
 
 const COOKIE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const REFRESH_BACKOFF_MS = 60 * 1000; // 60s negative cache after failed refresh
+const REQUEST_TIMEOUT_MS = 30 * 1000; // 30s per HTTP request
 const INTERNAL_GQL_URL = 'https://api.getjobber.com/api/graphql?location=j';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+interface CDPResponse {
+  id: number;
+  result?: Record<string, unknown>;
+  error?: { code: number; message: string };
+}
+
+interface CDPCookie {
+  name: string;
+  value: string;
+  domain: string;
+}
 
 export class JobberCookieRefresher {
   private db: D1Database;
@@ -40,14 +54,42 @@ export class JobberCookieRefresher {
   }
 
   /**
-   * Refresh Jobber session cookies using Cloudflare Browser Rendering REST API.
-   * 
-   * Flow:
-   * 1. Open Jobber login page via Browser Rendering
-   * 2. Fill credentials and submit
-   * 3. Extract cookies from the authenticated session
-   * 4. Validate cookies against Jobber's internal API
-   * 5. Store in D1
+   * Check if a recent refresh attempt failed (negative cache).
+   * Prevents hammering Browser Rendering on every /status call.
+   */
+  async shouldSkipRefresh(): Promise<boolean> {
+    try {
+      const row = await this.db.prepare(
+        "SELECT updated_at FROM jobber_web_session WHERE id = 'refresh_failed'"
+      ).first() as { updated_at: string } | null;
+      if (!row) return false;
+      const failedAt = new Date(row.updated_at).getTime();
+      return Date.now() - failedAt < REFRESH_BACKOFF_MS;
+    } catch {
+      return false;
+    }
+  }
+
+  private async markRefreshFailed(): Promise<void> {
+    try {
+      await this.db.prepare(
+        `INSERT INTO jobber_web_session (id, cookies, expires_at, updated_at)
+         VALUES ('refresh_failed', '', datetime('now'), datetime('now'))
+         ON CONFLICT (id) DO UPDATE SET updated_at = datetime('now')`
+      ).run();
+    } catch { /* best effort */ }
+  }
+
+  private async clearRefreshFailed(): Promise<void> {
+    try {
+      await this.db.prepare("DELETE FROM jobber_web_session WHERE id = 'refresh_failed'").run();
+    } catch { /* best effort */ }
+  }
+
+  /**
+   * Refresh Jobber session cookies using Cloudflare Browser Rendering CDP sessions.
+   * Uses WebSocket-based Chrome DevTools Protocol for full browser control,
+   * including access to HttpOnly cookies via Network.getAllCookies.
    */
   async refresh(): Promise<{ success: boolean; error?: string }> {
     if (!this.email || !this.password) {
@@ -57,149 +99,215 @@ export class JobberCookieRefresher {
       return { success: false, error: 'CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN not configured' };
     }
 
+    // Check negative cache — skip if a recent refresh failed
+    if (await this.shouldSkipRefresh()) {
+      return { success: false, error: 'Skipping refresh — recent attempt failed (backoff)' };
+    }
+
     const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/browser-rendering`;
+    let sessionId: string | null = null;
 
     try {
-      // Step 1: Navigate to Jobber login page and get the HTML
-      const contentResp = await fetch(`${baseUrl}/content`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: 'https://secure.getjobber.com/login',
-          rejectResourceTypes: ['image', 'font', 'media'],
-        }),
-      });
-
-      if (!contentResp.ok) {
-        const text = await contentResp.text();
-        return { success: false, error: `Browser Rendering content fetch failed (${contentResp.status}): ${text.slice(0, 200)}` };
+      // Step 1: Create a browser session (keep alive for 60s)
+      const sessionResp = await this.fetchWithTimeout(
+        `${baseUrl}/devtools/browser?keep_alive=60000`,
+        { method: 'POST', headers: this.authHeaders() },
+      );
+      if (!sessionResp.ok) {
+        const text = await sessionResp.text();
+        await this.markRefreshFailed();
+        return { success: false, error: `Failed to create browser session (${sessionResp.status}): ${text.slice(0, 200)}` };
       }
+      const sessionData = await sessionResp.json() as { sessionId: string; webSocketDebuggerUrl: string };
+      sessionId = sessionData.sessionId;
+      const wsUrl = sessionData.webSocketDebuggerUrl;
 
-      // Step 2: Use the scrape endpoint to fill the form and submit
-      // The scrape endpoint can execute JavaScript on the page
-      const scrapeResp = await fetch(`${baseUrl}/scrape`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: 'https://secure.getjobber.com/login',
-          wait: 3000,
-          elements: [{ selector: 'body' }],
-          javascript: `
-            (async () => {
-              // Wait for form fields
-              await new Promise(r => setTimeout(r, 2000));
-              
-              const usernameField = document.querySelector('#username') 
-                || document.querySelector('input[name="username"]')
-                || document.querySelector('input[type="text"]')
-                || document.querySelector('input[type="email"]');
-              const passwordField = document.querySelector('#password')
-                || document.querySelector('input[name="password"]')
-                || document.querySelector('input[type="password"]');
-              
-              if (!usernameField || !passwordField) {
-                return JSON.stringify({ error: 'Could not find login form fields' });
-              }
-              
-              // Set values using native input setter to trigger React state updates
-              const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value'
-              ).set;
-              
-              nativeInputValueSetter.call(usernameField, ${JSON.stringify(this.email)});
-              usernameField.dispatchEvent(new Event('input', { bubbles: true }));
-              usernameField.dispatchEvent(new Event('change', { bubbles: true }));
-              
-              nativeInputValueSetter.call(passwordField, ${JSON.stringify(this.password)});
-              passwordField.dispatchEvent(new Event('input', { bubbles: true }));
-              passwordField.dispatchEvent(new Event('change', { bubbles: true }));
-              
-              // Submit the form
-              const submitBtn = document.querySelector('button[type="submit"]')
-                || document.querySelector('button[name="action"]');
-              if (submitBtn) {
-                submitBtn.click();
-              } else {
-                usernameField.closest('form')?.submit();
-              }
-              
-              // Wait for navigation
-              await new Promise(r => setTimeout(r, 5000));
-              
-              return JSON.stringify({
-                url: window.location.href,
-                cookies: document.cookie
-              });
-            })()
-          `,
-        }),
-      });
-
-      if (!scrapeResp.ok) {
-        const text = await scrapeResp.text();
-        return { success: false, error: `Browser Rendering scrape failed (${scrapeResp.status}): ${text.slice(0, 200)}` };
+      // Step 2: Open a tab to the Jobber login page
+      const tabResp = await this.fetchWithTimeout(
+        `${baseUrl}/devtools/browser/${sessionId}/json/new?url=${encodeURIComponent('https://secure.getjobber.com/login')}`,
+        { method: 'PUT', headers: this.authHeaders() },
+      );
+      if (!tabResp.ok) {
+        await this.markRefreshFailed();
+        return { success: false, error: `Failed to open tab (${tabResp.status})` };
       }
+      const tabData = await tabResp.json() as { id: string; webSocketDebuggerUrl: string };
+      const pageWsUrl = tabData.webSocketDebuggerUrl;
 
-      const scrapeData = await scrapeResp.json() as any;
-      
-      // Extract cookies from the response
-      let cookieString = '';
-      
-      // Try to get cookies from the JavaScript execution result
-      if (scrapeData?.result) {
-        try {
-          const jsResult = JSON.parse(scrapeData.result);
-          if (jsResult.error) {
-            return { success: false, error: jsResult.error };
-          }
-          if (jsResult.cookies) {
-            cookieString = jsResult.cookies;
-          }
-          if (jsResult.url?.includes('login')) {
-            return { success: false, error: 'Login failed — still on login page after form submission' };
-          }
-        } catch { /* not JSON, try other extraction */ }
-      }
-
-      // Also check response cookies/headers
-      if (!cookieString && scrapeData?.cookies) {
-        cookieString = Array.isArray(scrapeData.cookies)
-          ? scrapeData.cookies.map((c: { name: string; value: string }) => `${c.name}=${c.value}`).join('; ')
-          : '';
-      }
+      // Step 3: Connect to the page via WebSocket and drive the login
+      const cookieString = await this.driveLoginViaCDP(pageWsUrl);
 
       if (!cookieString) {
-        return { success: false, error: 'No cookies extracted from login session' };
+        await this.markRefreshFailed();
+        return { success: false, error: 'Failed to extract cookies from login session' };
       }
 
-      // Step 3: Validate cookies
+      // Step 4: Validate cookies
       const valid = await this.validateCookies(cookieString);
       if (!valid) {
+        await this.markRefreshFailed();
         return { success: false, error: 'Cookie validation failed — cookies may not be authenticated' };
       }
 
-      // Step 4: Store in D1
+      // Step 5: Store in D1
       const webSession = new JobberWebSession(this.db);
       await webSession.setCookies(cookieString, COOKIE_TTL_MS);
+      await this.clearRefreshFailed();
 
-      console.log('[JobberCookieRefresher] Cookies refreshed successfully via Browser Rendering REST API');
+      console.log('[JobberCookieRefresher] Cookies refreshed successfully via CDP');
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error('[JobberCookieRefresher] Refresh failed:', message);
+      await this.markRefreshFailed();
       return { success: false, error: message };
+    } finally {
+      // Clean up: close the browser session
+      if (sessionId) {
+        try {
+          await fetch(`${baseUrl}/devtools/browser/${sessionId}`, {
+            method: 'DELETE',
+            headers: this.authHeaders(),
+          });
+        } catch { /* best effort cleanup */ }
+      }
+    }
+  }
+
+  /**
+   * Drive the Jobber login flow via CDP WebSocket commands.
+   * Returns the cookie string on success, null on failure.
+   */
+  private async driveLoginViaCDP(wsUrl: string): Promise<string | null> {
+    // Use the WebSocket API available in Cloudflare Workers
+    const ws = new WebSocket(wsUrl);
+    let cmdId = 1;
+
+    const sendCommand = (method: string, params?: Record<string, unknown>): Promise<CDPResponse> => {
+      return new Promise((resolve, reject) => {
+        const id = cmdId++;
+        const timeout = setTimeout(() => reject(new Error(`CDP command ${method} timed out`)), 15000);
+
+        const handler = (event: MessageEvent) => {
+          const data = JSON.parse(event.data as string) as CDPResponse;
+          if (data.id === id) {
+            clearTimeout(timeout);
+            ws.removeEventListener('message', handler);
+            resolve(data);
+          }
+        };
+        ws.addEventListener('message', handler);
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    try {
+      // Wait for WebSocket to open
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('WebSocket connection timed out')), 10000);
+        ws.addEventListener('open', () => { clearTimeout(timeout); resolve(); });
+        ws.addEventListener('error', () => { clearTimeout(timeout); reject(new Error('WebSocket connection failed')); });
+      });
+
+      // Enable Network domain (needed for getAllCookies)
+      await sendCommand('Network.enable');
+
+      // Wait for the page to load (login form)
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Fill the username field
+      await sendCommand('Runtime.evaluate', {
+        expression: `
+          const field = document.querySelector('#username')
+            || document.querySelector('input[name="username"]')
+            || document.querySelector('input[type="text"]')
+            || document.querySelector('input[type="email"]');
+          if (field) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(field, ${JSON.stringify(this.email)});
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            'ok';
+          } else { 'no_field'; }
+        `,
+      });
+
+      // Fill the password field
+      await sendCommand('Runtime.evaluate', {
+        expression: `
+          const field = document.querySelector('#password')
+            || document.querySelector('input[name="password"]')
+            || document.querySelector('input[type="password"]');
+          if (field) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(field, ${JSON.stringify(this.password)});
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            'ok';
+          } else { 'no_field'; }
+        `,
+      });
+
+      // Click submit
+      await sendCommand('Runtime.evaluate', {
+        expression: `
+          const btn = document.querySelector('button[type="submit"]')
+            || document.querySelector('button[name="action"]');
+          if (btn) { btn.click(); 'ok'; } else { 'no_button'; }
+        `,
+      });
+
+      // Wait for navigation after login
+      await new Promise(r => setTimeout(r, 8000));
+
+      // Check if we're still on the login page
+      const urlResult = await sendCommand('Runtime.evaluate', {
+        expression: 'window.location.href',
+      });
+      const currentUrl = (urlResult.result as any)?.result?.value as string || '';
+      if (currentUrl.includes('login')) {
+        console.error('[JobberCookieRefresher] Still on login page after submit — credentials may be invalid');
+        return null;
+      }
+
+      // Extract ALL cookies (including HttpOnly) via CDP
+      const cookieResult = await sendCommand('Network.getAllCookies');
+      const allCookies = ((cookieResult.result as any)?.cookies ?? []) as CDPCookie[];
+
+      const jobberCookies = allCookies.filter(c =>
+        c.domain.includes('getjobber.com') || c.domain.includes('jobber.com')
+      );
+
+      if (jobberCookies.length === 0) {
+        console.error('[JobberCookieRefresher] No Jobber cookies found after login');
+        return null;
+      }
+
+      const cookieString = jobberCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      console.log(`[JobberCookieRefresher] Extracted ${jobberCookies.length} Jobber cookies via CDP`);
+      return cookieString;
+    } finally {
+      try { ws.close(); } catch { /* ignore */ }
+    }
+  }
+
+  private authHeaders(): Record<string, string> {
+    return { 'Authorization': `Bearer ${this.apiToken}` };
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   private async validateCookies(cookieString: string): Promise<boolean> {
     try {
-      const resp = await fetch(INTERNAL_GQL_URL, {
+      const resp = await this.fetchWithTimeout(INTERNAL_GQL_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

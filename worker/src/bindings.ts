@@ -19,4 +19,6 @@ export interface Bindings {
   JOBBER_WEB_EMAIL: string;
   JOBBER_WEB_PASSWORD: string;
   FRONTEND_URL: string;
+  CLOUDFLARE_ACCOUNT_ID: string;
+  CLOUDFLARE_API_TOKEN: string;
 }

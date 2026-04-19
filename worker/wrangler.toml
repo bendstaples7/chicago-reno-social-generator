@@ -44,3 +44,5 @@ FRONTEND_URL = "https://chicago-reno-social-generator.pages.dev"
 # JOBBER_REFRESH_TOKEN     — Jobber API refresh token (initial; rotated automatically)
 # JOBBER_WEB_EMAIL         — Jobber login email (used by cookie refresh workflow)
 # JOBBER_WEB_PASSWORD      — Jobber login password (used by cookie refresh workflow)
+# CLOUDFLARE_ACCOUNT_ID    — Cloudflare account ID (used by Browser Rendering REST API for cookie refresh)
+# CLOUDFLARE_API_TOKEN     — Cloudflare API token with Browser Rendering permissions (used for cookie refresh)

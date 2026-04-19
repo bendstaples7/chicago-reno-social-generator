@@ -64,4 +64,4 @@ npm run build         # tsc -b
 - **OpenAI API** — text generation (content, quotes) and embeddings (similarity search)
 - **Instagram Graph API** — post publishing, account management
 - **Jobber GraphQL API** — customer requests, products, quotes, webhooks
-  - ⚠️ The public API does NOT expose `requestDetails.form` (customer form submissions). This data is only available via Jobber's internal API using web session cookies. See `JobberWebSession` service and `sync-cookies.mjs`. Do not remove these without confirming Jobber has added form data to their public API.
+  - ⚠️ The public API does NOT expose `requestDetails.form` (customer form submissions). This data is only available via Jobber's internal API using web session cookies. See `JobberWebSession` service and `JobberCookieRefresher` (uses Cloudflare Browser Rendering for automated cookie refresh). Do not remove these without confirming Jobber has added form data to their public API.

@@ -549,13 +549,6 @@ export async function fetchJobberRequestFormData(requestId: string): Promise<{ f
   return handleResponse(res);
 }
 
-export async function checkJobberSessionStatus(): Promise<{ configured: boolean; expired: boolean }> {
-  const res = await fetch(API_BASE + '/api/jobber-auth/session-cookies/status', {
-    headers: { ...authHeaders() },
-  });
-  return handleResponse(res);
-}
-
 export interface JobberRequestDetail {
   id: string;
   title: string;

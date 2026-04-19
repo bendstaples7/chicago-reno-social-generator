@@ -16,6 +16,7 @@ import contentIdeasRoutes from './routes/content-ideas.js';
 import quoteRoutes from './routes/quotes.js';
 import webhookRoutes from './routes/webhooks.js';
 import jobberAuthRoutes from './routes/jobber-auth.js';
+import systemsRoutes from './routes/systems.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -74,6 +75,7 @@ app.route('/api/activity-log', activityLogRoutes);
 app.route('/api/content-ideas', contentIdeasRoutes);
 app.route('/api/quotes', quoteRoutes);
 app.route('/api/jobber-auth', jobberAuthRoutes);
+app.route('/api/systems', systemsRoutes);
 
 // Error handler (must be registered after routes)
 app.onError(errorHandler);

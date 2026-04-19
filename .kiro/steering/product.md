@@ -24,3 +24,13 @@ This is an internal business tool for **Chicago Reno**, a home services company.
 - **SimilarQuote**: Past quotes found via vector similarity to inform new quotes
 - **PlatformError**: Structured error with severity, component, operation, and recommended actions
 - **ContentIdea**: AI-suggested content topics for social media posts
+
+## Jobber API Limitations (Critical)
+
+The Jobber public GraphQL API is **incomplete**. The following data is NOT available through the public API and requires Jobber web session cookies (internal API access):
+
+- **`requestDetails.form`** — The actual form submission data that customers fill out when submitting a request through Jobber's online booking form. This includes text inputs, multiple choice answers, date fields, and other structured form data. This is the primary source of customer request details for many requests.
+
+The public API only exposes `notes` and `noteAttachments` on requests. For requests where the customer submitted a form but no team member manually added notes, the public API returns **no content** — even though the form data exists in Jobber's system.
+
+**The `JobberWebSession` service and `sync-cookies.mjs` script exist specifically to work around this limitation.** They use headless browser cookies to access Jobber's internal GraphQL API. Do NOT remove or replace this system unless Jobber adds `requestDetails.form` to their public API. Any proposal to simplify the Jobber integration by removing the web session cookie system must account for this gap — the public API alone is insufficient for the quote generation workflow.

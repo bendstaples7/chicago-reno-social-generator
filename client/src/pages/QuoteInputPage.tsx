@@ -21,6 +21,37 @@ const ACCEPTED_MIME_TYPES = new Set([
 const ACCEPTED_FORMATS_LABEL = 'JPEG, PNG, HEIC, WebP';
 const MAX_IMAGES = 10;
 
+/**
+ * Build customer text directly from the request object.
+ * Single source of truth — no separate API call needed.
+ */
+function buildCustomerText(request: JobberCustomerRequest): string {
+  const parts: string[] = [];
+
+  // Use description if it adds content beyond what's in the notes
+  if (request.description) {
+    const trimmedDesc = request.description.trim();
+    if (trimmedDesc) {
+      // Only skip description if it's exactly the notes joined together
+      const noteTexts = request.structuredNotes.map((n) => n.message.trim());
+      const notesJoined = noteTexts.join('\n\n');
+      if (trimmedDesc !== notesJoined) {
+        parts.push(trimmedDesc);
+      }
+    }
+  }
+
+  // Add structured notes with author labels
+  for (const note of request.structuredNotes) {
+    const trimmed = note.message.trim();
+    if (!trimmed) continue;
+    const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
+    parts.push(`${label} ${trimmed}`);
+  }
+
+  return parts.join('\n\n') || request.title?.trim() || '';
+}
+
 export default function QuoteInputPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,93 +71,35 @@ export default function QuoteInputPage() {
       .catch(() => setJobberAvailable(false));
   }, []);
 
-  const [formData, setFormData] = useState<import('shared').JobberRequestFormData | null>(null);
-  const [loadingFormData, setLoadingFormData] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
   const selectTokenRef = useRef(0);
 
   const handleRequestSelect = async (request: JobberCustomerRequest) => {
     const token = ++selectTokenRef.current;
     setJobberRequestId(request.id);
-    setFormData(null);
-    setSessionExpired(false);
-    setLoadingFormData(true);
 
-    // Fetch form data from the internal API
+    // Try the form-data endpoint first (uses web session cookies for requestDetails.form)
     try {
-      const { formData: fetchedFormData, sessionExpired: expired } = await fetchJobberRequestFormData(request.id);
-      if (token !== selectTokenRef.current) return; // stale — a newer selection superseded this one
-      setSessionExpired(expired);
-      if (fetchedFormData) {
-        setFormData(fetchedFormData);
-        if (fetchedFormData.text) {
-          setCustomerText(fetchedFormData.text);
-          setLoadingFormData(false);
-          return;
-        }
+      const { formData } = await fetchJobberRequestFormData(request.id);
+      if (token !== selectTokenRef.current) return; // stale
+      if (formData && formData.text) {
+        setCustomerText(formData.text);
+        return;
       }
     } catch {
       if (token !== selectTokenRef.current) return;
-      // Fall through to fallback
-    } finally {
-      if (token === selectTokenRef.current) {
-        setLoadingFormData(false);
-      }
+      // Fall through to local extraction
     }
 
     if (token !== selectTokenRef.current) return;
-
-    // Fallback to title + description + notes
-    const parts: string[] = [];
-    if (request.description) {
-      const trimmedDesc = request.description.trim();
-      if (trimmedDesc) {
-        parts.push(trimmedDesc);
-      }
-    }
-    for (const note of request.structuredNotes) {
-      const trimmed = note.message.trim();
-      if (!trimmed) continue;
-      const label = note.createdBy === 'team' ? '[Team Note]' : note.createdBy === 'client' ? '[Client]' : '[System]';
-      parts.push(`${label} ${trimmed}`);
-    }
-    // Only set customer text if we have actual content beyond just the title
-    setCustomerText(parts.join('\n\n') || request.title?.trim() || '');
+    // Fallback: build text from the request object's notes/description
+    setCustomerText(buildCustomerText(request));
   };
 
   const handleRequestClear = () => {
     ++selectTokenRef.current;
     setJobberRequestId(null);
-    setFormData(null);
-    setLoadingFormData(false);
-    setSessionExpired(false);
     setCustomerText('');
   };
-
-  const handleReconnected = useCallback(async () => {
-    if (!jobberRequestId) return;
-    const token = selectTokenRef.current;
-    setSessionExpired(false);
-    setLoadingFormData(true);
-    try {
-      const { formData: fetchedFormData, sessionExpired: expired } = await fetchJobberRequestFormData(jobberRequestId);
-      if (token !== selectTokenRef.current) return;
-      setSessionExpired(expired);
-      if (fetchedFormData) {
-        setFormData(fetchedFormData);
-        if (fetchedFormData.text) {
-          setCustomerText(fetchedFormData.text);
-        }
-      }
-    } catch {
-      if (token !== selectTokenRef.current) return;
-      // Keep existing state on failure
-    } finally {
-      if (token === selectTokenRef.current) {
-        setLoadingFormData(false);
-      }
-    }
-  }, [jobberRequestId]);
 
   const hasText = customerText.trim().length > 0;
   const hasImages = images.length > 0;
@@ -218,22 +191,17 @@ export default function QuoteInputPage() {
           onSelect={handleRequestSelect}
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
-          formData={formData}
-          formDataLoaded={!!formData}
-          loadingFormData={loadingFormData}
-          sessionExpired={sessionExpired}
-          onReconnected={handleReconnected}
         />
       )}
 
-      {/* Customer request text area — editable when no Jobber request, or shows extracted text when one is selected */}
+      {/* Customer request text area */}
       <label style={labelStyle}>
         Customer Request
         <textarea
           value={customerText}
           onChange={(e) => setCustomerText(e.target.value)}
           placeholder={jobberRequestId
-            ? 'Loading request details… If empty, paste the customer\'s request details here.'
+            ? 'Request details loaded above. Edit as needed or paste additional details.'
             : 'Paste the customer\'s email, text message, or describe the work requested…'}
           rows={6}
           style={textareaStyle}

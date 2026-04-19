@@ -39,19 +39,32 @@ app.get('/authorize', (c) => {
 /**
  * GET /callback
  * Handles the OAuth callback from Jobber, exchanges the authorization code
- * for access + refresh tokens, persists them to D1, and displays them.
+ * for access + refresh tokens, persists them to D1, and redirects back to the app.
  */
 app.get('/callback', async (c) => {
+  const frontendUrl = c.env.FRONTEND_URL;
+  if (!frontendUrl) {
+    console.error('[jobber-auth] FRONTEND_URL is not configured. OAuth callback cannot redirect.');
+    return c.json({ error: 'FRONTEND_URL is not configured. Set it via wrangler secret or wrangler.toml vars.' }, 500);
+  }
+
+  // Jobber may redirect back with an error parameter instead of a code
+  const jobberError = c.req.query('error');
+  if (jobberError) {
+    const desc = c.req.query('error_description') || jobberError;
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent(desc));
+  }
+
   const code = c.req.query('code');
   if (!code) {
-    return c.json({ error: 'Missing authorization code' }, 400);
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent('Missing authorization code'));
   }
 
   const clientId = c.env.JOBBER_CLIENT_ID;
   const clientSecret = c.env.JOBBER_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    return c.json({ error: 'JOBBER_CLIENT_ID or JOBBER_CLIENT_SECRET is not configured' }, 500);
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent('Server configuration error'));
   }
 
   const redirectUri = new URL('/api/jobber-auth/callback', c.req.url).toString();
@@ -72,8 +85,8 @@ app.get('/callback', async (c) => {
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    return c.json({ error: `Token exchange failed (${response.status})`, details: text }, 500);
+    const errorMsg = `Token exchange failed (${response.status})`;
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent(errorMsg));
   }
 
   const data = (await response.json()) as {
@@ -84,30 +97,24 @@ app.get('/callback', async (c) => {
   };
 
   if (!data.access_token || !data.refresh_token) {
-    return c.json({ error: 'Token response missing required fields', data }, 500);
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent('Token response missing required fields'));
   }
 
   // Persist to D1 so the worker picks them up on next request
-  const tokenStore = new JobberTokenStore(c.env.DB);
-  await tokenStore.save(data.access_token, data.refresh_token);
+  try {
+    const tokenStore = new JobberTokenStore(c.env.DB);
+    await tokenStore.save(data.access_token, data.refresh_token);
+  } catch (saveErr) {
+    const msg = saveErr instanceof Error ? saveErr.message : 'Unknown error saving tokens';
+    return c.redirect(frontendUrl + '/social/dashboard?oauth_error=' + encodeURIComponent('Failed to save tokens: ' + msg));
+  }
 
-  return c.html(`
-    <html>
-      <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
-        <h2>Jobber OAuth Tokens Refreshed</h2>
-        <p>Tokens have been saved to your local D1 database. The worker will use these automatically.</p>
-        <p>Tokens have also been persisted to D1. If you need to update <code>.dev.vars</code>, run <code>node scripts/sync-tokens.mjs</code> to pull the latest tokens.</p>
-        <p style="color: #666; font-size: 14px;">Tokens expire periodically. The worker will auto-refresh them and persist new tokens to D1.</p>
-      </body>
-    </html>
-  `);
+  return c.redirect(frontendUrl + '/social/dashboard');
 });
 
 /**
  * POST /set-cookies
  * Manually set Jobber web session cookies for accessing internal API fields.
- * To get cookies: log into Jobber in your browser, open DevTools → Application
- * → Cookies → getjobber.com, and copy all cookies as a semicolon-separated string.
  */
 app.post('/set-cookies', async (c) => {
   const contentType = c.req.header('content-type') || '';
@@ -117,7 +124,6 @@ app.post('/set-cookies', async (c) => {
     const body = await c.req.json() as { cookies?: string };
     cookies = body.cookies;
   } else {
-    // Handle form submission
     const body = await c.req.parseBody();
     cookies = body.cookies as string;
   }
@@ -133,8 +139,8 @@ app.post('/set-cookies', async (c) => {
     <html>
       <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
         <h2>✅ Session Cookies Saved</h2>
-        <p>Jobber web session cookies have been stored. The worker will use them to fetch request form data (customer submission text).</p>
-        <p style="color: #666; font-size: 14px;">Cookies expire after 24 hours. You'll need to update them when they expire.</p>
+        <p>Jobber web session cookies have been stored. The worker will use them to fetch request form data.</p>
+        <p style="color: #666; font-size: 14px;">Cookies expire after 24 hours. They are refreshed automatically by the GitHub Actions cron job.</p>
         <a href="/api/jobber-auth/set-cookies" style="color: #00a89d;">← Back</a>
       </body>
     </html>
@@ -147,14 +153,14 @@ app.post('/set-cookies', async (c) => {
  */
 app.get('/set-cookies', async (c) => {
   const webSession = new JobberWebSession(c.env.DB);
-  const configured = await webSession.isConfigured();
+  const { configured, expired } = await webSession.getStatus();
 
   return c.html(`
     <html>
       <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
         <h2>Set Jobber Session Cookies</h2>
         <p>These cookies are needed to fetch the customer's original request submission text from Jobber's internal API.</p>
-        <p><strong>Status:</strong> ${configured ? '🟢 Cookies configured' : '🔴 No cookies set'}</p>
+        <p><strong>Status:</strong> ${configured && !expired ? '🟢 Cookies configured' : configured && expired ? '🟡 Cookies expired' : '🔴 No cookies set'}</p>
         <h3>How to get cookies:</h3>
         <ol>
           <li>Open <a href="https://app.getjobber.com" target="_blank">app.getjobber.com</a> and log in</li>
@@ -174,7 +180,6 @@ app.get('/set-cookies', async (c) => {
 /**
  * GET /session-cookies/status
  * Check if Jobber web session cookies are configured and valid.
- * Returns { configured, expired } to let the client detect stale sessions.
  */
 app.get('/session-cookies/status', async (c) => {
   const webSession = new JobberWebSession(c.env.DB);

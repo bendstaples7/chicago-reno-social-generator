@@ -5,7 +5,7 @@ import type {
   ActivityLogEntry, AdvisorMode, ContentIdea, QuoteDraft,
   ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
   JobberCustomerRequest, SimilarQuote, JobberRequestFormData,
-  Rule, RuleGroup, RuleGroupWithRules,
+  Rule, RuleGroup, RuleGroupWithRules, SystemsStatusResponse,
 } from 'shared';
 
 const TOKEN_KEY = 'session_token';
@@ -39,17 +39,26 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: 'Bearer ' + token } : {};
 }
 
+async function parseErrorBody(res: Response): Promise<ErrorResponse> {
+  const body = await res.json().catch(() => null);
+  if (body && 'severity' in body) {
+    return body as ErrorResponse;
+  }
+  const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
+  return { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    let error: ErrorResponse;
-    if (body && 'severity' in body) {
-      error = body as ErrorResponse;
-    } else {
-      // Extract message from { error: '...' } shaped responses (e.g., channel routes)
-      const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
-      error = { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
-    }
+    throw await parseErrorBody(res);
+  }
+  return res.json();
+}
+
+// OPT-IN TOAST: Used only for explicit user-initiated actions.
+async function handleResponseWithToast<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const error = await parseErrorBody(res);
     globalErrorListener?.(error);
     throw error;
   }
@@ -62,7 +71,7 @@ export async function login(email: string): Promise<{ user: User; token: string 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function verifySession(): Promise<{ valid: boolean; user?: User }> {
@@ -79,6 +88,15 @@ export async function logout(): Promise<void> {
     headers: { ...authHeaders() },
   });
   clearToken();
+}
+
+// ── Systems Status ──
+
+export async function fetchSystemsStatus(): Promise<SystemsStatusResponse> {
+  const res = await fetch(API_BASE + '/api/systems/status', {
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
 }
 
 // ── Media Library ──
@@ -100,7 +118,7 @@ export async function uploadMedia(file: File): Promise<MediaItem> {
     },
     body: file,
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function generateImages(description: string, style?: ImageStyle, count?: number, topic?: string): Promise<{ images: GeneratedImage[]; mediaItems?: MediaItem[] }> {
@@ -110,7 +128,7 @@ export async function generateImages(description: string, style?: ImageStyle, co
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ description, style, count, topic }),
   });
-  const { jobId } = await handleResponse<{ jobId: string }>(enqueueRes);
+  const { jobId } = await handleResponseWithToast<{ jobId: string }>(enqueueRes);
 
   // Poll for completion
   const POLL_INTERVAL = 2000;
@@ -170,7 +188,7 @@ export async function saveGeneratedImage(image: GeneratedImage): Promise<MediaIt
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(image),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function deleteMedia(id: string): Promise<void> {
@@ -178,7 +196,7 @@ export async function deleteMedia(id: string): Promise<void> {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  await handleResponse(res);
+  await handleResponseWithToast(res);
 }
 
 // ── Content Types & Advisor ──
@@ -228,7 +246,7 @@ export async function createPost(data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function updatePost(id: string, data: {
@@ -244,7 +262,7 @@ export async function updatePost(id: string, data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function generateContent(postId: string, data?: {
@@ -256,7 +274,7 @@ export async function generateContent(postId: string, data?: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data ?? {}),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function approvePost(id: string): Promise<{ success: boolean }> {
@@ -264,7 +282,7 @@ export async function approvePost(id: string): Promise<{ success: boolean }> {
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function publishPost(id: string): Promise<PublishResult> {
@@ -272,7 +290,7 @@ export async function publishPost(id: string): Promise<PublishResult> {
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 // ── Quick-Post Workflow ──
@@ -302,7 +320,7 @@ export async function quickStart(): Promise<QuickStartResponse> {
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function fetchAdvisorSuggestion(): Promise<{ suggestion: ContentSuggestion | null }> {
@@ -329,7 +347,7 @@ export async function updateSettings(data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 // ── Channels (connect/disconnect) ──
@@ -339,7 +357,7 @@ export async function connectInstagram(): Promise<{ authorizationUrl: string; st
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function disconnectChannel(id: string): Promise<{ success: boolean }> {
@@ -347,7 +365,7 @@ export async function disconnectChannel(id: string): Promise<{ success: boolean 
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function refreshInstagramToken(id: string): Promise<{ channel: ChannelConnection }> {
@@ -355,7 +373,7 @@ export async function refreshInstagramToken(id: string): Promise<{ channel: Chan
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function syncInstagramPosts(): Promise<{ synced: number; skipped: number; errors: string[] }> {
@@ -390,7 +408,7 @@ export async function generateContentIdeas(contentType: ContentType): Promise<{ 
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ contentType }),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function useContentIdea(ideaId: string): Promise<{ idea: ContentIdea }> {
@@ -398,7 +416,7 @@ export async function useContentIdea(ideaId: string): Promise<{ idea: ContentIde
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function dismissContentIdea(ideaId: string): Promise<{ success: boolean }> {
@@ -406,7 +424,7 @@ export async function dismissContentIdea(ideaId: string): Promise<{ success: boo
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 // ── Quote Generation ──
@@ -421,7 +439,7 @@ export async function generateQuote(data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function fetchDrafts(): Promise<QuoteDraft[]> {
@@ -445,7 +463,7 @@ export async function updateDraft(id: string, updates: QuoteDraftUpdate): Promis
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(updates),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function reviseDraft(
@@ -458,7 +476,7 @@ export async function reviseDraft(
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ feedbackText, ...(createRule ? { createRule: true } : {}) }),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function deleteDraft(id: string): Promise<void> {
@@ -466,7 +484,7 @@ export async function deleteDraft(id: string): Promise<void> {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  await handleResponse(res);
+  await handleResponseWithToast(res);
 }
 
 export async function fetchCatalog(): Promise<ProductCatalogEntry[]> {
@@ -485,7 +503,7 @@ export async function saveCatalog(
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ entries }),
   });
-  const data = await handleResponse<{ catalog: ProductCatalogEntry[] }>(res);
+  const data = await handleResponseWithToast<{ catalog: ProductCatalogEntry[] }>(res);
   return data.catalog;
 }
 
@@ -505,7 +523,7 @@ export async function saveTemplates(
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ entries }),
   });
-  const data = await handleResponse<{ templates: QuoteTemplate[] }>(res);
+  const data = await handleResponseWithToast<{ templates: QuoteTemplate[] }>(res);
   return data.templates;
 }
 
@@ -524,7 +542,7 @@ export async function fetchJobberRequests(): Promise<{ requests: JobberCustomerR
   return handleResponse(res);
 }
 
-export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null; sessionExpired: boolean }> {
+export async function fetchJobberRequestFormData(requestId: string): Promise<{ formData: JobberRequestFormData | null }> {
   const res = await fetch(API_BASE + '/api/quotes/jobber/requests/' + requestId + '/form-data', {
     headers: { ...authHeaders() },
   });
@@ -571,7 +589,7 @@ export async function syncCorpus(): Promise<SyncResult> {
     method: 'POST',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function fetchCorpusStatus(): Promise<{ totalQuotes: number; lastSyncAt: string | null }> {
@@ -602,7 +620,7 @@ export async function createRule(data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function updateRule(id: string, data: {
@@ -616,7 +634,7 @@ export async function updateRule(id: string, data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function deactivateRule(id: string): Promise<Rule> {
@@ -624,7 +642,7 @@ export async function deactivateRule(id: string): Promise<Rule> {
     method: 'PUT',
     headers: { ...authHeaders() },
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function createRuleGroup(data: {
@@ -636,7 +654,7 @@ export async function createRuleGroup(data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function updateRuleGroup(id: string, data: {
@@ -649,7 +667,7 @@ export async function updateRuleGroup(id: string, data: {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(data),
   });
-  return handleResponse(res);
+  return handleResponseWithToast(res);
 }
 
 export async function deleteRuleGroup(id: string): Promise<void> {
@@ -657,5 +675,5 @@ export async function deleteRuleGroup(id: string): Promise<void> {
     method: 'DELETE',
     headers: { ...authHeaders() },
   });
-  await handleResponse(res);
+  await handleResponseWithToast(res);
 }

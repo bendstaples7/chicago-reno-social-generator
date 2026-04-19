@@ -1,20 +1,14 @@
 import { useState, useEffect } from 'react';
-import type { JobberCustomerRequest, JobberRequestFormData } from 'shared';
+import type { JobberCustomerRequest } from 'shared';
 import { fetchJobberRequests } from '../api';
-import SessionExpiredBanner from './SessionExpiredBanner';
 
 interface RequestSelectorProps {
   onSelect: (request: JobberCustomerRequest) => void;
   onClear: () => void;
   selectedRequestId: string | null;
-  formData?: JobberRequestFormData | null;
-  formDataLoaded?: boolean;
-  loadingFormData?: boolean;
-  sessionExpired?: boolean;
-  onReconnected?: () => void;
 }
 
-export default function RequestSelector({ onSelect, onClear, selectedRequestId, formData, formDataLoaded, loadingFormData, sessionExpired, onReconnected }: RequestSelectorProps) {
+export default function RequestSelector({ onSelect, onClear, selectedRequestId }: RequestSelectorProps) {
   const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +67,11 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
 
   // Show read-only detail view when a request is selected
   if (selectedRequest) {
+    const hasDescription = !!selectedRequest.description?.trim();
+    const hasNotes = selectedRequest.structuredNotes.length > 0;
+    const hasImages = selectedRequest.imageUrls.length > 0;
+    const hasNoContent = !hasDescription && !hasNotes && !hasImages;
+
     return (
       <div style={wrapperStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -89,36 +88,9 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             {selectedRequest.clientName} · {formatDate(selectedRequest.createdAt)}
           </div>
 
-          {/* Loading indicator while form data is being fetched */}
-          {loadingFormData && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
-              <span style={spinnerStyle} />
-              <span style={{ fontSize: '0.85rem', color: '#666' }}>Loading request details…</span>
-            </div>
-          )}
-
-          {/* Form submission data */}
-          {formData && formData.sections.length > 0 && (
-            <div style={{ marginBottom: '0.75rem' }}>
-              <span style={sectionLabelStyle}>Request Details</span>
-              {formData.sections.map((section, si) => (
-                <div key={si} style={{ marginTop: '0.4rem' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem' }}>{section.label}</div>
-                  {section.answers.map((answer, ai) => (
-                    answer.value ? (
-                      <div key={ai} style={noteStyle}>
-                        <span style={{ fontSize: '0.75rem', color: '#888' }}>{answer.label}</span>
-                        <div style={{ marginTop: '0.15rem', whiteSpace: 'pre-wrap' }}>{answer.value}</div>
-                      </div>
-                    ) : null
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Description (from webhook/API data) — shown when no form data */}
-          {(!formData || formData.sections.length === 0) && selectedRequest.description && (
+          {/* Description — only shown when there are no structured notes (avoids duplication
+              since description is often built from the same note messages) */}
+          {hasDescription && !hasNotes && (
             <div style={{ marginBottom: '0.75rem' }}>
               <span style={sectionLabelStyle}>Description</span>
               <div style={noteStyle}>
@@ -127,8 +99,8 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             </div>
           )}
 
-          {/* Notes — labeled by author (always shown when present, since notes are distinct from form submission data) */}
-          {selectedRequest.structuredNotes.length > 0 && (
+          {/* Notes — single canonical place for note content */}
+          {hasNotes && (
             <div style={{ marginBottom: '0.75rem' }}>
               <span style={sectionLabelStyle}>Notes</span>
               {selectedRequest.structuredNotes.map((note, i) => (
@@ -143,7 +115,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
           )}
 
           {/* Images */}
-          {selectedRequest.imageUrls.length > 0 && (
+          {hasImages && (
             <div>
               <span style={sectionLabelStyle}>Attached Images</span>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
@@ -160,15 +132,10 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
             </div>
           )}
 
-          {selectedRequest.structuredNotes.length === 0 && selectedRequest.imageUrls.length === 0 && !selectedRequest.description && (!formData || formData.sections.length === 0) && !formDataLoaded && !loadingFormData && (
+          {hasNoContent && (
             <div style={{ fontSize: '0.85rem', color: '#6d4c00', background: '#fff3e0', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
-              The form details for this request aren't available via the Jobber API. Open the request in Jobber and paste the details below.
+              No details available for this request. Open it in Jobber and paste the details below.
             </div>
-          )}
-
-          {/* Session expired banner */}
-          {sessionExpired && onReconnected && (
-            <SessionExpiredBanner onReconnected={onReconnected} />
           )}
 
           {/* Link to Jobber */}
@@ -182,9 +149,6 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId, 
               >
                 Open in Jobber ↗
               </a>
-              <span style={{ fontSize: '0.8rem', color: '#888', marginLeft: '0.5rem' }}>
-                Copy the request details from Jobber and paste below
-              </span>
             </div>
           )}
         </div>

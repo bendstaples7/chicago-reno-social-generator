@@ -41,6 +41,9 @@ jobs:
 
       - name: Start dev servers
         run: |
+          # Apply D1 migrations to local database
+          cd worker && npx wrangler d1 migrations apply DB --local && cd ..
+
           # Start the Vite client dev server
           npm run dev:client &
 

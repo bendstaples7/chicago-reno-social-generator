@@ -32,10 +32,10 @@ function buildCustomerText(request: JobberCustomerRequest): string {
   if (request.description) {
     const trimmedDesc = request.description.trim();
     if (trimmedDesc) {
-      // Check if the description is just a concatenation of the notes
+      // Only skip description if it's exactly the notes joined together
       const noteTexts = request.structuredNotes.map((n) => n.message.trim());
-      const descriptionIsJustNotes = noteTexts.length > 0 && noteTexts.every((nt) => trimmedDesc.includes(nt));
-      if (!descriptionIsJustNotes) {
+      const notesJoined = noteTexts.join('\n\n');
+      if (trimmedDesc !== notesJoined) {
         parts.push(trimmedDesc);
       }
     }

@@ -71,9 +71,9 @@ This feature introduces a unified systems check at login/app startup that verifi
 #### Acceptance Criteria
 
 1. WHEN the OAuth_Flow callback completes token exchange successfully, THE OAuth callback handler SHALL redirect the browser back to the application root path instead of displaying an HTML confirmation page.
-2. WHEN the browser returns to the application after OAuth_Flow completion, THE Jobber_Auth_Gate SHALL detect the successful authentication and render the Auth_Shell.
+2. WHEN the browser returns to the application after OAuth_Flow completion, THE Systems_Check_Gate SHALL detect the successful authentication and render the Auth_Shell.
 3. IF the OAuth_Flow callback fails during token exchange, THEN THE OAuth callback handler SHALL redirect the browser back to the application with an error query parameter.
-4. WHEN the application loads with an OAuth error query parameter, THE Jobber_Auth_Gate SHALL display the error message with a retry option.
+4. WHEN the application loads with an OAuth error query parameter, THE Systems_Check_Gate SHALL display the error message with a retry option.
 
 ### Requirement 6: Dashboard Instagram Sync Must Not Trigger Error Toast
 
@@ -82,7 +82,7 @@ This feature introduces a unified systems check at login/app startup that verifi
 #### Acceptance Criteria
 
 1. WHEN the DashboardPage mounts and calls `syncInstagramPosts()` as a fire-and-forget background operation, THE call SHALL NOT trigger the global error toast if the sync endpoint returns an error (e.g., no connected Instagram account, expired token, server error).
-2. THE DashboardPage sync call SHALL bypass the `handleResponse` global error listener by calling the sync endpoint directly via `fetch` instead of using the `syncInstagramPosts` API wrapper, OR the API layer SHALL provide a silent variant that suppresses the global error listener for fire-and-forget calls.
+2. THE `syncInstagramPosts` function SHALL use the default silent `handleResponse` helper (which does not call `globalErrorListener`). User-initiated actions SHALL use `handleResponseWithToast` to opt into toast notifications.
 3. WHEN the sync succeeds, THE behavior SHALL remain unchanged — synced posts appear on the next Dashboard visit or page refresh.
 
 ### Requirement 7: Jobber Request Background Enrichment in Worker
@@ -102,7 +102,7 @@ This feature introduces a unified systems check at login/app startup that verifi
 
 #### Acceptance Criteria
 
-1. THE client API layer SHALL provide a mechanism to make API calls without triggering the global error toast (e.g., a `{ silent: true }` option or a separate `fetchSilent` helper that does not call `globalErrorListener`).
-2. WHEN `fetchJobberRequestFormData` fails and the QuoteInputPage falls back to building form data from webhook/API data, THE failure SHALL NOT trigger a global error toast.
-3. WHEN `fetchCorpusStatus` fails during polling in CorpusStatusIndicator, THE failure SHALL NOT trigger a global error toast (polling errors are transient and expected).
-4. WHEN `checkJobberStatus` fails on QuoteInputPage mount and the page falls back to `jobberAvailable: false`, THE failure SHALL NOT trigger a global error toast.
+1. THE client API layer SHALL default to silent error handling via `handleResponse` (no `globalErrorListener` call). Callers that need user-visible error toasts SHALL explicitly use `handleResponseWithToast`.
+2. WHEN `fetchJobberRequestFormData` fails and the `QuoteInputPage` falls back to building customer text from the request object, THE failure SHALL NOT trigger a global error toast (uses default silent `handleResponse`).
+3. WHEN `fetchCorpusStatus` fails during polling in `CorpusStatusIndicator`, THE failure SHALL NOT trigger a global error toast (uses default silent `handleResponse`).
+4. WHEN `checkJobberStatus` fails on `QuoteInputPage` mount and the page falls back to `jobberAvailable: false`, THE failure SHALL NOT trigger a global error toast (uses default silent `handleResponse`).

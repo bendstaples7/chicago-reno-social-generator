@@ -39,19 +39,18 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: 'Bearer ' + token } : {};
 }
 
+async function parseErrorBody(res: Response): Promise<ErrorResponse> {
+  const body = await res.json().catch(() => null);
+  if (body && 'severity' in body) {
+    return body as ErrorResponse;
+  }
+  const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
+  return { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    let error: ErrorResponse;
-    if (body && 'severity' in body) {
-      error = body as ErrorResponse;
-    } else {
-      // Extract message from { error: '...' } shaped responses (e.g., channel routes)
-      const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
-      error = { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
-    }
-    // NOTE: No globalErrorListener call — silent by default
-    throw error;
+    throw await parseErrorBody(res);
   }
   return res.json();
 }
@@ -59,15 +58,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
 // OPT-IN TOAST: Used only for explicit user-initiated actions.
 async function handleResponseWithToast<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    let error: ErrorResponse;
-    if (body && 'severity' in body) {
-      error = body as ErrorResponse;
-    } else {
-      const msg = (body && typeof body.error === 'string') ? body.error : 'Request failed (' + res.status + ')';
-      error = { severity: 'error', component: 'API', operation: '', message: msg, actions: [] } satisfies ErrorResponse;
-    }
-    globalErrorListener?.(error);  // Fire toast
+    const error = await parseErrorBody(res);
+    globalErrorListener?.(error);
     throw error;
   }
   return res.json();

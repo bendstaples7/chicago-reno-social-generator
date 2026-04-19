@@ -42,7 +42,11 @@ app.get('/authorize', (c) => {
  * for access + refresh tokens, persists them to D1, and redirects back to the app.
  */
 app.get('/callback', async (c) => {
-  const frontendUrl = c.env.FRONTEND_URL || new URL(c.req.url).origin;
+  const frontendUrl = c.env.FRONTEND_URL;
+  if (!frontendUrl) {
+    console.error('[jobber-auth] FRONTEND_URL is not configured. OAuth callback cannot redirect.');
+    return c.json({ error: 'FRONTEND_URL is not configured. Set it via wrangler secret or wrangler.toml vars.' }, 500);
+  }
 
   // Jobber may redirect back with an error parameter instead of a code
   const jobberError = c.req.query('error');

@@ -30,7 +30,7 @@ function evaluateSystemsStatus(response: SystemsStatusResponse): SystemsStatus {
   if (!response.jobber.available) {
     return { state: 'jobber_unavailable' };
   }
-  if (response.jobberSession && (!response.jobberSession.configured || response.jobberSession.expired)) {
+  if (!response.jobberSession.configured || response.jobberSession.expired) {
     return { state: 'jobber_session_expired' };
   }
   if (response.instagram.status === 'expired' || response.instagram.status === 'not_connected') {

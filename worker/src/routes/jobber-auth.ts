@@ -113,10 +113,51 @@ app.get('/callback', async (c) => {
 });
 
 /**
+ * POST /trigger-cookie-refresh
+ * Triggers the GitHub Actions workflow to refresh Jobber session cookies.
+ * Called by the client's blocking overlay when cookies are expired.
+ * CRITICAL: This is the primary recovery mechanism for expired cookies.
+ * The workflow runs real Puppeteer with real Chrome on a GitHub Actions VM.
+ */
+app.post('/trigger-cookie-refresh', async (c) => {
+  const githubPat = c.env.GITHUB_PAT;
+  if (!githubPat) {
+    return c.json({ error: 'GITHUB_PAT not configured' }, 500);
+  }
+
+  try {
+    const resp = await fetch(
+      'https://api.github.com/repos/bendstaples7/chicago-reno-social-generator/actions/workflows/refresh-jobber-cookies.yml/dispatches',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${githubPat}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'chicago-reno-worker',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      },
+    );
+
+    if (resp.status === 204) {
+      return c.json({ triggered: true, message: 'Cookie refresh workflow triggered. Please wait ~60 seconds and re-check.' });
+    }
+
+    const text = await resp.text();
+    console.error(`[jobber-auth] GitHub workflow dispatch failed (${resp.status}): ${text}`);
+    return c.json({ triggered: false, error: `GitHub API returned ${resp.status}` }, 500);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[jobber-auth] Failed to trigger workflow:', msg);
+    return c.json({ triggered: false, error: msg }, 500);
+  }
+});
+
+/**
  * POST /set-cookies
- * Manually set Jobber web session cookies for accessing internal API fields.
- * CRITICAL: This is the fallback mechanism when automated cookie refresh fails.
- * The app is completely unusable without valid session cookies.
+ * Manually set Jobber web session cookies. Fallback when automated refresh fails.
+ * CRITICAL: The app is completely unusable without valid session cookies.
  */
 app.post('/set-cookies', async (c) => {
   const contentType = c.req.header('content-type') || '';
@@ -150,8 +191,8 @@ app.post('/set-cookies', async (c) => {
 
 /**
  * GET /set-cookies
- * Form to paste Jobber web session cookies.
- * CRITICAL: This is the fallback when automated refresh fails.
+ * Form to paste Jobber web session cookies. Last-resort fallback.
+ * CRITICAL: The app is completely unusable without valid session cookies.
  */
 app.get('/set-cookies', async (c) => {
   const webSession = new JobberWebSession(c.env.DB);

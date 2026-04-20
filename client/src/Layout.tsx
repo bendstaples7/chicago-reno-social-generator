@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { useEffect, useState } from 'react';
-import { API_BASE } from './api';
+import { API_BASE, triggerCookieRefresh } from './api';
 
 const TAB_STORAGE_KEY = 'app_active_tab';
 
@@ -110,6 +110,117 @@ function InstagramBanner({ instagram, onSkip, onSettings }: {
   );
 }
 
+/**
+ * CRITICAL — BLOCKING GATE: This overlay blocks the user until Jobber session
+ * cookies are refreshed. The app is completely unusable without them.
+ * Do NOT make this skippable or non-blocking.
+ */
+function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [message, setMessage] = useState('');
+  const [pollCount, setPollCount] = useState(0);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setMessage('Triggering cookie refresh…');
+    try {
+      const result = await triggerCookieRefresh();
+      if (result.triggered) {
+        setMessage('Refresh started. Waiting for completion (~60 seconds)…');
+        setPollCount(0);
+        // Start polling — the workflow takes ~30-60 seconds
+        const interval = setInterval(async () => {
+          setPollCount((c) => {
+            if (c >= 12) { // 12 * 10s = 2 minutes max
+              clearInterval(interval);
+              setMessage('Refresh is taking longer than expected. Click Re-check to try again.');
+              setRefreshing(false);
+              return c;
+            }
+            return c + 1;
+          });
+          try {
+            await recheckSystems();
+            // If recheckSystems succeeds and cookies are valid, the overlay will unmount
+          } catch {
+            // Keep polling
+          }
+        }, 10000);
+      } else {
+        setMessage(result.error || 'Failed to trigger refresh.');
+        setRefreshing(false);
+      }
+    } catch {
+      setMessage('Failed to trigger refresh. Try the manual option below.');
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <SystemsCheckOverlay>
+      <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🍪</div>
+      <h2 style={{ margin: '0 0 0.75rem', color: '#333' }}>Refresh Jobber Session</h2>
+      <p style={{ color: '#666', marginBottom: '1rem', lineHeight: 1.5 }}>
+        Jobber session cookies are expired or missing. These are required to fetch
+        customer request form submissions.
+      </p>
+
+      {message && (
+        <p style={{ color: refreshing ? '#00a89d' : '#666', fontSize: '0.9rem', marginBottom: '1rem' }}>
+          {refreshing && (
+            <span style={{
+              display: 'inline-block', width: 14, height: 14,
+              border: '2px solid #ccc', borderTopColor: '#00a89d',
+              borderRadius: '50%', animation: 'spin 0.6s linear infinite',
+              marginRight: '0.5rem', verticalAlign: 'middle',
+            }} />
+          )}
+          {message}
+        </p>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          style={{
+            background: refreshing ? '#ccc' : '#00a89d', color: '#fff', border: 'none',
+            padding: '0.65rem 1.5rem', borderRadius: 6, cursor: refreshing ? 'default' : 'pointer',
+            fontWeight: 600, fontSize: '0.95rem',
+          }}
+        >
+          {refreshing ? 'Refreshing…' : 'Refresh Cookies'}
+        </button>
+        <button
+          onClick={recheckSystems}
+          disabled={refreshing}
+          style={{
+            background: 'transparent', color: '#666', border: '1px solid #ccc',
+            padding: '0.65rem 1.5rem', borderRadius: 6, cursor: 'pointer',
+            fontWeight: 500, fontSize: '0.95rem',
+          }}
+        >
+          Re-check
+        </button>
+      </div>
+
+      <details style={{ marginTop: '1.5rem', textAlign: 'left' }}>
+        <summary style={{ cursor: 'pointer', color: '#999', fontSize: '0.8rem' }}>
+          Manual fallback (if automated refresh fails)
+        </summary>
+        <p style={{ color: '#666', fontSize: '0.85rem', marginTop: '0.5rem', lineHeight: 1.5 }}>
+          Open{' '}
+          <a href={`${API_BASE}/api/jobber-auth/set-cookies`} target="_blank" rel="noopener noreferrer" style={{ color: '#00a89d' }}>
+            the cookie paste page
+          </a>
+          , follow the instructions, then click Re-check above.
+        </p>
+      </details>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </SystemsCheckOverlay>
+  );
+}
+
 export default function Layout() {
   const { user, logout, systemsStatus, recheckSystems, skipInstagram, skipJobberSession } = useAuth();
   const location = useLocation();
@@ -188,40 +299,7 @@ export default function Layout() {
    * See .kiro/steering/product.md "Jobber API Limitations" for full context.
    */
   if (systemsStatus.state === 'jobber_session_expired') {
-    return (
-      <SystemsCheckOverlay>
-        <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🍪</div>
-        <h2 style={{ margin: '0 0 0.75rem', color: '#333' }}>Refresh Jobber Session</h2>
-        <p style={{ color: '#666', marginBottom: '1rem', lineHeight: 1.5 }}>
-          Jobber session cookies are expired or missing. These are required to fetch
-          customer request form submissions. Please refresh them to continue.
-        </p>
-        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <a
-            href={`${API_BASE}/api/jobber-auth/set-cookies`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'inline-block', background: '#00a89d', color: '#fff',
-              padding: '0.65rem 1.5rem', borderRadius: 6, textDecoration: 'none',
-              fontWeight: 600, fontSize: '0.95rem',
-            }}
-          >
-            Refresh Cookies
-          </a>
-          <button
-            onClick={recheckSystems}
-            style={{
-              background: 'transparent', color: '#666', border: '1px solid #ccc',
-              padding: '0.65rem 1.5rem', borderRadius: 6, cursor: 'pointer',
-              fontWeight: 500, fontSize: '0.95rem',
-            }}
-          >
-            Re-check
-          </button>
-        </div>
-      </SystemsCheckOverlay>
-    );
+    return <JobberSessionOverlay recheckSystems={recheckSystems} />;
   }
 
   if (systemsStatus.state === 'error') {

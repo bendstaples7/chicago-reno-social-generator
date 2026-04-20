@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { useEffect, useState } from 'react';
+import { API_BASE } from './api';
 
 const TAB_STORAGE_KEY = 'app_active_tab';
 
@@ -165,7 +166,7 @@ export default function Layout() {
           Connect your Jobber account to continue.
         </p>
         <a
-          href="/api/jobber-auth/authorize"
+          href={`${API_BASE}/api/jobber-auth/authorize`}
           style={{
             display: 'inline-block', background: '#00a89d', color: '#fff',
             padding: '0.65rem 1.5rem', borderRadius: 6, textDecoration: 'none',

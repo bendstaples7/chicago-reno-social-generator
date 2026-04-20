@@ -30,6 +30,12 @@ function evaluateSystemsStatus(response: SystemsStatusResponse): SystemsStatus {
   if (!response.jobber.available) {
     return { state: 'jobber_unavailable' };
   }
+  /*
+   * CRITICAL — BLOCKING GATE: Jobber session cookies are REQUIRED.
+   * The app cannot fetch customer request form submissions without them.
+   * This MUST return a blocking state — do NOT change to a non-blocking/skippable state.
+   * See .kiro/steering/product.md "Jobber API Limitations" for full context.
+   */
   if (!response.jobberSession.configured || response.jobberSession.expired) {
     return { state: 'jobber_session_expired' };
   }

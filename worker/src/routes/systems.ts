@@ -5,7 +5,6 @@ import { sessionMiddleware } from '../middleware/session.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
 import { JobberIntegration, ActivityLogService } from '../services/index.js';
 import { JobberWebSession } from '../services/jobber-web-session.js';
-import { JobberCookieRefresher } from '../services/jobber-cookie-refresher.js';
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -43,41 +42,20 @@ app.get('/status', async (c) => {
     jobberAvailable = false;
   }
 
-  // ── Jobber web session cookies (auto-refresh if expired) ──
+  // ── Jobber web session cookies ──
+  // CRITICAL: These cookies are REQUIRED for the app to function. Without them,
+  // the app cannot fetch customer request form submissions (requestDetails.form)
+  // from Jobber's internal API. The client treats expired/missing cookies as a
+  // BLOCKING gate — the user cannot proceed until cookies are refreshed.
+  // Do NOT change this to a non-blocking/optional check.
+  // Cookie refresh is handled by the GitHub Actions workflow (triggered on-demand
+  // from the client or on a cron schedule). The worker only checks status here.
   let jobberSession: SystemsStatusResponse['jobberSession'] = { configured: false, expired: false };
   try {
     const webSession = new JobberWebSession(db);
     jobberSession = await webSession.getStatus();
-
-    // Auto-refresh cookies if expired or missing, using Cloudflare Browser Rendering
-    if (!jobberSession.configured || jobberSession.expired) {
-      const email = c.env.JOBBER_WEB_EMAIL;
-      const password = c.env.JOBBER_WEB_PASSWORD;
-      const accountId = c.env.CLOUDFLARE_ACCOUNT_ID;
-      const apiToken = c.env.CLOUDFLARE_API_TOKEN;
-
-      if (email && password && accountId && apiToken) {
-        const refresher = new JobberCookieRefresher(db, { email, password, accountId, apiToken });
-
-        // Check negative cache before attempting refresh
-        if (!(await refresher.shouldSkipRefresh())) {
-          console.log('[systems/status] Cookies expired/missing — attempting auto-refresh via Browser Rendering CDP');
-          const result = await refresher.refresh();
-
-          if (result.success) {
-            jobberSession = await webSession.getStatus();
-            console.log('[systems/status] Cookie auto-refresh succeeded');
-          } else {
-            console.warn('[systems/status] Cookie auto-refresh failed:', result.error);
-          }
-        } else {
-          console.log('[systems/status] Skipping cookie refresh — recent attempt failed (backoff)');
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[systems/status] Jobber session check failed:', err instanceof Error ? err.message : err);
-    // fail-open: report not configured
+  } catch {
+    // D1 error — fail-open, report not configured
   }
 
   // ── Instagram channel status (fail-open: not_connected on error) ──

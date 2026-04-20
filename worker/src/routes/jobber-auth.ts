@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { JobberWebSession } from '../services/jobber-web-session.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -109,6 +110,110 @@ app.get('/callback', async (c) => {
   }
 
   return c.redirect(frontendUrl + '/social/dashboard');
+});
+
+/**
+ * POST /trigger-cookie-refresh
+ * Triggers the GitHub Actions workflow to refresh Jobber session cookies.
+ * Called by the client's blocking overlay when cookies are expired.
+ * CRITICAL: This is the primary recovery mechanism for expired cookies.
+ * The workflow runs real Puppeteer with real Chrome on a GitHub Actions VM.
+ */
+app.post('/trigger-cookie-refresh', async (c) => {
+  const githubPat = c.env.GITHUB_PAT;
+  if (!githubPat) {
+    return c.json({ error: 'GITHUB_PAT not configured' }, 500);
+  }
+
+  try {
+    const resp = await fetch(
+      'https://api.github.com/repos/bendstaples7/chicago-reno-social-generator/actions/workflows/refresh-jobber-cookies.yml/dispatches',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${githubPat}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'chicago-reno-worker',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      },
+    );
+
+    if (resp.status === 204) {
+      return c.json({ triggered: true, message: 'Cookie refresh workflow triggered. Please wait ~60 seconds and re-check.' });
+    }
+
+    const text = await resp.text();
+    console.error(`[jobber-auth] GitHub workflow dispatch failed (${resp.status}): ${text}`);
+    return c.json({ triggered: false, error: `GitHub API returned ${resp.status}` }, 500);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[jobber-auth] Failed to trigger workflow:', msg);
+    return c.json({ triggered: false, error: msg }, 500);
+  }
+});
+
+/**
+ * POST /set-cookies
+ * Manually set Jobber web session cookies. Fallback when automated refresh fails.
+ * CRITICAL: The app is completely unusable without valid session cookies.
+ */
+app.post('/set-cookies', async (c) => {
+  const contentType = c.req.header('content-type') || '';
+  let cookies: string | undefined;
+
+  if (contentType.includes('application/json')) {
+    const body = await c.req.json() as { cookies?: string };
+    cookies = body.cookies;
+  } else {
+    const body = await c.req.parseBody();
+    cookies = body.cookies as string;
+  }
+
+  if (!cookies || typeof cookies !== 'string' || cookies.trim().length === 0) {
+    return c.json({ error: 'Please provide a cookies string' }, 400);
+  }
+
+  const webSession = new JobberWebSession(c.env.DB);
+  await webSession.setCookies(cookies.trim());
+
+  return c.html(`
+    <html>
+      <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
+        <h2>✅ Session Cookies Saved</h2>
+        <p>You can close this tab and return to the app.</p>
+      </body>
+    </html>
+  `);
+});
+
+/**
+ * GET /set-cookies
+ * Form to paste Jobber web session cookies. Last-resort fallback.
+ */
+app.get('/set-cookies', async (c) => {
+  const webSession = new JobberWebSession(c.env.DB);
+  const { configured, expired } = await webSession.getStatus();
+
+  return c.html(`
+    <html>
+      <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
+        <h2>Set Jobber Session Cookies</h2>
+        <p><strong>Status:</strong> ${configured && !expired ? '🟢 Valid' : configured && expired ? '🟡 Expired' : '🔴 Not set'}</p>
+        <ol>
+          <li>Open <a href="https://app.getjobber.com" target="_blank">app.getjobber.com</a> and log in</li>
+          <li>Open DevTools (F12) → Console</li>
+          <li>Run: <code>copy(document.cookie)</code></li>
+          <li>Paste below and submit</li>
+        </ol>
+        <form method="POST" action="/api/jobber-auth/set-cookies">
+          <textarea name="cookies" rows="4" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:0.85rem;box-sizing:border-box;" placeholder="Paste cookies here..."></textarea>
+          <button type="submit" style="margin-top:0.5rem;padding:0.5rem 1rem;background:#00a89d;color:white;border:none;border-radius:4px;cursor:pointer;">Save Cookies</button>
+        </form>
+      </body>
+    </html>
+  `);
 });
 
 /**

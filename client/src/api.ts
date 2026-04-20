@@ -99,6 +99,14 @@ export async function fetchSystemsStatus(): Promise<SystemsStatusResponse> {
   return handleResponse(res);
 }
 
+export async function triggerCookieRefresh(): Promise<{ triggered: boolean; message?: string; error?: string }> {
+  const res = await fetch(API_BASE + '/api/jobber-auth/trigger-cookie-refresh', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponse(res);
+}
+
 // ── Media Library ──
 
 export async function listMedia(page = 1, limit = 20): Promise<{ items: MediaItem[]; page: number; limit: number }> {

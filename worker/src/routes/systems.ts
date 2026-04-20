@@ -44,6 +44,11 @@ app.get('/status', async (c) => {
   }
 
   // ── Jobber web session cookies (auto-refresh if expired) ──
+  // CRITICAL: These cookies are REQUIRED for the app to function. Without them,
+  // the app cannot fetch customer request form submissions (requestDetails.form)
+  // from Jobber's internal API. The client treats expired/missing cookies as a
+  // BLOCKING gate — the user cannot proceed until cookies are refreshed.
+  // Do NOT change this to a non-blocking/optional check.
   let jobberSession: SystemsStatusResponse['jobberSession'] = { configured: false, expired: false };
   try {
     const webSession = new JobberWebSession(db);

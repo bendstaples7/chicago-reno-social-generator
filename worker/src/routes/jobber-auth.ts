@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { JobberWebSession } from '../services/jobber-web-session.js';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -109,6 +110,73 @@ app.get('/callback', async (c) => {
   }
 
   return c.redirect(frontendUrl + '/social/dashboard');
+});
+
+/**
+ * POST /set-cookies
+ * Manually set Jobber web session cookies for accessing internal API fields.
+ * CRITICAL: This is the fallback mechanism when automated cookie refresh fails.
+ * The app is completely unusable without valid session cookies.
+ */
+app.post('/set-cookies', async (c) => {
+  const contentType = c.req.header('content-type') || '';
+  let cookies: string | undefined;
+
+  if (contentType.includes('application/json')) {
+    const body = await c.req.json() as { cookies?: string };
+    cookies = body.cookies;
+  } else {
+    const body = await c.req.parseBody();
+    cookies = body.cookies as string;
+  }
+
+  if (!cookies || typeof cookies !== 'string' || cookies.trim().length === 0) {
+    return c.json({ error: 'Please provide a cookies string' }, 400);
+  }
+
+  const webSession = new JobberWebSession(c.env.DB);
+  await webSession.setCookies(cookies.trim());
+
+  return c.html(`
+    <html>
+      <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
+        <h2>✅ Session Cookies Saved</h2>
+        <p>Jobber web session cookies have been stored. You can close this tab and return to the app.</p>
+        <p style="color: #666; font-size: 14px;">Cookies expire after ~4 hours. They are refreshed automatically when possible.</p>
+      </body>
+    </html>
+  `);
+});
+
+/**
+ * GET /set-cookies
+ * Form to paste Jobber web session cookies.
+ * CRITICAL: This is the fallback when automated refresh fails.
+ */
+app.get('/set-cookies', async (c) => {
+  const webSession = new JobberWebSession(c.env.DB);
+  const { configured, expired } = await webSession.getStatus();
+
+  return c.html(`
+    <html>
+      <body style="font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px;">
+        <h2>Set Jobber Session Cookies</h2>
+        <p>These cookies are needed to fetch customer request form submissions from Jobber's internal API.</p>
+        <p><strong>Status:</strong> ${configured && !expired ? '🟢 Cookies configured' : configured && expired ? '🟡 Cookies expired' : '🔴 No cookies set'}</p>
+        <h3>How to get cookies:</h3>
+        <ol>
+          <li>Open <a href="https://app.getjobber.com" target="_blank">app.getjobber.com</a> and log in</li>
+          <li>Open DevTools (F12) → Console tab</li>
+          <li>Run: <code>copy(document.cookie)</code></li>
+          <li>Paste below and submit</li>
+        </ol>
+        <form method="POST" action="/api/jobber-auth/set-cookies">
+          <textarea name="cookies" rows="6" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 0.85rem; box-sizing: border-box;" placeholder="Paste cookies here..."></textarea>
+          <button type="submit" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #00a89d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">Save Cookies</button>
+        </form>
+      </body>
+    </html>
+  `);
 });
 
 /**

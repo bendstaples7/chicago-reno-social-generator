@@ -135,12 +135,14 @@ export default function QuoteDraftPage() {
   };
 
   const handleSaveAsTemplate = async () => {
-    if (!id || !templateName.trim()) return;
+    if (savingTemplate) return;
+    const name = templateName.trim();
+    if (!id || !name) return;
     setSavingTemplate(true);
     setTemplateSaveError(false);
     try {
-      await saveTemplateFromDraft(id, templateName.trim());
-      setTemplateSavedMsg(`Template "${templateName.trim()}" saved!`);
+      await saveTemplateFromDraft(id, name);
+      setTemplateSavedMsg(`Template "${name}" saved!`);
       setTemplateSaveError(false);
       setTemplateName('');
       setShowSaveTemplate(false);
@@ -193,7 +195,7 @@ export default function QuoteDraftPage() {
       </div>
 
       {templateSavedMsg && (
-        <div style={{ padding: '0.5rem 0.75rem', background: templateSaveError ? '#fdecea' : '#e8f5e9', borderRadius: 6, marginBottom: '0.75rem', fontSize: '0.85rem' }} role="status">
+        <div style={{ padding: '0.5rem 0.75rem', background: templateSaveError ? '#fdecea' : '#e8f5e9', borderRadius: 6, marginBottom: '0.75rem', fontSize: '0.85rem' }} role={templateSaveError ? 'alert' : 'status'} aria-live="polite" aria-atomic="true">
           {templateSavedMsg}
         </div>
       )}
@@ -220,7 +222,7 @@ export default function QuoteDraftPage() {
           >
             {savingTemplate ? 'Saving…' : 'Save'}
           </button>
-          <button onClick={() => { setShowSaveTemplate(false); setTemplateName(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#888' }}>✕</button>
+          <button onClick={() => { setShowSaveTemplate(false); setTemplateName(''); }} aria-label="Close save template" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#888' }}>✕</button>
         </div>
       )}
 

@@ -4,8 +4,10 @@
  * This provides a D1 backup of the product catalog for when the Jobber API is unavailable.
  *
  * Usage:
- *   node scripts/seed-catalog.mjs                # seed local D1
- *   node scripts/seed-catalog.mjs --remote       # seed remote/production D1
+ *   node scripts/seed-catalog.mjs                              # seed local D1 (auto-detect user)
+ *   node scripts/seed-catalog.mjs --remote                     # seed remote/production D1
+ *   node scripts/seed-catalog.mjs --user-id <id>               # specify user explicitly
+ *   node scripts/seed-catalog.mjs --remote --user-id <id>      # remote with explicit user
  */
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
@@ -16,6 +18,11 @@ import { randomUUID } from 'crypto';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const remote = process.argv.includes('--remote');
 const flag = remote ? '--remote' : '--local';
+
+// ── Parse --user-id flag ─────────────────────────────────────────────
+
+const userIdFlagIdx = process.argv.indexOf('--user-id');
+const explicitUserId = userIdFlagIdx !== -1 ? process.argv[userIdFlagIdx + 1] : null;
 
 // ── Parse CSV ────────────────────────────────────────────────────────
 
@@ -77,9 +84,9 @@ for (let r = 1; r < rows.length; r++) {
 
 console.log(`Parsed ${products.length} active products from CSV`);
 
-// ── Get user ID ──────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────
 
-function d1exec(sql) {
+function d1execFile(sql) {
   const tmpFile = resolve(__dirname, '_tmp_seed.sql');
   writeFileSync(tmpFile, sql, 'utf-8');
   try {
@@ -91,32 +98,64 @@ function d1exec(sql) {
   }
 }
 
-const userResult = d1exec("SELECT id FROM users WHERE id != 'system' ORDER BY rowid LIMIT 1;");
-const userId = userResult[0]?.results?.[0]?.id;
-if (!userId) {
-  console.error('No non-system user found in database');
-  process.exit(1);
+function d1query(sql) {
+  const tmpFile = resolve(__dirname, '_tmp_query.sql');
+  writeFileSync(tmpFile, sql, 'utf-8');
+  try {
+    const cmd = `npx wrangler d1 execute cross-poster-db ${flag} --json --file "${tmpFile}"`;
+    const out = execSync(cmd, { cwd: resolve(__dirname, '..'), encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return JSON.parse(out);
+  } finally {
+    try { unlinkSync(tmpFile); } catch {}
+  }
+}
+
+// ── Resolve user ID ──────────────────────────────────────────────────
+
+let userId;
+if (explicitUserId) {
+  // Validate the provided user ID exists and is not 'system'
+  if (explicitUserId === 'system') {
+    console.error('Cannot seed catalog for the system user.');
+    process.exit(1);
+  }
+  const check = d1query(`SELECT id FROM users WHERE id = '${explicitUserId.replace(/'/g, "''")}';`);
+  if (!check[0]?.results?.[0]?.id) {
+    console.error(`User ID '${explicitUserId}' not found in database.`);
+    process.exit(1);
+  }
+  userId = explicitUserId;
+} else {
+  const userResult = d1query("SELECT id FROM users WHERE id != 'system' ORDER BY rowid LIMIT 1;");
+  userId = userResult[0]?.results?.[0]?.id;
+  if (!userId) {
+    console.error('No non-system user found in database. Use --user-id <id> to specify one.');
+    process.exit(1);
+  }
 }
 console.log(`Target user: ${userId}`);
 
-// ── Build SQL file with all inserts ──────────────────────────────────
+// ── Build SQL file with all inserts (wrapped in transaction) ─────────
 
 const esc = (s) => s.replace(/'/g, "''");
 
 const sqlLines = [
-  `DELETE FROM manual_catalog_entries WHERE user_id = '${userId}';`,
+  'BEGIN TRANSACTION;',
+  `DELETE FROM manual_catalog_entries WHERE user_id = '${esc(userId)}';`,
 ];
 
 for (const p of products) {
   const id = randomUUID();
   sqlLines.push(
-    `INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category) VALUES ('${id}', '${userId}', '${esc(p.name)}', ${p.unitPrice}, '${esc(p.description)}', '${esc(p.category)}');`
+    `INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category) VALUES ('${id}', '${esc(userId)}', '${esc(p.name)}', ${p.unitPrice}, '${esc(p.description)}', '${esc(p.category)}');`
   );
 }
 
+sqlLines.push('COMMIT;');
+
 const tmpFile = resolve(__dirname, '_tmp_seed.sql');
 writeFileSync(tmpFile, sqlLines.join('\n'), 'utf-8');
-console.log(`Generated ${sqlLines.length} SQL statements`);
+console.log(`Generated ${sqlLines.length - 2} INSERT statements (transactional)`);
 
 try {
   const cmd = `npx wrangler d1 execute cross-poster-db ${flag} --file "${tmpFile}" --json`;

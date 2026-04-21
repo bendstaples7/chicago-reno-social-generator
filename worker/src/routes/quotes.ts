@@ -534,6 +534,22 @@ app.post('/templates', async (c) => {
     });
   }
 
+  // Check for duplicate names within the batch
+  const nameSet = new Set<string>();
+  for (const entry of body.entries) {
+    const normalized = entry.name.trim().toLowerCase();
+    if (nameSet.has(normalized)) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplates',
+        description: `Duplicate template name: "${entry.name.trim()}".`,
+        recommendedActions: ['Remove or rename duplicate template entries'],
+      });
+    }
+    nameSet.add(normalized);
+  }
+
   const statements: D1PreparedStatement[] = [
     db.prepare('DELETE FROM manual_templates WHERE user_id = ?').bind(userId),
   ];
@@ -608,16 +624,30 @@ app.post('/templates/from-draft', async (c) => {
   }));
 
   const templateId = crypto.randomUUID();
-  await db.prepare(
-    "INSERT INTO manual_templates (id, user_id, name, content, category, line_items_json) VALUES (?, ?, ?, ?, ?, ?)"
-  ).bind(
-    templateId,
-    userId,
-    body.name.trim(),
-    draft.customerRequestText || '',
-    body.category ?? null,
-    JSON.stringify(lineItems),
-  ).run();
+  try {
+    await db.prepare(
+      "INSERT INTO manual_templates (id, user_id, name, content, category, line_items_json) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(
+      templateId,
+      userId,
+      body.name.trim(),
+      draft.customerRequestText || '',
+      body.category ?? null,
+      JSON.stringify(lineItems),
+    ).run();
+  } catch (dbErr) {
+    const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+    if (msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT')) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplateFromDraft',
+        description: `A template named "${body.name.trim()}" already exists.`,
+        recommendedActions: ['Choose a different name or delete the existing template first'],
+      });
+    }
+    throw dbErr;
+  }
 
   const templates = await fetchManualTemplates(db, userId);
   return c.json({ template: templates.find((t) => t.id === templateId), templates });

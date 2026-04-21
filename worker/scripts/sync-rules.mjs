@@ -27,7 +27,8 @@ function query(flag, sql) {
     const output = run(`npx wrangler d1 execute DB ${flag} --json --command "${escaped}"`);
     const parsed = JSON.parse(output);
     return parsed[0]?.results || [];
-  } catch {
+  } catch (err) {
+    console.debug(`[sync-rules] query failed: ${err.message}`);
     return null;
   }
 }
@@ -42,7 +43,11 @@ function execFile(flag, sql) {
   }
 }
 
-const esc = (s) => (s ?? '').replace(/'/g, "''");
+/** Escape a string for SQL single-quoted literal. Returns SQL NULL for null/undefined. */
+function sqlVal(s) {
+  if (s === null || s === undefined) return 'NULL';
+  return `'${String(s).replace(/'/g, "''")}'`;
+}
 
 try {
   console.log('[sync-rules] Pulling rules from production D1...');
@@ -62,24 +67,30 @@ try {
     process.exit(0);
   }
 
-  // Build SQL to upsert groups and rules into local
+  // Build SQL to upsert groups and rules into local.
+  // Order: upsert remote group → repoint stale rules → delete stale group
+  // This avoids FK violations from deleting a group that still has rules.
   const sqlLines = [];
 
-  // Upsert rule groups — handle both id and name unique constraints
   for (const g of remoteGroups) {
-    // Delete any local group with the same name but different id (migration-seeded default)
+    // 1. Upsert the remote group by id
     sqlLines.push(
-      `DELETE FROM rule_groups WHERE name = '${esc(g.name)}' COLLATE NOCASE AND id != '${esc(g.id)}';`
+      `INSERT INTO rule_groups (id, name, description, display_order, created_at) VALUES (${sqlVal(g.id)}, ${sqlVal(g.name)}, ${sqlVal(g.description)}, ${g.display_order}, ${sqlVal(g.created_at)}) ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description, display_order = excluded.display_order;`
     );
+    // 2. Repoint any rules from a stale local group with the same name to the remote group id
     sqlLines.push(
-      `INSERT INTO rule_groups (id, name, description, display_order, created_at) VALUES ('${esc(g.id)}', '${esc(g.name)}', '${esc(g.description)}', ${g.display_order}, '${esc(g.created_at)}') ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description, display_order = excluded.display_order;`
+      `UPDATE rules SET rule_group_id = ${sqlVal(g.id)} WHERE rule_group_id IN (SELECT id FROM rule_groups WHERE name = ${sqlVal(g.name)} COLLATE NOCASE AND id != ${sqlVal(g.id)});`
+    );
+    // 3. Now safe to delete the stale local group (no more FK references)
+    sqlLines.push(
+      `DELETE FROM rule_groups WHERE name = ${sqlVal(g.name)} COLLATE NOCASE AND id != ${sqlVal(g.id)};`
     );
   }
 
   // Upsert rules
   for (const r of remoteRules) {
     sqlLines.push(
-      `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at) VALUES ('${esc(r.id)}', '${esc(r.name)}', '${esc(r.description)}', '${esc(r.rule_group_id)}', ${r.priority_order}, ${r.is_active}, '${esc(r.created_at)}', '${esc(r.updated_at)}') ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description, rule_group_id = excluded.rule_group_id, priority_order = excluded.priority_order, is_active = excluded.is_active, updated_at = excluded.updated_at;`
+      `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at) VALUES (${sqlVal(r.id)}, ${sqlVal(r.name)}, ${sqlVal(r.description)}, ${sqlVal(r.rule_group_id)}, ${r.priority_order}, ${r.is_active}, ${sqlVal(r.created_at)}, ${sqlVal(r.updated_at)}) ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description, rule_group_id = excluded.rule_group_id, priority_order = excluded.priority_order, is_active = excluded.is_active, updated_at = excluded.updated_at;`
     );
   }
 

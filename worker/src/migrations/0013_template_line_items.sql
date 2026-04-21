@@ -2,3 +2,6 @@
 -- Templates now serve as full quote blueprints with line items that the AI uses
 -- as a starting point when generating quotes.
 ALTER TABLE manual_templates ADD COLUMN line_items_json TEXT DEFAULT '[]';
+
+-- Unique template name per user (case-insensitive) to prevent duplicates.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_templates_user_name ON manual_templates(user_id, name COLLATE NOCASE);

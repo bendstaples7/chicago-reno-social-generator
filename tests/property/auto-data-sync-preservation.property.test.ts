@@ -388,6 +388,7 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
 
     // Find the next method
     const nextMethod = integrationSource.indexOf('async fetchCustomerRequests()', methodStart + 1);
+    expect(nextMethod).toBeGreaterThan(methodStart);
     const methodBody = integrationSource.slice(methodStart, nextMethod);
 
     // Verify the error handling pattern: catch block calls handleApiError

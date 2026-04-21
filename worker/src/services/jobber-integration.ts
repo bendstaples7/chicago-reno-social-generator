@@ -1,6 +1,6 @@
 import { ActivityLogService } from './activity-log-service.js';
 import type { JobberTokenStore } from './jobber-token-store.js';
-import type { ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest } from 'shared';
+import type { ProductCatalogEntry, JobberCustomerRequest } from 'shared';
 
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const API_TIMEOUT_MS = 10_000;
@@ -24,14 +24,6 @@ interface JobberProductNode {
   description: string | null;
   defaultUnitCost: number;
   category: string;
-}
-
-interface JobberQuoteNode {
-  id: string;
-  quoteNumber: string;
-  title: string | null;
-  message: string | null;
-  quoteStatus: string;
 }
 
 interface JobberRequestNode {
@@ -64,7 +56,7 @@ interface CacheEntry<T> {
 
 const PRODUCTS_QUERY = `
   query FetchProducts($first: Int!, $after: String) {
-    productsAndServices(first: $first, after: $after) {
+    productOrServices(first: $first, after: $after) {
       edges {
         node {
           id
@@ -72,26 +64,6 @@ const PRODUCTS_QUERY = `
           description
           defaultUnitCost
           category
-        }
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-    }
-  }
-`;
-
-const QUOTES_QUERY = `
-  query FetchQuoteTemplates($first: Int!, $after: String) {
-    quotes(first: $first, after: $after) {
-      edges {
-        node {
-          id
-          quoteNumber
-          title
-          message
-          quoteStatus
         }
       }
       pageInfo {
@@ -157,7 +129,6 @@ export class JobberIntegration {
   private cacheTtlMs: number;
 
   private productCatalogCache: CacheEntry<ProductCatalogEntry[]> | null = null;
-  private templateLibraryCache: CacheEntry<QuoteTemplate[]> | null = null;
   private customerRequestsCache: CacheEntry<JobberCustomerRequest[]> | null = null;
 
   private clientId: string;
@@ -219,7 +190,6 @@ export class JobberIntegration {
    */
   invalidateCache(): void {
     this.productCatalogCache = null;
-    this.templateLibraryCache = null;
     this.customerRequestsCache = null;
   }
 
@@ -238,7 +208,7 @@ export class JobberIntegration {
       const nodes = await this.fetchAllPages<JobberProductNode>(
         PRODUCTS_QUERY,
         { first: DEFAULT_PAGE_SIZE, after: null },
-        ['productsAndServices'],
+        ['productOrServices'],
       );
 
       const catalog: ProductCatalogEntry[] = nodes.map((p) => ({
@@ -255,40 +225,6 @@ export class JobberIntegration {
       return catalog;
     } catch (err) {
       await this.handleApiError('fetchProductCatalog', err);
-      return [];
-    }
-  }
-
-  // ── Template Library ─────────────────────────────────────────────
-
-  /**
-   * Fetch the template library from Jobber, returning cached data when within TTL.
-   * On API failure, logs the error, sets available = false, and returns an empty array.
-   */
-  async fetchTemplateLibrary(): Promise<QuoteTemplate[]> {
-    if (this.templateLibraryCache && !this.isCacheExpired(this.templateLibraryCache)) {
-      return this.templateLibraryCache.data;
-    }
-
-    try {
-      const nodes = await this.fetchAllPages<JobberQuoteNode>(
-        QUOTES_QUERY,
-        { first: DEFAULT_PAGE_SIZE, after: null },
-        ['quotes'],
-      );
-
-      const templates: QuoteTemplate[] = nodes.map((t) => ({
-        id: t.id,
-        name: t.title || `Quote #${t.quoteNumber}`,
-        content: t.message || '',
-        source: 'jobber' as const,
-      }));
-
-      this.templateLibraryCache = { data: templates, fetchedAt: Date.now() };
-      this.available = true;
-      return templates;
-    } catch (err) {
-      await this.handleApiError('fetchTemplateLibrary', err);
       return [];
     }
   }

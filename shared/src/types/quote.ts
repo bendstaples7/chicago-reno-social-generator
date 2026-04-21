@@ -8,13 +8,22 @@ export interface ProductCatalogEntry {
   source: 'jobber' | 'manual';
 }
 
-/** A quote template from Jobber or manual entry */
+/** A line item within a quote template */
+export interface TemplateLineItem {
+  name: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+/** A quote template from manual entry */
 export interface QuoteTemplate {
   id: string;
   name: string;
   content: string;
   category?: string;
-  source: 'jobber' | 'manual';
+  lineItems: TemplateLineItem[];
+  source: 'manual';
 }
 
 /** A matched line item in a quote draft */

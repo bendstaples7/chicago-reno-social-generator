@@ -387,7 +387,7 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
     expect(methodStart).toBeGreaterThan(-1);
 
     // Find the next method
-    const nextMethod = integrationSource.indexOf('async fetchTemplateLibrary()', methodStart + 1);
+    const nextMethod = integrationSource.indexOf('async fetchCustomerRequests()', methodStart + 1);
     const methodBody = integrationSource.slice(methodStart, nextMethod);
 
     // Verify the error handling pattern: catch block calls handleApiError
@@ -420,31 +420,13 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
     expect(handlerBody).toMatch(/fetchManualCatalog/);
   });
 
-  it('fetchTemplateLibrary also catches errors and returns empty array', () => {
-    const integrationSource = readFileSync(
-      resolve(__dirname, '../../worker/src/services/jobber-integration.ts'),
-      'utf-8',
-    );
-
-    const methodStart = integrationSource.indexOf('async fetchTemplateLibrary()');
-    expect(methodStart).toBeGreaterThan(-1);
-
-    // Find the next method after fetchTemplateLibrary
-    const nextMethod = integrationSource.indexOf('async fetchCustomerRequests()', methodStart + 1);
-    const methodBody = integrationSource.slice(methodStart, nextMethod);
-
-    // Verify the same error handling pattern
-    expect(methodBody).toMatch(/handleApiError/);
-    expect(methodBody).toMatch(/return\s*\[\]/);
-  });
-
-  it('route handler falls back to manual templates when Jobber is unavailable', () => {
+  it('route handler always uses D1 for templates (Jobber has no templates API)', () => {
     const quotesSource = readFileSync(
       resolve(__dirname, '../../worker/src/routes/quotes.ts'),
       'utf-8',
     );
 
-    // Scope to the GET /templates handler where the template fallback lives
+    // Scope to the GET /templates handler
     const templatesHandlerMatch = quotesSource.match(/app\.get\('\/templates'\s*,/);
     expect(templatesHandlerMatch).not.toBeNull();
     const handlerStart = templatesHandlerMatch!.index!;
@@ -454,8 +436,10 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
       ? quotesSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
       : quotesSource.slice(handlerStart);
 
-    // The route handler checks isAvailable() and falls back to fetchManualTemplates
+    // The route handler always reads from D1 manual_templates
     expect(handlerBody).toMatch(/fetchManualTemplates/);
+    // It should NOT reference jobberIntegration for templates
+    expect(handlerBody).not.toMatch(/jobberIntegration/);
   });
 });
 

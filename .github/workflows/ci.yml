@@ -21,6 +21,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate D1 migrations
+        working-directory: worker
+        run: |
+          echo "Applying all migrations to a fresh local D1 database..."
+          npx wrangler d1 migrations apply DB --local
+          echo "✅ All migrations applied successfully"
+
       - name: Typecheck worker
         run: npx tsc -p worker/tsconfig.json --noEmit
         continue-on-error: true

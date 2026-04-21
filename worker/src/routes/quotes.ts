@@ -779,42 +779,49 @@ app.get('/jobber/requests/:id', async (c) => {
   }
 
   // Re-fetch fresh attachment URLs from Jobber API (stored URLs are signed S3 URLs that expire).
-  // Falls back to stored URLs if the API call fails or takes too long.
+  // Falls back to stored URLs only if the refresh fails or times out — not when the request
+  // genuinely has no images (successful empty response means no images exist).
   let imageUrls: string[] = [];
+  let refreshSucceeded = false;
   try {
     const { jobberIntegration } = await createJobberIntegration(db, c.env);
     if (jobberIntegration.isAvailable()) {
-      // Race the API call against a 5-second timeout to avoid blocking the response
-      const freshResult = await Promise.race([
-        jobberIntegration.graphqlRequest<Record<string, unknown>>(
-          `query FetchAttachments($id: EncodedId!) {
-            request(id: $id) {
-              noteAttachments(first: 20) { edges { node { url fileName contentType } } }
-            }
-          }`,
-          { id: requestId },
-        ),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-      ]);
-      if (freshResult) {
+      // Race the API call against a 5-second timeout to avoid blocking the response.
+      // If the timeout wins, push the orphaned promise into waitUntil so the Worker
+      // lets it finish in the background rather than abandoning it mid-flight.
+      const apiPromise = jobberIntegration.graphqlRequest<Record<string, unknown>>(
+        `query FetchAttachments($id: EncodedId!) {
+          request(id: $id) {
+            noteAttachments(first: 20) { edges { node { url fileName contentType } } }
+          }
+        }`,
+        { id: requestId },
+      );
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+
+      const freshResult = await Promise.race([apiPromise, timeoutPromise]);
+      if (freshResult === null) {
+        // Timeout won — let the API call finish in the background
+        c.executionCtx.waitUntil(apiPromise.catch(() => {}));
+      } else {
+        refreshSucceeded = true;
         const freshUrls = ((freshResult as any)?.request?.noteAttachments?.edges ?? [])
           .filter((e: any) => e.node?.contentType?.startsWith('image/'))
           .map((e: any) => e.node.url);
-        if (freshUrls.length > 0) {
-          imageUrls = freshUrls;
-          // Update stored URLs so other consumers get fresh ones too
-          await db.prepare(
-            'UPDATE jobber_webhook_requests SET image_urls = ? WHERE jobber_request_id = ?'
-          ).bind(JSON.stringify(imageUrls), requestId).run();
-        }
+        imageUrls = freshUrls;
+        // Update stored URLs so other consumers get fresh ones too
+        await db.prepare(
+          'UPDATE jobber_webhook_requests SET image_urls = ? WHERE jobber_request_id = ?'
+        ).bind(JSON.stringify(imageUrls), requestId).run();
       }
     }
   } catch {
     // Graceful fallback — use stored URLs
   }
 
-  // Fallback to stored URLs if fresh fetch didn't produce any
-  if (imageUrls.length === 0 && row.image_urls) {
+  // Fallback to stored URLs only when the refresh failed or timed out.
+  // If the refresh succeeded with 0 images, that's the truth — don't serve stale URLs.
+  if (!refreshSucceeded && row.image_urls) {
     try {
       const parsed = typeof row.image_urls === 'string' ? JSON.parse(row.image_urls) : row.image_urls;
       imageUrls = Array.isArray(parsed) ? parsed : [];

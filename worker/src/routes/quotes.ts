@@ -384,9 +384,30 @@ app.post('/drafts/:id/revise', async (c) => {
     activeRules = [];
   }
 
+  // Create the rule BEFORE revision so the AI sees it during this revision
+  let ruleCreated: { id: string; name: string } | undefined;
+  let ruleCreationError: string | undefined;
+  if (shouldCreateRule) {
+    try {
+      const newRule = await rulesService.createRuleFromFeedback(trimmed);
+      ruleCreated = { id: newRule.id, name: newRule.name };
+      // Re-fetch rules so the newly created rule is included in the prompt
+      try {
+        activeRules = await rulesService.getActiveRulesGrouped();
+      } catch { /* keep the previously fetched rules */ }
+    } catch (ruleErr) {
+      ruleCreationError = ruleErr instanceof PlatformError
+        ? ruleErr.description
+        : ruleErr instanceof Error
+          ? ruleErr.message
+          : 'Unknown error creating rule';
+    }
+  }
+
   // Revise the draft
   const revised = await revisionEngine.revise({
     feedbackText: trimmed,
+    customerRequestText: draft.customerRequestText,
     currentLineItems: draft.lineItems,
     currentUnresolvedItems: draft.unresolvedItems,
     catalog,
@@ -412,22 +433,6 @@ app.post('/drafts/:id/revise', async (c) => {
 
   // Persist the revision history entry (after successful update)
   await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
-
-  // Optionally create a rule from the feedback text
-  let ruleCreated: { id: string; name: string } | undefined;
-  let ruleCreationError: string | undefined;
-  if (shouldCreateRule) {
-    try {
-      const newRule = await rulesService.createRuleFromFeedback(trimmed);
-      ruleCreated = { id: newRule.id, name: newRule.name };
-    } catch (ruleErr) {
-      ruleCreationError = ruleErr instanceof PlatformError
-        ? ruleErr.description
-        : ruleErr instanceof Error
-          ? ruleErr.message
-          : 'Unknown error creating rule';
-    }
-  }
 
   return c.json({
     ...updated,

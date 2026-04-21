@@ -7,6 +7,7 @@ const CONFIDENCE_THRESHOLD = 70;
 
 export interface RevisionInput {
   feedbackText: string;
+  customerRequestText: string;
   currentLineItems: QuoteLineItem[];
   currentUnresolvedItems: QuoteLineItem[];
   catalog: ProductCatalogEntry[];
@@ -33,7 +34,7 @@ interface AILineItem {
 
 const SYSTEM_PROMPT = [
   'You are a quote revision assistant for a home services company.',
-  'You will receive the current line items of a quote draft, a product catalog, and user feedback.',
+  'You will receive the original customer request, the current line items of a quote draft, a product catalog, and user feedback.',
   'Interpret the feedback as delta operations on the current line items.',
   '',
   'SUPPORTED OPERATIONS:',
@@ -41,10 +42,12 @@ const SYSTEM_PROMPT = [
   '- Change quantity on existing items (e.g., "increase drywall to 12 sheets")',
   '- Adjust unit price on existing items (e.g., "change labor rate to $75/hour")',
   '- Remove line items (e.g., "remove the painting line item")',
-  '- Add new line items by matching against the product catalog (e.g., "add trim installation")',
+  '- Add new line items ONLY when the feedback explicitly requests it (e.g., "add trim installation")',
   '',
   'RULES:',
   '- Preserve all line items NOT referenced in the feedback without modification.',
+  '- CRITICAL: Do NOT add line items that the feedback does not explicitly ask for. Only add items when the user clearly requests a specific addition.',
+  '- When the feedback references the customer request (e.g., "if the request mentions X, add Y"), check the ORIGINAL CUSTOMER REQUEST section to evaluate the condition.',
   '- When adding new items, match against the provided catalog. Use catalog pricing for matched items.',
   '- If a new item cannot be matched to the catalog, include it with productCatalogEntryId: null and a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
@@ -153,7 +156,10 @@ export class RevisionEngine {
   private buildPrompt(input: RevisionInput): string {
     const parts: string[] = [];
 
-    parts.push('CURRENT LINE ITEMS:');
+    parts.push('ORIGINAL CUSTOMER REQUEST:');
+    parts.push(input.customerRequestText || '(no customer request text available)');
+
+    parts.push('\nCURRENT LINE ITEMS:');
     if (input.currentLineItems.length === 0 && input.currentUnresolvedItems.length === 0) {
       parts.push('(no current line items)');
     } else {

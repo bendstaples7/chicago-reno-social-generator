@@ -60,7 +60,15 @@ try {
     process.exit(0);
   }
 
-  const remoteRules = query('--remote', 'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules') || [];
+  const remoteRules = query('--remote', 'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules');
+  if (!remoteRules) {
+    if (listRemoteOnly) {
+      console.error('[sync-rules] Failed to query rules from production D1.');
+      process.exit(1);
+    }
+    console.log('[sync-rules] Could not query rules from production D1. Skipping.');
+    process.exit(0);
+  }
 
   console.log(`[sync-rules] Found ${remoteGroups.length} rule groups and ${remoteRules.length} rules in production.`);
 

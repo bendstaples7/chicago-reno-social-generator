@@ -164,7 +164,7 @@ export class RevisionEngine {
       parts.push('(no current line items)');
     } else {
       for (const item of input.currentLineItems) {
-        parts.push(`- [${item.productCatalogEntryId ?? 'unmatched'}] ${item.productName} — qty: ${item.quantity}, price: ${item.unitPrice}`);
+        parts.push(`- ${item.productName} — qty: ${item.quantity}, price: $${item.unitPrice}`);
       }
       if (input.currentUnresolvedItems.length > 0) {
         parts.push('\nUNRESOLVED ITEMS:');
@@ -217,10 +217,14 @@ export class RevisionEngine {
   }
 
   private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[]): RevisionOutput {
-    // Build a name-based lookup (case-insensitive) for catalog matching
+    // Build a name-based lookup (case-insensitive) for catalog matching.
+    // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
     for (const c of catalog) {
-      catalogByName.set(c.name.toLowerCase(), c);
+      const key = c.name.trim().toLowerCase();
+      if (key && !catalogByName.has(key)) {
+        catalogByName.set(key, c);
+      }
     }
 
     const lineItems: QuoteLineItem[] = [];
@@ -228,21 +232,39 @@ export class RevisionEngine {
 
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
-      const nameLower = (item.productName ?? '').toLowerCase();
+      const nameLower = (item.productName ?? '').trim().toLowerCase();
+
+      // Skip fuzzy matching for empty/blank product names
+      if (!nameLower) {
+        unresolvedItems.push({
+          id: crypto.randomUUID(),
+          productCatalogEntryId: null,
+          productName: item.productName ?? '',
+          description: '',
+          quantity: Math.max(0, item.quantity ?? 1),
+          unitPrice: Math.max(0, item.unitPrice ?? 0),
+          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
+          originalText: item.originalText ?? '',
+          resolved: false,
+          unmatchedReason: 'Empty product name',
+          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
+        });
+        continue;
+      }
 
       // Try exact name match first
       let catalogEntry = catalogByName.get(nameLower);
 
-      // Fuzzy fallback: find the closest catalog entry by substring match.
-      // Prefer the shortest matching name (most specific match).
+      // Fuzzy fallback: prefer the closest length match
       if (!catalogEntry) {
         let bestMatch: ProductCatalogEntry | undefined;
-        let bestLen = Infinity;
+        let bestDiff = Infinity;
         for (const [key, entry] of catalogByName) {
           if (key.includes(nameLower) || nameLower.includes(key)) {
-            if (key.length < bestLen) {
+            const diff = Math.abs(key.length - nameLower.length);
+            if (diff < bestDiff) {
               bestMatch = entry;
-              bestLen = key.length;
+              bestDiff = diff;
             }
           }
         }

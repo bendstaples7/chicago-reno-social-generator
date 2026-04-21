@@ -238,29 +238,46 @@ export class QuoteEngine {
   }
 
   private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[]): AIResponse {
-    // Build a name-based lookup (case-insensitive) for catalog matching
+    // Build a name-based lookup (case-insensitive) for catalog matching.
+    // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
     for (const c of catalog) {
-      catalogByName.set(c.name.toLowerCase(), c);
+      const key = c.name.trim().toLowerCase();
+      if (key && !catalogByName.has(key)) {
+        catalogByName.set(key, c);
+      }
     }
 
     const validatedItems: AILineItem[] = (parsed.lineItems ?? []).map((item) => {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
-      const nameLower = (item.productName ?? '').toLowerCase();
+      const nameLower = (item.productName ?? '').trim().toLowerCase();
+
+      // Skip fuzzy matching for empty/blank product names
+      if (!nameLower) {
+        return {
+          ...item,
+          productCatalogEntryId: null,
+          description: '',
+          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
+          unmatchedReason: item.unmatchedReason || 'Empty product name',
+        };
+      }
 
       // Try exact name match first
       let catalogEntry = catalogByName.get(nameLower);
 
       // Fuzzy fallback: find the closest catalog entry by substring match.
-      // Prefer the shortest matching name (most specific match).
+      // Prefer the closest length match (smallest absolute difference) to avoid
+      // short strings like "paint" matching long unrelated entries.
       if (!catalogEntry) {
         let bestMatch: ProductCatalogEntry | undefined;
-        let bestLen = Infinity;
+        let bestDiff = Infinity;
         for (const [key, entry] of catalogByName) {
           if (key.includes(nameLower) || nameLower.includes(key)) {
-            if (key.length < bestLen) {
+            const diff = Math.abs(key.length - nameLower.length);
+            if (diff < bestDiff) {
               bestMatch = entry;
-              bestLen = key.length;
+              bestDiff = diff;
             }
           }
         }

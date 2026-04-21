@@ -516,7 +516,51 @@ app.patch('/catalog/:id', async (c) => {
   const entryId = c.req.param('id');
   const body = await c.req.json() as { name?: string; description?: string };
 
-  // Verify ownership
+  // Validate inputs
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string' || !body.name.trim()) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Name cannot be empty.',
+        recommendedActions: ['Provide a non-empty name'],
+      });
+    }
+    if (body.name.length > 200) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Name must be 200 characters or fewer.',
+        recommendedActions: ['Shorten the name'],
+      });
+    }
+    body.name = body.name.trim();
+  }
+  if (body.description !== undefined) {
+    if (typeof body.description !== 'string') {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Description must be a string.',
+        recommendedActions: ['Provide a valid description'],
+      });
+    }
+    if (body.description.length > 1000) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Description must be 1000 characters or fewer.',
+        recommendedActions: ['Shorten the description'],
+      });
+    }
+    body.description = body.description.trim();
+  }
+
+  // Verify ownership — only manual catalog entries can be updated
   const existing = await db.prepare(
     'SELECT id FROM manual_catalog_entries WHERE id = ? AND user_id = ?'
   ).bind(entryId, userId).first();

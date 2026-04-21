@@ -208,16 +208,21 @@ export default function QuoteDraftPage() {
           : item,
       );
     }
-    const shouldUpdateCatalog = updateCatalogChecked && editingItem?.productCatalogEntryId && (field === 'productName' || field === 'description');
+    const shouldUpdateCatalog = updateCatalogChecked && editingItem?.productCatalogEntryId && draft.catalogSource === 'manual' && (field === 'productName' || field === 'description');
     setEditingCell(null);
     setUpdateCatalogChecked(false);
     setSaving(true);
     try {
       const updated = await updateDraft(id, { lineItems: updatedLineItems, unresolvedItems: draft.unresolvedItems });
       setDraft(updated);
-      // Update the catalog entry in the background if checkbox was checked
+      // Update the catalog entry if checkbox was checked
       if (shouldUpdateCatalog && editingItem?.productCatalogEntryId) {
-        await updateCatalogEntry(editingItem.productCatalogEntryId, { [field]: editValue }).catch(() => {});
+        const catalogKey = field === 'productName' ? 'name' : 'description';
+        try {
+          await updateCatalogEntry(editingItem.productCatalogEntryId, { [catalogKey]: editValue });
+        } catch (catalogErr) {
+          console.warn('[QuoteDraftPage] Failed to update catalog entry:', catalogErr);
+        }
       }
     } catch {
       await loadDraft();
@@ -503,7 +508,7 @@ export default function QuoteDraftPage() {
                                 autoFocus
                                 aria-label={`Edit product name for ${item.productName}`}
                               />
-                              {item.productCatalogEntryId && (
+                              {item.productCatalogEntryId && draft.catalogSource === 'manual' && (
                                 <label style={updateCatalogLabelStyle}>
                                   <input
                                     type="checkbox"
@@ -542,7 +547,7 @@ export default function QuoteDraftPage() {
                                 autoFocus
                                 aria-label={`Edit description for ${item.productName}`}
                               />
-                              {item.productCatalogEntryId && (
+                              {item.productCatalogEntryId && draft.catalogSource === 'manual' && (
                                 <label style={updateCatalogLabelStyle}>
                                   <input
                                     type="checkbox"

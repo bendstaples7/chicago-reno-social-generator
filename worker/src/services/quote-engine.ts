@@ -39,17 +39,20 @@ interface AIResponse {
 
 const SYSTEM_PROMPT = [
   'You are a quote generation assistant for a home services company.',
-  'Analyze the customer request and match items against the provided product catalog.',
+  'Analyze the customer request and generate line items ONLY for work the customer explicitly described or that is clearly implied by their request.',
   '',
   'RULES:',
+  '- CRITICAL: Do NOT include line items for work the customer did not ask about. Every line item must be directly traceable to something in the customer request text.',
   '- Only match to products that exist in the provided catalog — never invent new products.',
+  '- If the catalog contains items unrelated to the customer request, ignore them.',
   '- Assign a confidence score (0-100) for each match.',
   '- If a requested item cannot be confidently matched (score < 70), include it with the best guess and a reason.',
   '- Estimate quantities from the customer text when possible; default to 1.',
   '- Use unit prices from the catalog entry.',
-  '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, then add, remove, or adjust quantities to match the specific customer request.',
-  '- When SIMILAR PAST QUOTES are provided, prefer their line items and pricing when they match the current customer request. Higher similarity scores indicate stronger matches.',
+  '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, but ONLY include items that are relevant to the customer\'s specific request. Remove template items that do not apply.',
+  '- When SIMILAR PAST QUOTES are provided, use them only as pricing references. Do NOT copy line items from similar quotes unless the customer request explicitly calls for that type of work.',
   '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- If the customer request is vague, generate fewer items with lower confidence scores rather than guessing at work they might need.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -309,6 +312,7 @@ export class QuoteEngine {
 
     const draft: QuoteDraft = {
       id: draftId,
+      draftNumber: 0, // Placeholder — assigned by QuoteDraftService.save()
       userId: input.userId,
       customerRequestText: input.customerText,
       selectedTemplateId: aiResult.selectedTemplateId,

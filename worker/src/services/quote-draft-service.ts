@@ -10,52 +10,76 @@ export class QuoteDraftService {
 
   /**
    * Save a new quote draft with its line items.
+   * Uses INSERT ... SELECT to atomically compute the next draft_number,
+   * with retry on unique-constraint violation from concurrent inserts.
    */
   async save(draft: QuoteDraft): Promise<QuoteDraft> {
-    const statements: D1PreparedStatement[] = [
-      this.db.prepare(
-        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(
-        draft.id,
-        draft.userId,
-        draft.customerRequestText,
-        draft.selectedTemplateId,
-        draft.selectedTemplateName,
-        draft.catalogSource,
-        draft.status,
-        draft.jobberRequestId ?? null,
-      ),
-    ];
+    const MAX_RETRIES = 3;
 
-    const allItems = [
-      ...draft.lineItems.map((item, i) => ({ ...item, resolved: true, displayOrder: i })),
-      ...draft.unresolvedItems.map((item, i) => ({ ...item, resolved: false, displayOrder: i })),
-    ];
-
-    for (const item of allItems) {
-      statements.push(
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const statements: D1PreparedStatement[] = [
+        // Atomically compute next draft_number inside the INSERT so the
+        // read and write happen in the same statement, avoiding TOCTOU races.
         this.db.prepare(
-          "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          `INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(draft_number), 0) + 1 FROM quote_drafts WHERE user_id = ?))`
         ).bind(
-          item.id,
           draft.id,
-          item.productCatalogEntryId,
-          item.productName,
-          item.quantity,
-          item.unitPrice,
-          item.confidenceScore,
-          item.originalText,
-          item.resolved ? 1 : 0,
-          item.unmatchedReason ?? null,
-          item.displayOrder,
+          draft.userId,
+          draft.customerRequestText,
+          draft.selectedTemplateId,
+          draft.selectedTemplateName,
+          draft.catalogSource,
+          draft.status,
+          draft.jobberRequestId ?? null,
+          draft.userId,
         ),
-      );
+      ];
+
+      const allItems = [
+        ...draft.lineItems.map((item, i) => ({ ...item, resolved: true, displayOrder: i })),
+        ...draft.unresolvedItems.map((item, i) => ({ ...item, resolved: false, displayOrder: i })),
+      ];
+
+      for (const item of allItems) {
+        statements.push(
+          this.db.prepare(
+            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          ).bind(
+            item.id,
+            draft.id,
+            item.productCatalogEntryId,
+            item.productName,
+            item.quantity,
+            item.unitPrice,
+            item.confidenceScore,
+            item.originalText,
+            item.resolved ? 1 : 0,
+            item.unmatchedReason ?? null,
+            item.displayOrder,
+          ),
+        );
+      }
+
+      try {
+        await this.db.batch(statements);
+        break; // Success — exit retry loop
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isConstraintViolation = msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT');
+        if (isConstraintViolation && attempt < MAX_RETRIES - 1) {
+          // Regenerate ID to avoid PK collision on retry
+          draft = { ...draft, id: crypto.randomUUID() };
+          continue;
+        }
+        throw err;
+      }
     }
 
-    await this.db.batch(statements);
-
+    // Re-read the saved row to get DB-assigned fields (draft_number, timestamps).
+    // We reuse the original draft's lineItems/unresolvedItems since they were just inserted.
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ?'
     ).bind(draft.id).first() as any;
 
     return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems);
@@ -66,7 +90,7 @@ export class QuoteDraftService {
    */
   async getById(draftId: string, userId: string): Promise<QuoteDraft> {
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
     ).bind(draftId, userId).first() as any;
 
     if (!row) {
@@ -88,7 +112,7 @@ export class QuoteDraftService {
    */
   async list(userId: string): Promise<QuoteDraft[]> {
     const result = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
     ).bind(userId).all();
 
     const drafts: QuoteDraft[] = [];
@@ -165,7 +189,7 @@ export class QuoteDraftService {
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ?'
     ).bind(draftId).first() as any;
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
@@ -281,8 +305,12 @@ export class QuoteDraftService {
     lineItems: QuoteLineItem[],
     unresolvedItems: QuoteLineItem[],
   ): QuoteDraft {
+    if (row.draft_number == null) {
+      console.warn(`[QuoteDraftService] draft_number is NULL for draft id=${row.id}, created_at=${row.created_at} — falling back to 0`);
+    }
     return {
       id: row.id as string,
+      draftNumber: (row.draft_number as number) ?? 0,
       userId: row.user_id as string,
       customerRequestText: row.customer_request_text as string,
       selectedTemplateId: (row.selected_template_id as string) ?? null,

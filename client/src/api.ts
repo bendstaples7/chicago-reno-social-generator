@@ -524,12 +524,34 @@ export async function fetchTemplates(): Promise<QuoteTemplate[]> {
 }
 
 export async function saveTemplates(
-  entries: Array<{ name: string; content: string; category?: string }>,
+  entries: Array<{ name: string; content: string; category?: string; lineItems?: Array<{ name: string; description: string; quantity: number; unitPrice: number }> }>,
 ): Promise<QuoteTemplate[]> {
   const res = await fetch(API_BASE + '/api/quotes/templates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ entries }),
+  });
+  const data = await handleResponseWithToast<{ templates: QuoteTemplate[] }>(res);
+  return data.templates;
+}
+
+export async function saveTemplateFromDraft(
+  draftId: string,
+  name: string,
+  category?: string,
+): Promise<{ template: QuoteTemplate; templates: QuoteTemplate[] }> {
+  const res = await fetch(API_BASE + '/api/quotes/templates/from-draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ draftId, name, category }),
+  });
+  return handleResponseWithToast(res);
+}
+
+export async function deleteTemplate(templateId: string): Promise<QuoteTemplate[]> {
+  const res = await fetch(API_BASE + '/api/quotes/templates/' + templateId, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
   });
   const data = await handleResponseWithToast<{ templates: QuoteTemplate[] }>(res);
   return data.templates;

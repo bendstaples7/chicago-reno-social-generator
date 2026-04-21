@@ -165,16 +165,25 @@ async function fetchManualCatalog(db: D1Database, userId: string): Promise<Produ
 
 async function fetchManualTemplates(db: D1Database, userId: string): Promise<QuoteTemplate[]> {
   const result = await db.prepare(
-    'SELECT id, name, content, category FROM manual_templates WHERE user_id = ? ORDER BY created_at ASC'
+    'SELECT id, name, content, category, line_items_json FROM manual_templates WHERE user_id = ? ORDER BY created_at ASC'
   ).bind(userId).all();
 
-  return (result.results as any[]).map((row) => ({
-    id: row.id as string,
-    name: row.name as string,
-    content: row.content as string,
-    category: (row.category as string) ?? undefined,
-    source: 'manual' as const,
-  }));
+  return (result.results as any[]).map((row) => {
+    let lineItems: QuoteTemplate['lineItems'] = [];
+    try {
+      const parsed = JSON.parse((row.line_items_json as string) || '[]');
+      if (Array.isArray(parsed)) lineItems = parsed;
+    } catch { /* ignore parse errors */ }
+
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      content: row.content as string,
+      category: (row.category as string) ?? undefined,
+      lineItems,
+      source: 'manual' as const,
+    };
+  });
 }
 
 /**
@@ -210,20 +219,16 @@ app.post('/generate', async (c) => {
   const source = body.catalogSource ?? (jobberIntegration.isAvailable() ? 'jobber' : 'manual');
 
   let catalog: ProductCatalogEntry[];
-  let templates: QuoteTemplate[];
+  // Templates always come from D1 — Jobber's public API does not expose quote templates
+  const templates: QuoteTemplate[] = body.manualTemplates ?? await fetchManualTemplates(db, userId);
 
   if (source === 'jobber') {
-    [catalog, templates] = await Promise.all([
-      jobberIntegration.fetchProductCatalog(),
-      jobberIntegration.fetchTemplateLibrary(),
-    ]);
+    catalog = await jobberIntegration.fetchProductCatalog();
     if (!jobberIntegration.isAvailable()) {
       catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
-      templates = body.manualTemplates ?? await fetchManualTemplates(db, userId);
     }
   } else {
     catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
-    templates = body.manualTemplates ?? await fetchManualTemplates(db, userId);
   }
 
   // Fetch active rules for prompt injection (graceful degradation)
@@ -498,21 +503,14 @@ app.post('/catalog', async (c) => {
 
 /**
  * GET /templates
- * Get the current template library (from Jobber or manual entries).
+ * Get the current template library (always from D1 manual_templates).
+ * Jobber's public API does not expose quote templates.
  */
 app.get('/templates', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
-  const { jobberIntegration } = await createJobberIntegration(db, c.env);
-
-  let templates: QuoteTemplate[];
-  if (jobberIntegration.isAvailable()) {
-    templates = await jobberIntegration.fetchTemplateLibrary();
-  }
-  if (!jobberIntegration.isAvailable()) {
-    templates = await fetchManualTemplates(db, userId);
-  }
-  return c.json({ templates: templates! });
+  const templates = await fetchManualTemplates(db, userId);
+  return c.json({ templates });
 });
 
 /**
@@ -523,7 +521,7 @@ app.post('/templates', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
   const body = await c.req.json() as {
-    entries: Array<{ name: string; content: string; category?: string }>;
+    entries: Array<{ name: string; content: string; category?: string; lineItems?: Array<{ name: string; description: string; quantity: number; unitPrice: number }> }>;
   };
 
   if (!Array.isArray(body.entries) || body.entries.length === 0) {
@@ -536,6 +534,31 @@ app.post('/templates', async (c) => {
     });
   }
 
+  // Check for duplicate names within the batch
+  const nameSet = new Set<string>();
+  for (const entry of body.entries) {
+    if (!entry.name || typeof entry.name !== 'string' || !entry.name.trim()) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplates',
+        description: 'Each template entry must have a non-empty name.',
+        recommendedActions: ['Provide a name for every template entry'],
+      });
+    }
+    const normalized = entry.name.trim().toLowerCase();
+    if (nameSet.has(normalized)) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplates',
+        description: `Duplicate template name: "${entry.name.trim()}".`,
+        recommendedActions: ['Remove or rename duplicate template entries'],
+      });
+    }
+    nameSet.add(normalized);
+  }
+
   const statements: D1PreparedStatement[] = [
     db.prepare('DELETE FROM manual_templates WHERE user_id = ?').bind(userId),
   ];
@@ -543,18 +566,114 @@ app.post('/templates', async (c) => {
   for (const entry of body.entries) {
     statements.push(
       db.prepare(
-        "INSERT INTO manual_templates (id, user_id, name, content, category) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO manual_templates (id, user_id, name, content, category, line_items_json) VALUES (?, ?, ?, ?, ?, ?)"
       ).bind(
         crypto.randomUUID(),
         userId,
         entry.name,
         entry.content,
         entry.category ?? null,
+        JSON.stringify(entry.lineItems ?? []),
       ),
     );
   }
 
   await db.batch(statements);
+
+  const templates = await fetchManualTemplates(db, userId);
+  return c.json({ templates });
+});
+
+/**
+ * POST /templates/from-draft
+ * Save a quote draft as a reusable template.
+ */
+app.post('/templates/from-draft', async (c) => {
+  const db = c.env.DB;
+  const userId = c.get('user').id;
+  const body = await c.req.json() as {
+    draftId: string;
+    name: string;
+    category?: string;
+  };
+
+  if (!body.draftId || !body.name?.trim()) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'saveTemplateFromDraft',
+      description: 'Please provide a draft ID and template name.',
+      recommendedActions: ['Provide both draftId and name fields'],
+    });
+  }
+
+  // Check for duplicate template name
+  const existing = await db.prepare(
+    'SELECT id FROM manual_templates WHERE user_id = ? AND name = ? COLLATE NOCASE'
+  ).bind(userId, body.name.trim()).first();
+  if (existing) {
+    throw new PlatformError({
+      severity: 'warning',
+      component: 'QuoteRoutes',
+      operation: 'saveTemplateFromDraft',
+      description: `A template named "${body.name.trim()}" already exists.`,
+      recommendedActions: ['Choose a different name or delete the existing template first'],
+    });
+  }
+
+  const quoteDraftService = new QuoteDraftService(db);
+  const draft = await quoteDraftService.getById(body.draftId, userId);
+
+  // Convert draft line items to template line items
+  const lineItems = [...draft.lineItems, ...draft.unresolvedItems].map((li) => ({
+    name: li.productName,
+    description: li.originalText || '',
+    quantity: li.quantity,
+    unitPrice: li.unitPrice,
+  }));
+
+  const templateId = crypto.randomUUID();
+  try {
+    await db.prepare(
+      "INSERT INTO manual_templates (id, user_id, name, content, category, line_items_json) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(
+      templateId,
+      userId,
+      body.name.trim(),
+      draft.customerRequestText || '',
+      body.category ?? null,
+      JSON.stringify(lineItems),
+    ).run();
+  } catch (dbErr) {
+    const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+    if (msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT')) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplateFromDraft',
+        description: `A template named "${body.name.trim()}" already exists.`,
+        recommendedActions: ['Choose a different name or delete the existing template first'],
+      });
+    }
+    throw dbErr;
+  }
+
+  const templates = await fetchManualTemplates(db, userId);
+  return c.json({ template: templates.find((t) => t.id === templateId), templates });
+});
+
+/**
+ * DELETE /templates/:id
+ * Delete a single template by ID.
+ */
+app.delete('/templates/:id', async (c) => {
+  const db = c.env.DB;
+  const userId = c.get('user').id;
+  const templateId = c.req.param('id');
+
+  await db.prepare(
+    'DELETE FROM manual_templates WHERE id = ? AND user_id = ?'
+  ).bind(templateId, userId).run();
 
   const templates = await fetchManualTemplates(db, userId);
   return c.json({ templates });

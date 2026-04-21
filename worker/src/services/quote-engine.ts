@@ -2,7 +2,7 @@ import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
 import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote } from 'shared';
 
-const GENERATION_TIMEOUT_MS = 30_000;
+const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
 
 export interface QuoteEngineInput {
@@ -47,7 +47,7 @@ const SYSTEM_PROMPT = [
   '- If a requested item cannot be confidently matched (score < 70), include it with the best guess and a reason.',
   '- Estimate quantities from the customer text when possible; default to 1.',
   '- Use unit prices from the catalog entry.',
-  '- If a template matches the type of work, reference it by ID and name.',
+  '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, then add, remove, or adjust quantities to match the specific customer request.',
   '- When SIMILAR PAST QUOTES are provided, prefer their line items and pricing when they match the current customer request. Higher similarity scores indicate stronger matches.',
   '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
@@ -153,7 +153,7 @@ export class QuoteEngine {
         component: 'QuoteEngine',
         operation: 'generateQuote',
         description: isAbort
-          ? 'Quote generation timed out after 30 seconds.'
+          ? 'Quote generation timed out. Please try again.'
           : `Quote generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
         recommendedActions: ['Try again'],
       });
@@ -191,8 +191,15 @@ export class QuoteEngine {
     if (templates.length === 0) {
       parts.push('(no templates available)');
     } else {
+      parts.push('Each template is a proven quote blueprint. Pick the closest match and use it as a starting point, then adjust line items to match the customer request.');
       for (const t of templates) {
         parts.push(`- [${t.id}] ${t.name}${t.category ? ' (' + t.category + ')' : ''}`);
+        if (t.lineItems && t.lineItems.length > 0) {
+          const itemSummaries = t.lineItems.map(li =>
+            `${li.name} (${li.quantity}x @ $${li.unitPrice})`
+          );
+          parts.push(`  Line items: ${itemSummaries.join(', ')}`);
+        }
       }
     }
 

@@ -203,6 +203,7 @@ export default function ManualFallbackPage() {
         id: 'temp-' + Date.now(),
         name: newTemplate.name.trim(),
         content: newTemplate.content.trim(),
+        lineItems: [],
         source: 'manual' as const,
       },
     ];
@@ -221,7 +222,7 @@ export default function ManualFallbackPage() {
     try {
       setSaving(true);
       const saved = await saveTemplates(
-        entries.map((t) => ({ name: t.name, content: t.content, category: t.category })),
+        entries.map((t) => ({ name: t.name, content: t.content, category: t.category, lineItems: t.lineItems })),
       );
       setTemplateEntries(saved);
       setSuccessMsg('Templates saved.');
@@ -251,7 +252,7 @@ export default function ManualFallbackPage() {
       {/* Jobber availability banner */}
       {jobberAvailable && (
         <div style={jobberBannerStyle} role="status">
-          ✅ Jobber API is available. Product catalog and templates will be sourced from Jobber when generating quotes.
+          ✅ Jobber API is available. Product catalog will be sourced from Jobber when generating quotes. Templates are managed locally.
         </div>
       )}
 

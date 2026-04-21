@@ -1,0 +1,413 @@
+[
+  {
+    "name": "3 Bathroom Remodel",
+    "content": "Customer to provide all finish materials",
+    "lineItems": [
+      {
+        "name": "Demo",
+        "description": "For three bathrooms: \r \r - Vanity x3\r - Toilet x3\r - Tub x3\r - Shower surround x3\r - Bathroom floor x3 \r - Light fixtures x3",
+        "quantity": 78,
+        "unitPrice": 70
+      },
+      {
+        "name": "Tile: Construct Shower Pan",
+        "description": "Master and 1st floor bathrooms",
+        "quantity": 2,
+        "unitPrice": 1050
+      },
+      {
+        "name": "Tile: Install Durock Shower Surround",
+        "description": "All 3 bathrooms",
+        "quantity": 18,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Waterproof Shower Surround",
+        "description": "Redgard waterproofing\r All 3 bathrooms",
+        "quantity": 9,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Install Tiled Shower Surround",
+        "description": "Does not include any shelves, or benches.  If desired will require a change order at additional cost\r \r All 3 bathrooms\r \r Customer to provide tile and grout\r \r Large format tile 12\" x 24\".  If tile format is substantially different will require change order at additional cost",
+        "quantity": 81,
+        "unitPrice": 75
+      },
+      {
+        "name": "Tile: Shower Niche",
+        "description": "Install three standard sized shower niches, one in each bathroom",
+        "quantity": 27,
+        "unitPrice": 75
+      },
+      {
+        "name": "Tile: Install Mosaic Tiled Shower Floor",
+        "description": "2 bathrooms\r \r Customer to provide tile and grout",
+        "quantity": 36,
+        "unitPrice": 75
+      },
+      {
+        "name": "Plumbing: Rough Connection for Shower Drain",
+        "description": "1st floor and master bathroom showers\r Adjust tub drain connection to shower connection",
+        "quantity": 2,
+        "unitPrice": 500
+      },
+      {
+        "name": "Plumbing: Install New Tub",
+        "description": "Customer to provide tub\r Upstairs bathroom\r Will use existing rough plumbing connections\r If rough plumbing needs substantial adjustments from different sized tub or needed reconfigurations will require change order at additional cost",
+        "quantity": 1,
+        "unitPrice": 800
+      },
+      {
+        "name": "Plumbing: Install new Shower Fixture",
+        "description": "All 3 bathrooms\r Customer to provide shower fixtures\r \r Single mixer valve.  If dual diverter is selected by client will require a change order at additional cost",
+        "quantity": 3,
+        "unitPrice": 400
+      },
+      {
+        "name": "Tile: Install Durock Sub Floor",
+        "description": "All 3 bathrooms",
+        "quantity": 15,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Install and grout new Tile Floor",
+        "description": "All 3 bathrooms\r Customer to provide tile and grout\r \r Large format 12\" x 24\" or 12\" x 12\" tile.  If smaller or more complicated format or placement desired by customer, will require a change order at additional cost",
+        "quantity": 54,
+        "unitPrice": 75
+      },
+      {
+        "name": "Carpentry: Install New Vanity",
+        "description": "Single bowl vanities\r 1st and 3rd floor\r Customer to provide vanity\r \r Max vanity size is 36\"\r If larger vanity selected will require change order at additional cost",
+        "quantity": 2,
+        "unitPrice": 400
+      },
+      {
+        "name": "Carpentry: Install Double Vanity",
+        "description": "Master bath\r Customer to provide vanity",
+        "quantity": 1,
+        "unitPrice": 600
+      },
+      {
+        "name": "Plumbing: Bathroom Sink Faucet Install",
+        "description": "Using existing plumbing\r If new rough plumbing is required, will require a change order\r Customer to provide faucet\r \r All 3 bathrooms (x2 for master bathroom double vanity)",
+        "quantity": 4,
+        "unitPrice": 120
+      },
+      {
+        "name": "Plumbing: Toilet Install",
+        "description": "All 3 bathrooms\r Customer to provide toilets",
+        "quantity": 3,
+        "unitPrice": 200
+      },
+      {
+        "name": "Carpentry: Install Baseboard Trim",
+        "description": "All 3 bathrooms\r Customer to provide trim",
+        "quantity": 15,
+        "unitPrice": 65
+      },
+      {
+        "name": "Electrical: Install New Vanity Light (existing electrical)",
+        "description": "If new wiring or circuit is needed, will require a change order at additional cost\r \r Customer to provide light fixtures\r all 3 bathrooms",
+        "quantity": 3,
+        "unitPrice": 150
+      },
+      {
+        "name": "Interior Painting",
+        "description": "Paint ceilings, wall, trim\r All 3 bathrooms\r \r Customer to provide paint",
+        "quantity": 54,
+        "unitPrice": 50
+      },
+      {
+        "name": "Carpentry: Install New Mirror",
+        "description": "All 3 bathrooms\r Customer to provide mirror",
+        "quantity": 3,
+        "unitPrice": 100
+      },
+      {
+        "name": "Electrical: Replace Bathroom Vent Fan",
+        "description": "Labor only\r Customer to supply vent fan\r Existing electrical will be used, if new electrical needs to be run will require a change order at additional cost\r \r Assumes no adjustments needed to ceiling from same size and style of vent fan.  If different size or style is desired will require change order at additional cost\r \r All 3 bathrooms",
+        "quantity": 3,
+        "unitPrice": 150
+      },
+      {
+        "name": "Carpentry: Towel Bar Set Install",
+        "description": "All 3 bathrooms\r Customer to provide towel bar",
+        "quantity": 3,
+        "unitPrice": 120
+      },
+      {
+        "name": "Materials",
+        "description": "- contractor bags \r - thinset \r - Primer \r - paint materials (brushes, drop cloths etc)\r - durock (shower surrounds and floors)  \r - shower pan \r - Redguard \r - Rough plumbing materials (copper pipes, fittings)\r - Fasteners\r - Drywall patching materials",
+        "quantity": 1,
+        "unitPrice": 5000
+      },
+      {
+        "name": "Debris Removal",
+        "description": "",
+        "quantity": 3,
+        "unitPrice": 700
+      },
+      {
+        "name": "Walkup Surcharge",
+        "description": "3rd Floor Walkup",
+        "quantity": 3,
+        "unitPrice": 1000
+      }
+    ],
+    "category": "Bathroom"
+  },
+  {
+    "name": "Bathroom Renovation: Shower to Tub",
+    "content": "Customer to provide finish materials\r\nChicago Reno can purchase on customers behalf with reimbursement on final invoice\r\nDoes not include niches, shelves, or benches in showers\r\nDoes not include glass shower doors which can be added if desired",
+    "lineItems": [
+      {
+        "name": "Demo",
+        "description": "Demo 2 bathrooms\r - Vanity x 2\r - Toilet x 2\r - Shower pan x 1\r - Shower surround x 2\r - Bathroom floor x 2\r - Tub x 1",
+        "quantity": 36,
+        "unitPrice": 70
+      },
+      {
+        "name": "Plumbing: Install New Tub",
+        "description": "Customer to provide tub",
+        "quantity": 1,
+        "unitPrice": 800
+      },
+      {
+        "name": "Tile: Install Durock Shower Surround",
+        "description": "",
+        "quantity": 6,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Install Tiled Shower Surround",
+        "description": "Does not include any shelves, niches or benches.  If desired will require a change order at additional cost\r \r Customer to provide tile and grout\r Large format tile approximately 12x12 or 12x24\r If smaller format tile is desired, will require a change order at additional cost",
+        "quantity": 60,
+        "unitPrice": 75
+      },
+      {
+        "name": "Tile: Construct Shower Pan",
+        "description": "One bathroom",
+        "quantity": 1,
+        "unitPrice": 1050
+      },
+      {
+        "name": "Tile: Install Mosaic Tiled Shower Floor",
+        "description": "One bathroom\r Customer to provide tile and grout",
+        "quantity": 18,
+        "unitPrice": 75
+      },
+      {
+        "name": "Plumbing: Install new Shower Fixture",
+        "description": "Fixture to be provided by customer\r One valve.  If customer selected multiple diverter fixture will require change order at additional cost (I.E. separate hand held shower head)",
+        "quantity": 2,
+        "unitPrice": 600
+      },
+      {
+        "name": "Tile: Install Durock Sub Floor",
+        "description": "Both bathrooms",
+        "quantity": 18,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Install new Tile Floor",
+        "description": "Customer to provide tile and grout\r Large format tile 12x24\r If smaller format tile is desired, will require a change order at additional cost",
+        "quantity": 45,
+        "unitPrice": 75
+      },
+      {
+        "name": "Plumbing: Bathroom Sink Faucet Install",
+        "description": "Using existing plumbing\r If new rough plumbing is required, will require a change order\r \r Both bathrooms\r Customer to provide faucets",
+        "quantity": 2,
+        "unitPrice": 120
+      },
+      {
+        "name": "Plumbing: Toilet Install",
+        "description": "Customer to provide toilet",
+        "quantity": 2,
+        "unitPrice": 200
+      },
+      {
+        "name": "Carpentry: Install Baseboard Trim",
+        "description": "Both bathrooms\r Customer to provide trim",
+        "quantity": 8,
+        "unitPrice": 65
+      },
+      {
+        "name": "Interior Painting",
+        "description": "Both bathrooms\r Customer to provide paint",
+        "quantity": 36,
+        "unitPrice": 50
+      },
+      {
+        "name": "Carpentry: Towel Bar Install",
+        "description": "Install customer provided towel bars / toilet paper holder set",
+        "quantity": 2,
+        "unitPrice": 120
+      },
+      {
+        "name": "Materials",
+        "description": "- contractor bags\r - thinset\r - paint materials\r - framing materials\r - durock\r - Regdard\r - rough in materials\r - Shower pan",
+        "quantity": 1,
+        "unitPrice": 3000
+      },
+      {
+        "name": "Debris Removal",
+        "description": "",
+        "quantity": 2,
+        "unitPrice": 1000
+      }
+    ],
+    "category": "Bathroom"
+  },
+  {
+    "name": "Bathroom Renovation: Tub to Shower",
+    "content": "Estimate does not include any changes to vanity or toilet area or existing bathroom floors.  No electrical outside of elimination of jacuzzi tub is included.  Does not include shelving in closet, to align on with customer before providing pricing\r\n\r\nCustomer to provide all finish materials\r\n\r\nPermit fees are not included in this estimate and will be charged at cost to customer with proof of receipt",
+    "lineItems": [
+      {
+        "name": "Demo",
+        "description": "- Existing jacuzzi tub\r - Eliminate existing jacuzzi tub power\r - Existing standup shower, pan, and wall tile\r - Existing floor tile\r \r - Temporarily remove vanity and toilet to make way for floor tile install",
+        "quantity": 25,
+        "unitPrice": 70
+      },
+      {
+        "name": "Tile: Install Durock Shower Surround",
+        "description": "",
+        "quantity": 4,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Waterproof Shower Surround",
+        "description": "Redguard waterproofing",
+        "quantity": 3,
+        "unitPrice": 65
+      },
+      {
+        "name": "Tile: Install Tiled Shower Surround",
+        "description": "Does not include any shelves, or benches.  If desired will require a change order at additional cost\r \r Includes one shower niche\r Does not include tile or grout, provided by customer",
+        "quantity": 40,
+        "unitPrice": 75
+      },
+      {
+        "name": "Tile: Install new Tile Floor",
+        "description": "Does not include tile or grout, provided by customer\r \r Assumes sub floor is in good condition.  If new subfloor needs to be installed, will require a change order at additional cost",
+        "quantity": 25,
+        "unitPrice": 75
+      },
+      {
+        "name": "Plumbing: Install Rough In For Tub",
+        "description": "",
+        "quantity": 4,
+        "unitPrice": 65
+      },
+      {
+        "name": "Plumbing: Install New Tub",
+        "description": "Tub provided by customer",
+        "quantity": 1,
+        "unitPrice": 400
+      },
+      {
+        "name": "Install Glass Shower Doors",
+        "description": "Includes labor and materials",
+        "quantity": 1,
+        "unitPrice": 2000
+      },
+      {
+        "name": "Carpentry: Framing",
+        "description": "Frame new opening for closet door",
+        "quantity": 4,
+        "unitPrice": 65
+      },
+      {
+        "name": "Carpentry: Install New Prehung Door",
+        "description": "Standard sized doors\r Customer provided\r If significant modifications are needed will require a change order at additional cost",
+        "quantity": 1,
+        "unitPrice": 520
+      },
+      {
+        "name": "Carpentry: Install closet door hardware",
+        "description": "Hardware provided by customer",
+        "quantity": 1,
+        "unitPrice": 65
+      },
+      {
+        "name": "Drywall: Installation of New Drywall",
+        "description": "Includes drywall material, mud, tape, and sanding prep for paint\r Closet area",
+        "quantity": 4,
+        "unitPrice": 120
+      },
+      {
+        "name": "Plumbing: Rough Connection for Shower",
+        "description": "Will use existing shower connection\r If new rough plumbing is needed to match tiled shower, will require change order at additional cost",
+        "quantity": 1,
+        "unitPrice": 0
+      },
+      {
+        "name": "Plumbing: Install new Shower Fixture",
+        "description": "Fixture provided by customer",
+        "quantity": 1,
+        "unitPrice": 250
+      },
+      {
+        "name": "Interior Painting",
+        "description": "Paint walls, ceiling, trim, and baseboards of bathroom including closet area\r \r Paint provided by customer",
+        "quantity": 18,
+        "unitPrice": 50
+      },
+      {
+        "name": "Carpentry: Install Baseboard Trim",
+        "description": "Install baseboard trim around closet area\r \r Trim provided by customer",
+        "quantity": 4,
+        "unitPrice": 65
+      },
+      {
+        "name": "Carpentry: Towel Bar Install",
+        "description": "Install 4x robe hooks and 1x towel bar\r \r Towel bar and robe hooks provided by customer",
+        "quantity": 1,
+        "unitPrice": 120
+      },
+      {
+        "name": "Plumbing: Toilet Install",
+        "description": "Customer to provide toilet",
+        "quantity": 1,
+        "unitPrice": 200
+      },
+      {
+        "name": "Carpentry: Install Double Vanity",
+        "description": "Customer to provide vanity",
+        "quantity": 1,
+        "unitPrice": 600
+      },
+      {
+        "name": "Debris Removal",
+        "description": "",
+        "quantity": 1,
+        "unitPrice": 1000
+      },
+      {
+        "name": "Materials",
+        "description": "- Contractor bags\r - redguard\r - thinset\r - drywall\r - fasteners\r - Plumbing rough in\r - Shower glass\r - Closet framing materials\r - outlet",
+        "quantity": 1,
+        "unitPrice": 380
+      },
+      {
+        "name": "Electrical: Install New Outlet",
+        "description": "Add wall outlet across from closet door \r \r Will draw power from existing power source within 4'.  If nearest power source is farther, will require change order at additional cost",
+        "quantity": 1,
+        "unitPrice": 250
+      },
+      {
+        "name": "Electrical: Install New Vanity Light (existing electrical)",
+        "description": "Swap out existing vanity light with new\r \r Customer to provide light fixture",
+        "quantity": 1,
+        "unitPrice": 150
+      },
+      {
+        "name": "Carpentry: Repair or replace vanity toe kick",
+        "description": "",
+        "quantity": 2,
+        "unitPrice": 65
+      }
+    ],
+    "category": "Bathroom"
+  }
+]

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule } from 'shared';
-import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail } from '../api';
+import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft } from '../api';
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
@@ -22,6 +22,11 @@ export default function QuoteDraftPage() {
   const [ruleCreatedMsg, setRuleCreatedMsg] = useState<string | null>(null);
   const [ruleCreationWarning, setRuleCreationWarning] = useState<string | null>(null);
   const [requestDetail, setRequestDetail] = useState<JobberRequestDetail | null>(null);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateSavedMsg, setTemplateSavedMsg] = useState<string | null>(null);
+  const [templateSaveError, setTemplateSaveError] = useState(false);
 
   const loadDraft = useCallback(async () => {
     if (!id) return;
@@ -129,6 +134,27 @@ export default function QuoteDraftPage() {
     return grouped;
   };
 
+  const handleSaveAsTemplate = async () => {
+    if (savingTemplate) return;
+    const name = templateName.trim();
+    if (!id || !name) return;
+    setSavingTemplate(true);
+    setTemplateSaveError(false);
+    try {
+      await saveTemplateFromDraft(id, name);
+      setTemplateSavedMsg(`Template "${name}" saved!`);
+      setTemplateSaveError(false);
+      setTemplateName('');
+      setShowSaveTemplate(false);
+      setTimeout(() => setTemplateSavedMsg(null), 4000);
+    } catch (err) {
+      setTemplateSavedMsg((err as any).message ?? 'Failed to save template.');
+      setTemplateSaveError(true);
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={containerStyle}>
@@ -158,7 +184,47 @@ export default function QuoteDraftPage() {
       <div style={{ flex: 1, minWidth: 0 }}>
       <button onClick={() => navigate('/quotes')} style={backBtnStyle}>← Back to New Quote</button>
 
-      <h1 style={titleStyle}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <h1 style={{ ...titleStyle, margin: 0 }}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
+        <button
+          onClick={() => setShowSaveTemplate(!showSaveTemplate)}
+          style={{ ...saveTemplateBtnStyle, background: showSaveTemplate ? '#e0e0e0' : '#f5f5f5' }}
+        >
+          📋 Save as Template
+        </button>
+      </div>
+
+      {templateSavedMsg && (
+        <div style={{ padding: '0.5rem 0.75rem', background: templateSaveError ? '#fdecea' : '#e8f5e9', borderRadius: 6, marginBottom: '0.75rem', fontSize: '0.85rem' }} role={templateSaveError ? 'alert' : 'status'} aria-live="polite" aria-atomic="true">
+          {templateSavedMsg}
+        </div>
+      )}
+
+      {showSaveTemplate && (
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', padding: '0.75rem', background: '#f9f9f9', borderRadius: 8, border: '1px solid #e0e0e0' }}>
+          <input
+            type="text"
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
+            placeholder="Template name (e.g. Bathroom Renovation)"
+            style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid #ccc', fontSize: '0.9rem' }}
+            aria-label="Template name"
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveAsTemplate(); }}
+          />
+          <button
+            onClick={handleSaveAsTemplate}
+            disabled={!templateName.trim() || savingTemplate}
+            style={{
+              padding: '0.5rem 1rem', borderRadius: 6, border: 'none', background: '#00a89d', color: '#fff',
+              fontWeight: 600, cursor: templateName.trim() && !savingTemplate ? 'pointer' : 'not-allowed',
+              opacity: templateName.trim() && !savingTemplate ? 1 : 0.5, fontSize: '0.9rem',
+            }}
+          >
+            {savingTemplate ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={() => { setShowSaveTemplate(false); setTemplateName(''); }} aria-label="Close save template" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#888' }}>✕</button>
+        </div>
+      )}
 
       {/* Selected template */}
       {draft.selectedTemplateName && (
@@ -468,6 +534,16 @@ const backBtnStyle: React.CSSProperties = {
   padding: 0,
   marginBottom: '1rem',
   display: 'inline-block',
+};
+
+const saveTemplateBtnStyle: React.CSSProperties = {
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  padding: '0.35rem 0.75rem',
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+  fontWeight: 500,
+  color: '#333',
 };
 
 const alertStyle: React.CSSProperties = {

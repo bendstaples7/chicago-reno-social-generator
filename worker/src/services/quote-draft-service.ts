@@ -44,12 +44,13 @@ export class QuoteDraftService {
       for (const item of allItems) {
         statements.push(
           this.db.prepare(
-            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, description, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
           ).bind(
             item.id,
             draft.id,
             item.productCatalogEntryId,
             item.productName,
+            item.description ?? '',
             item.quantity,
             item.unitPrice,
             item.confidenceScore,
@@ -168,12 +169,13 @@ export class QuoteDraftService {
       for (const item of allItems) {
         statements.push(
           this.db.prepare(
-            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO quote_line_items (id, quote_draft_id, product_catalog_entry_id, product_name, description, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
           ).bind(
             item.id,
             draftId,
             item.productCatalogEntryId ?? null,
             item.productName,
+            item.description ?? '',
             item.quantity,
             item.unitPrice,
             item.confidenceScore,
@@ -268,7 +270,7 @@ export class QuoteDraftService {
 
   private async fetchLineItems(draftId: string): Promise<{ lineItems: QuoteLineItem[]; unresolvedItems: QuoteLineItem[] }> {
     const result = await this.db.prepare(
-      'SELECT id, product_catalog_entry_id, product_name, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order FROM quote_line_items WHERE quote_draft_id = ? ORDER BY display_order ASC'
+      'SELECT id, product_catalog_entry_id, product_name, description, quantity, unit_price, confidence_score, original_text, resolved, unmatched_reason, display_order FROM quote_line_items WHERE quote_draft_id = ? ORDER BY display_order ASC'
     ).bind(draftId).all();
 
     const lineItems: QuoteLineItem[] = [];
@@ -291,6 +293,7 @@ export class QuoteDraftService {
       id: row.id as string,
       productCatalogEntryId: (row.product_catalog_entry_id as string) ?? null,
       productName: row.product_name as string,
+      description: (row.description as string) ?? '',
       quantity: Number(row.quantity),
       unitPrice: Number(row.unit_price),
       confidenceScore: row.confidence_score as number,

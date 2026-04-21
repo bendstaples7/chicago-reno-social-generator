@@ -23,6 +23,7 @@ export interface QuoteEngineOutput {
 interface AILineItem {
   productCatalogEntryId: string | null;
   productName: string;
+  description?: string;
   quantity: number;
   unitPrice: number;
   confidenceScore: number;
@@ -49,6 +50,7 @@ const SYSTEM_PROMPT = [
   '- If a requested item cannot be confidently matched (score < 70), include it with the best guess and a reason.',
   '- Estimate quantities from the customer text when possible; default to 1.',
   '- Use unit prices from the catalog entry.',
+  '- Set productName to the EXACT catalog product name for matched items.',
   '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, but ONLY include items that are relevant to the customer\'s specific request. Remove template items that do not apply.',
   '- When SIMILAR PAST QUOTES are provided, use them only as pricing references. Do NOT copy line items from similar quotes unless the customer request explicitly calls for that type of work.',
   '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
@@ -60,8 +62,7 @@ const SYSTEM_PROMPT = [
   '  "selectedTemplateName": "name or null",',
   '  "lineItems": [',
   '    {',
-  '      "productCatalogEntryId": "catalog id or null",',
-  '      "productName": "name",',
+  '      "productName": "exact catalog product name",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -186,7 +187,7 @@ export class QuoteEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of catalog) {
-        parts.push(`- [${p.id}] ${p.name} — ${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
       }
     }
 
@@ -237,33 +238,54 @@ export class QuoteEngine {
   }
 
   private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[]): AIResponse {
-    const catalogIds = new Set(catalog.map((c) => c.id));
+    // Build a name-based lookup (case-insensitive) for catalog matching
+    const catalogByName = new Map<string, ProductCatalogEntry>();
+    for (const c of catalog) {
+      catalogByName.set(c.name.toLowerCase(), c);
+    }
 
     const validatedItems: AILineItem[] = (parsed.lineItems ?? []).map((item) => {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
+      const nameLower = (item.productName ?? '').toLowerCase();
 
-      if (item.productCatalogEntryId && !catalogIds.has(item.productCatalogEntryId)) {
+      // Try exact name match first
+      let catalogEntry = catalogByName.get(nameLower);
+
+      // Fuzzy fallback: find the closest catalog entry by substring match.
+      // Prefer the shortest matching name (most specific match).
+      if (!catalogEntry) {
+        let bestMatch: ProductCatalogEntry | undefined;
+        let bestLen = Infinity;
+        for (const [key, entry] of catalogByName) {
+          if (key.includes(nameLower) || nameLower.includes(key)) {
+            if (key.length < bestLen) {
+              bestMatch = entry;
+              bestLen = key.length;
+            }
+          }
+        }
+        catalogEntry = bestMatch;
+      }
+
+      if (catalogEntry) {
         return {
           ...item,
-          productCatalogEntryId: null,
-          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
-          unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
+          productCatalogEntryId: catalogEntry.id,
+          unitPrice: catalogEntry.unitPrice,
+          productName: catalogEntry.name,
+          description: catalogEntry.description ?? '',
+          confidenceScore: score,
         };
       }
 
-      if (item.productCatalogEntryId) {
-        const catalogEntry = catalog.find((c) => c.id === item.productCatalogEntryId);
-        if (catalogEntry) {
-          return {
-            ...item,
-            unitPrice: catalogEntry.unitPrice,
-            productName: catalogEntry.name,
-            confidenceScore: score,
-          };
-        }
-      }
-
-      return { ...item, confidenceScore: score };
+      // No catalog match — mark as unmatched
+      return {
+        ...item,
+        productCatalogEntryId: null,
+        description: '',
+        confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
+        unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
+      };
     });
 
     return {
@@ -297,6 +319,7 @@ export class QuoteEngine {
         id: crypto.randomUUID(),
         productCatalogEntryId: item.productCatalogEntryId,
         productName: item.productName,
+        description: item.description ?? '',
         quantity: Math.max(0, item.quantity ?? 1),
         unitPrice: Math.max(0, item.unitPrice ?? 0),
         confidenceScore: item.confidenceScore,

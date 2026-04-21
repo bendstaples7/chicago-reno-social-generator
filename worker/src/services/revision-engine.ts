@@ -48,8 +48,9 @@ const SYSTEM_PROMPT = [
   '- Preserve all line items NOT referenced in the feedback without modification.',
   '- CRITICAL: Do NOT add line items that the feedback does not explicitly ask for. Only add items when the user clearly requests a specific addition.',
   '- When the feedback references the customer request (e.g., "if the request mentions X, add Y"), check the ORIGINAL CUSTOMER REQUEST section to evaluate the condition.',
-  '- When adding new items, match against the provided catalog. Use catalog pricing for matched items.',
-  '- If a new item cannot be matched to the catalog, include it with productCatalogEntryId: null and a descriptive unmatchedReason.',
+  '- When adding new items, match against the provided catalog by name. Use catalog pricing for matched items.',
+  '- Set productName to the EXACT catalog product name for matched items.',
+  '- If a new item cannot be matched to the catalog, include it with a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
   '- When BUSINESS RULES are provided, follow them when revising line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
@@ -58,8 +59,7 @@ const SYSTEM_PROMPT = [
   '{',
   '  "lineItems": [',
   '    {',
-  '      "productCatalogEntryId": "catalog id or null",',
-  '      "productName": "name",',
+  '      "productName": "exact catalog product name",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -179,7 +179,7 @@ export class RevisionEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of input.catalog) {
-        parts.push(`- [${p.id}] ${p.name} — ${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
       }
     }
 
@@ -217,35 +217,48 @@ export class RevisionEngine {
   }
 
   private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[]): RevisionOutput {
-    const catalogIds = new Set(catalog.map((c) => c.id));
+    // Build a name-based lookup (case-insensitive) for catalog matching
+    const catalogByName = new Map<string, ProductCatalogEntry>();
+    for (const c of catalog) {
+      catalogByName.set(c.name.toLowerCase(), c);
+    }
+
     const lineItems: QuoteLineItem[] = [];
     const unresolvedItems: QuoteLineItem[] = [];
 
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
+      const nameLower = (item.productName ?? '').toLowerCase();
+
+      // Try exact name match first
+      let catalogEntry = catalogByName.get(nameLower);
+
+      // Fuzzy fallback: find the closest catalog entry by substring match.
+      // Prefer the shortest matching name (most specific match).
+      if (!catalogEntry) {
+        let bestMatch: ProductCatalogEntry | undefined;
+        let bestLen = Infinity;
+        for (const [key, entry] of catalogByName) {
+          if (key.includes(nameLower) || nameLower.includes(key)) {
+            if (key.length < bestLen) {
+              bestMatch = entry;
+              bestLen = key.length;
+            }
+          }
+        }
+        catalogEntry = bestMatch;
+      }
+
       let finalItem: QuoteLineItem;
 
-      if (item.productCatalogEntryId && !catalogIds.has(item.productCatalogEntryId)) {
+      if (catalogEntry) {
         finalItem = {
           id: crypto.randomUUID(),
-          productCatalogEntryId: null,
-          productName: item.productName,
+          productCatalogEntryId: catalogEntry.id,
+          productName: catalogEntry.name,
+          description: catalogEntry.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: Math.max(0, item.unitPrice ?? 0),
-          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
-          originalText: item.originalText ?? '',
-          resolved: false,
-          unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
-          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
-      } else if (item.productCatalogEntryId) {
-        const catalogEntry = catalog.find((c) => c.id === item.productCatalogEntryId);
-        finalItem = {
-          id: crypto.randomUUID(),
-          productCatalogEntryId: item.productCatalogEntryId,
-          productName: catalogEntry?.name ?? item.productName,
-          quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: Math.max(0, catalogEntry?.unitPrice ?? item.unitPrice ?? 0),
+          unitPrice: Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
@@ -257,12 +270,13 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
+          description: '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
-          confidenceScore: score,
+          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
           originalText: item.originalText ?? '',
           resolved: false,
-          unmatchedReason: item.unmatchedReason || 'No catalog match',
+          unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
         };
       }

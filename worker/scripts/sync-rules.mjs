@@ -17,6 +17,8 @@ import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+const listRemoteOnly = process.argv.includes('--list-remote');
+
 function run(cmd) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
@@ -50,7 +52,7 @@ function sqlVal(s) {
 }
 
 try {
-  console.log('[sync-rules] Pulling rules from production D1...');
+  console.log(listRemoteOnly ? '[sync-rules] Listing production rules...' : '[sync-rules] Pulling rules from production D1...');
 
   const remoteGroups = query('--remote', 'SELECT id, name, description, display_order, created_at FROM rule_groups');
   if (!remoteGroups) {
@@ -61,6 +63,17 @@ try {
   const remoteRules = query('--remote', 'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules') || [];
 
   console.log(`[sync-rules] Found ${remoteGroups.length} rule groups and ${remoteRules.length} rules in production.`);
+
+  if (remoteRules.length > 0) {
+    for (const r of remoteRules) {
+      const status = r.is_active ? '✅' : '⏸️';
+      console.log(`  ${status} ${r.name}`);
+    }
+  }
+
+  if (listRemoteOnly) {
+    process.exit(0);
+  }
 
   if (remoteGroups.length === 0 && remoteRules.length === 0) {
     console.log('[sync-rules] No rules in production. Skipping.');

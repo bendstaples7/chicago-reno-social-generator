@@ -515,6 +515,18 @@ export async function saveCatalog(
   return data.catalog;
 }
 
+export async function updateCatalogEntry(
+  entryId: string,
+  updates: { name?: string; description?: string },
+): Promise<void> {
+  const res = await fetch(API_BASE + '/api/quotes/catalog/' + entryId, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(updates),
+  });
+  await handleResponseWithToast(res);
+}
+
 export async function fetchTemplates(): Promise<QuoteTemplate[]> {
   const res = await fetch(API_BASE + '/api/quotes/templates', {
     headers: { ...authHeaders() },

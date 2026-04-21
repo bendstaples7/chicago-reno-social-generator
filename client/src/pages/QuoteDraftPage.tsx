@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule } from 'shared';
-import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft } from '../api';
+import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule, ProductCatalogEntry } from 'shared';
+import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft, updateDraft, fetchCatalog, updateCatalogEntry } from '../api';
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
@@ -27,6 +27,29 @@ export default function QuoteDraftPage() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [templateSavedMsg, setTemplateSavedMsg] = useState<string | null>(null);
   const [templateSaveError, setTemplateSaveError] = useState(false);
+
+  // Inline editing state
+  const [editingCell, setEditingCell] = useState<{ itemId: string; field: 'quantity' | 'unitPrice' | 'productName' | 'description' } | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [updateCatalogChecked, setUpdateCatalogChecked] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Drag-to-reorder state
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  // Add line item state
+  const [showAddRow, setShowAddRow] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogResults, setCatalogResults] = useState<ProductCatalogEntry[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [allCatalog, setAllCatalog] = useState<ProductCatalogEntry[] | null>(null);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customQty, setCustomQty] = useState('1');
+  const [customPrice, setCustomPrice] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadDraft = useCallback(async () => {
     if (!id) return;
@@ -155,6 +178,187 @@ export default function QuoteDraftPage() {
     }
   };
 
+  // ── Inline editing handlers ──
+
+  const startEditing = (itemId: string, field: 'quantity' | 'unitPrice' | 'productName' | 'description', currentValue: number | string) => {
+    setEditingCell({ itemId, field });
+    setEditValue(String(currentValue));
+    setUpdateCatalogChecked(false);
+    setTimeout(() => editInputRef.current?.select(), 0);
+  };
+
+  const saveEdit = async () => {
+    if (!editingCell || !draft || !id) return;
+    const { field, itemId } = editingCell;
+    const editingItem = draft.lineItems.find((i) => i.id === itemId);
+    let updatedLineItems: QuoteLineItem[];
+    if (field === 'productName' || field === 'description') {
+      updatedLineItems = draft.lineItems.map((item) =>
+        item.id === itemId ? { ...item, [field]: editValue } : item,
+      );
+    } else {
+      const numVal = parseFloat(editValue);
+      if (isNaN(numVal) || numVal < 0) {
+        setEditingCell(null);
+        return;
+      }
+      updatedLineItems = draft.lineItems.map((item) =>
+        item.id === itemId
+          ? { ...item, [field]: field === 'quantity' ? Math.max(1, Math.round(numVal)) : Math.round(numVal * 100) / 100 }
+          : item,
+      );
+    }
+    const shouldUpdateCatalog = updateCatalogChecked && editingItem?.productCatalogEntryId && (field === 'productName' || field === 'description');
+    setEditingCell(null);
+    setUpdateCatalogChecked(false);
+    setSaving(true);
+    try {
+      const updated = await updateDraft(id, { lineItems: updatedLineItems, unresolvedItems: draft.unresolvedItems });
+      setDraft(updated);
+      // Update the catalog entry in the background if checkbox was checked
+      if (shouldUpdateCatalog && editingItem?.productCatalogEntryId) {
+        await updateCatalogEntry(editingItem.productCatalogEntryId, { [field]: editValue }).catch(() => {});
+      }
+    } catch {
+      await loadDraft();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReorder = async (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || !draft || !id) return;
+    const items = [...draft.lineItems];
+    const [moved] = items.splice(fromIdx, 1);
+    items.splice(toIdx, 0, moved);
+    setSaving(true);
+    try {
+      const updated = await updateDraft(id, { lineItems: items, unresolvedItems: draft.unresolvedItems });
+      setDraft(updated);
+    } catch {
+      await loadDraft();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+    if (e.key === 'Escape') { setEditingCell(null); }
+  };
+
+  const deleteLineItem = async (itemId: string) => {
+    if (!draft || !id) return;
+    const updatedLineItems = draft.lineItems.filter((item) => item.id !== itemId);
+    setSaving(true);
+    try {
+      const updated = await updateDraft(id, { lineItems: updatedLineItems, unresolvedItems: draft.unresolvedItems });
+      setDraft(updated);
+    } catch {
+      await loadDraft();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Add line item handlers ──
+
+  const loadCatalog = async () => {
+    if (allCatalog) return allCatalog;
+    setCatalogLoading(true);
+    try {
+      const catalog = await fetchCatalog();
+      setAllCatalog(catalog);
+      return catalog;
+    } catch {
+      return [];
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const handleCatalogSearch = (value: string) => {
+    setCatalogSearch(value);
+    setShowCustomForm(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!value.trim()) {
+      setCatalogResults([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      const catalog = await loadCatalog();
+      const lower = value.toLowerCase();
+      const matches = catalog.filter(
+        (entry) => entry.name.toLowerCase().includes(lower) || (entry.description && entry.description.toLowerCase().includes(lower)),
+      );
+      setCatalogResults(matches);
+    }, 300);
+  };
+
+  const addCatalogItem = async (entry: ProductCatalogEntry) => {
+    if (!draft || !id) return;
+    const newItem: QuoteLineItem = {
+      id: crypto.randomUUID(),
+      productCatalogEntryId: entry.id,
+      productName: entry.name,
+      description: entry.description ?? '',
+      quantity: 1,
+      unitPrice: entry.unitPrice,
+      confidenceScore: 100,
+      originalText: entry.name,
+      resolved: true,
+    };
+    const updatedLineItems = [...draft.lineItems, newItem];
+    setSaving(true);
+    try {
+      const updated = await updateDraft(id, { lineItems: updatedLineItems, unresolvedItems: draft.unresolvedItems });
+      setDraft(updated);
+      setShowAddRow(false);
+      setCatalogSearch('');
+      setCatalogResults([]);
+    } catch {
+      await loadDraft();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addCustomItem = async () => {
+    if (!draft || !id) return;
+    const name = customName.trim();
+    const qty = parseInt(customQty, 10);
+    const price = parseFloat(customPrice);
+    if (!name || isNaN(qty) || qty < 1 || isNaN(price) || price < 0) return;
+    const newItem: QuoteLineItem = {
+      id: crypto.randomUUID(),
+      productCatalogEntryId: null,
+      productName: name,
+      description: '',
+      quantity: qty,
+      unitPrice: Math.round(price * 100) / 100,
+      confidenceScore: 100,
+      originalText: 'Manually added',
+      resolved: true,
+    };
+    const updatedLineItems = [...draft.lineItems, newItem];
+    setSaving(true);
+    try {
+      const updated = await updateDraft(id, { lineItems: updatedLineItems, unresolvedItems: draft.unresolvedItems });
+      setDraft(updated);
+      setShowAddRow(false);
+      setShowCustomForm(false);
+      setCustomName('');
+      setCustomQty('1');
+      setCustomPrice('');
+      setCatalogSearch('');
+      setCatalogResults([]);
+    } catch {
+      await loadDraft();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={containerStyle}>
@@ -248,24 +452,188 @@ export default function QuoteDraftPage() {
             <table style={tableStyle}>
               <thead>
                 <tr>
+                  <th style={{ ...thStyle, width: 24, padding: '0.5rem 0.25rem' }}></th>
                   <th style={thStyle}>Product Name</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Quantity</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Unit Price</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Confidence</th>
                   <th style={{ ...thStyle, textAlign: 'center', width: 40 }}>Rules</th>
+                  <th style={{ ...thStyle, textAlign: 'center', width: 36 }}></th>
                 </tr>
               </thead>
               <tbody>
-                {draft.lineItems.map((item: QuoteLineItem) => {
+                {draft.lineItems.map((item: QuoteLineItem, idx: number) => {
                   const isExpanded = expandedRuleRows.has(item.id);
                   const appliedGrouped = getAppliedRulesGrouped(item);
                   const hasRules = appliedGrouped.size > 0;
+                  const isEditingQty = editingCell?.itemId === item.id && editingCell.field === 'quantity';
+                  const isEditingPrice = editingCell?.itemId === item.id && editingCell.field === 'unitPrice';
+                  const isEditingName = editingCell?.itemId === item.id && editingCell.field === 'productName';
+                  const isEditingDesc = editingCell?.itemId === item.id && editingCell.field === 'description';
                   return (
                     <React.Fragment key={item.id}>
-                      <tr style={{ verticalAlign: 'top' }}>
-                        <td style={tdStyle}>{item.productName}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>{item.quantity}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>${item.unitPrice.toFixed(2)}</td>
+                      <tr
+                        draggable
+                        onDragStart={(e) => { setDragIndex(idx); e.dataTransfer.effectAllowed = 'move'; }}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverIndex(idx); }}
+                        onDragLeave={() => setDragOverIndex(null)}
+                        onDrop={(e) => { e.preventDefault(); handleReorder(dragIndex!, idx); setDragIndex(null); setDragOverIndex(null); }}
+                        onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                        style={{
+                          verticalAlign: 'top',
+                          cursor: 'grab',
+                          opacity: dragIndex === idx ? 0.4 : 1,
+                          borderTop: dragOverIndex === idx ? '2px solid #00a89d' : undefined,
+                        }}
+                      >
+                        <td style={{ ...tdStyle, padding: '0.5rem 0.25rem', textAlign: 'center' }}>
+                          <span style={dragHandleStyle}>⠿</span>
+                        </td>
+                        <td style={tdStyle}>
+                          {isEditingName ? (
+                            <div>
+                              <input
+                                ref={editInputRef}
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => setTimeout(saveEdit, 150)}
+                                onKeyDown={handleEditKeyDown}
+                                style={inlineEditTextInputStyle}
+                                autoFocus
+                                aria-label={`Edit product name for ${item.productName}`}
+                              />
+                              {item.productCatalogEntryId && (
+                                <label style={updateCatalogLabelStyle}>
+                                  <input
+                                    type="checkbox"
+                                    checked={updateCatalogChecked}
+                                    onChange={(e) => setUpdateCatalogChecked(e.target.checked)}
+                                    style={{ marginRight: '0.3rem' }}
+                                  />
+                                  Update in catalog
+                                </label>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <span
+                                onClick={() => startEditing(item.id, 'productName', item.productName)}
+                                style={{ ...editableCellStyle, textAlign: 'left', display: 'inline-block', minWidth: 80 }}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter') startEditing(item.id, 'productName', item.productName); }}
+                                aria-label={`Product name: ${item.productName}. Click to edit.`}
+                              >
+                                {item.productName}
+                              </span>
+                            </div>
+                          )}
+                          {isEditingDesc ? (
+                            <div>
+                              <input
+                                ref={editInputRef}
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() => setTimeout(saveEdit, 150)}
+                                onKeyDown={handleEditKeyDown}
+                                style={{ ...inlineEditTextInputStyle, fontSize: '0.75rem', marginTop: '0.15rem' }}
+                                autoFocus
+                                aria-label={`Edit description for ${item.productName}`}
+                              />
+                              {item.productCatalogEntryId && (
+                                <label style={updateCatalogLabelStyle}>
+                                  <input
+                                    type="checkbox"
+                                    checked={updateCatalogChecked}
+                                    onChange={(e) => setUpdateCatalogChecked(e.target.checked)}
+                                    style={{ marginRight: '0.3rem' }}
+                                  />
+                                  Update in catalog
+                                </label>
+                              )}
+                            </div>
+                          ) : item.description ? (
+                            <div
+                              onClick={() => startEditing(item.id, 'description', item.description)}
+                              style={{ ...lineItemDescStyle, cursor: 'pointer', borderBottom: '1px dashed #ccc', display: 'inline-block' }}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter') startEditing(item.id, 'description', item.description); }}
+                              aria-label={`Description: ${item.description}. Click to edit.`}
+                            >
+                              {item.description}
+                            </div>
+                          ) : (
+                            <div
+                              onClick={() => startEditing(item.id, 'description', '')}
+                              style={{ fontSize: '0.75rem', color: '#bbb', cursor: 'pointer', marginTop: '0.15rem' }}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter') startEditing(item.id, 'description', ''); }}
+                              aria-label={`Add description for ${item.productName}`}
+                            >
+                              + Add description
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', padding: isEditingQty ? '0.3rem 0.5rem' : undefined }}>
+                          {isEditingQty ? (
+                            <input
+                              ref={editInputRef}
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={saveEdit}
+                              onKeyDown={handleEditKeyDown}
+                              style={inlineEditInputStyle}
+                              autoFocus
+                              aria-label={`Edit quantity for ${item.productName}`}
+                            />
+                          ) : (
+                            <span
+                              onClick={() => startEditing(item.id, 'quantity', item.quantity)}
+                              style={editableCellStyle}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter') startEditing(item.id, 'quantity', item.quantity); }}
+                              aria-label={`Quantity: ${item.quantity}. Click to edit.`}
+                            >
+                              {item.quantity}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', padding: isEditingPrice ? '0.3rem 0.5rem' : undefined }}>
+                          {isEditingPrice ? (
+                            <input
+                              ref={editInputRef}
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={saveEdit}
+                              onKeyDown={handleEditKeyDown}
+                              style={inlineEditInputStyle}
+                              autoFocus
+                              aria-label={`Edit unit price for ${item.productName}`}
+                            />
+                          ) : (
+                            <span
+                              onClick={() => startEditing(item.id, 'unitPrice', item.unitPrice)}
+                              style={editableCellStyle}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { if (e.key === 'Enter') startEditing(item.id, 'unitPrice', item.unitPrice); }}
+                              aria-label={`Unit price: $${item.unitPrice.toFixed(2)}. Click to edit.`}
+                            >
+                              ${item.unitPrice.toFixed(2)}
+                            </span>
+                          )}
+                        </td>
                         <td style={{ ...tdStyle, textAlign: 'right' }}>
                           <span style={confidenceBadgeStyle(item.confidenceScore)}>
                             {item.confidenceScore}%
@@ -282,11 +650,21 @@ export default function QuoteDraftPage() {
                             ℹ
                           </button>
                         </td>
+                        <td style={{ ...tdStyle, textAlign: 'center', padding: '0.5rem 0.25rem' }}>
+                          <button
+                            onClick={() => deleteLineItem(item.id)}
+                            style={deleteItemBtnStyle}
+                            aria-label={`Delete ${item.productName}`}
+                            title="Remove line item"
+                          >
+                            ✕
+                          </button>
+                        </td>
                       </tr>
                       {isExpanded && (
                         <tr>
                           <td
-                            colSpan={5}
+                            colSpan={7}
                             style={{ padding: 0, border: 'none' }}
                           >
                             <div
@@ -321,6 +699,110 @@ export default function QuoteDraftPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Saving indicator */}
+        {saving && (
+          <div style={savingIndicatorStyle} role="status" aria-live="polite">
+            <span style={smallSpinnerStyle} /> Saving…
+          </div>
+        )}
+
+        {/* Add line item button and form */}
+        {!showAddRow ? (
+          <button
+            onClick={() => { setShowAddRow(true); loadCatalog(); }}
+            style={addItemBtnStyle}
+            aria-label="Add line item"
+          >
+            + Add Item
+          </button>
+        ) : (
+          <div style={addRowContainerStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#555' }}>Add Line Item</span>
+              <button onClick={() => { setShowAddRow(false); setCatalogSearch(''); setCatalogResults([]); setShowCustomForm(false); }} style={addRowCloseBtnStyle} aria-label="Cancel adding item">✕</button>
+            </div>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                value={catalogSearch}
+                onChange={(e) => handleCatalogSearch(e.target.value)}
+                placeholder="Search product catalog…"
+                style={catalogSearchInputStyle}
+                aria-label="Search product catalog"
+                autoFocus
+              />
+              {catalogLoading && <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '0.5rem' }}>Loading catalog…</span>}
+              {catalogSearch.trim() && catalogResults.length > 0 && (
+                <div style={catalogDropdownStyle}>
+                  {catalogResults.slice(0, 8).map((entry) => (
+                    <button
+                      key={entry.id}
+                      onClick={() => addCatalogItem(entry)}
+                      style={catalogDropdownItemStyle}
+                    >
+                      <span style={{ fontWeight: 500 }}>{entry.name}</span>
+                      <span style={{ color: '#888', fontSize: '0.8rem' }}>${entry.unitPrice.toFixed(2)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {catalogSearch.trim() && !catalogLoading && catalogResults.length === 0 && allCatalog !== null && (
+                <div style={catalogDropdownStyle}>
+                  <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', color: '#888' }}>
+                    No catalog matches.{' '}
+                    <button onClick={() => { setShowCustomForm(true); setCatalogResults([]); }} style={customItemLinkStyle}>
+                      Add custom item
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {showCustomForm && (
+              <div style={customFormStyle}>
+                <input
+                  type="text"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="Item name"
+                  style={customFormInputStyle}
+                  aria-label="Custom item name"
+                />
+                <input
+                  type="number"
+                  value={customQty}
+                  onChange={(e) => setCustomQty(e.target.value)}
+                  placeholder="Qty"
+                  min={1}
+                  step={1}
+                  style={{ ...customFormInputStyle, width: 70 }}
+                  aria-label="Custom item quantity"
+                />
+                <input
+                  type="number"
+                  value={customPrice}
+                  onChange={(e) => setCustomPrice(e.target.value)}
+                  placeholder="Unit price"
+                  min={0}
+                  step={0.01}
+                  style={{ ...customFormInputStyle, width: 100 }}
+                  aria-label="Custom item unit price"
+                />
+                <button
+                  onClick={addCustomItem}
+                  disabled={!customName.trim() || !customPrice || saving}
+                  style={{
+                    ...addCustomBtnStyle,
+                    opacity: customName.trim() && customPrice && !saving ? 1 : 0.5,
+                    cursor: customName.trim() && customPrice && !saving ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -880,4 +1362,191 @@ const sidePanelNoteStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: 6,
   border: '1px solid #eee',
+};
+
+// ── Inline Editing Styles ──
+
+const editableCellStyle: React.CSSProperties = {
+  cursor: 'pointer',
+  padding: '0.2rem 0.45rem',
+  borderRadius: 4,
+  border: '1px dashed #ccc',
+  background: '#fafafa',
+  transition: 'border-color 0.15s, background 0.15s',
+  display: 'inline-block',
+  minWidth: 40,
+  textAlign: 'right',
+};
+
+const inlineEditInputStyle: React.CSSProperties = {
+  width: 80,
+  padding: '0.3rem 0.5rem',
+  border: '1px solid #00a89d',
+  borderRadius: 4,
+  fontSize: '0.9rem',
+  textAlign: 'right',
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const deleteItemBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  fontSize: '0.85rem',
+  color: '#bbb',
+  padding: '0.15rem 0.3rem',
+  borderRadius: 4,
+  lineHeight: 1,
+  transition: 'color 0.15s',
+};
+
+const savingIndicatorStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.4rem',
+  fontSize: '0.8rem',
+  color: '#00a89d',
+  padding: '0.35rem 0',
+};
+
+const addItemBtnStyle: React.CSSProperties = {
+  marginTop: '0.5rem',
+  padding: '0.4rem 0.9rem',
+  background: 'none',
+  border: '1px dashed #00a89d',
+  borderRadius: 6,
+  color: '#00a89d',
+  fontSize: '0.85rem',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
+
+const addRowContainerStyle: React.CSSProperties = {
+  marginTop: '0.5rem',
+  padding: '0.75rem',
+  background: '#f9f9f9',
+  borderRadius: 8,
+  border: '1px solid #e0e0e0',
+};
+
+const addRowCloseBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  fontSize: '1rem',
+  color: '#888',
+  padding: '0 0.25rem',
+  lineHeight: 1,
+};
+
+const catalogSearchInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.5rem 0.75rem',
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  fontSize: '0.9rem',
+  boxSizing: 'border-box',
+};
+
+const catalogDropdownStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  right: 0,
+  background: '#fff',
+  border: '1px solid #e0e0e0',
+  borderRadius: 6,
+  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+  zIndex: 10,
+  maxHeight: 240,
+  overflowY: 'auto',
+  marginTop: 2,
+};
+
+const catalogDropdownItemStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  width: '100%',
+  padding: '0.5rem 0.75rem',
+  background: 'none',
+  border: 'none',
+  borderBottom: '1px solid #f0f0f0',
+  cursor: 'pointer',
+  fontSize: '0.85rem',
+  textAlign: 'left',
+};
+
+const customItemLinkStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: '#00a89d',
+  cursor: 'pointer',
+  fontSize: '0.85rem',
+  fontWeight: 600,
+  padding: 0,
+  textDecoration: 'underline',
+};
+
+const customFormStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '0.5rem',
+  alignItems: 'center',
+  marginTop: '0.5rem',
+  flexWrap: 'wrap',
+};
+
+const customFormInputStyle: React.CSSProperties = {
+  padding: '0.4rem 0.6rem',
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  fontSize: '0.85rem',
+  flex: 1,
+  minWidth: 80,
+};
+
+const addCustomBtnStyle: React.CSSProperties = {
+  padding: '0.4rem 0.9rem',
+  background: '#00a89d',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: '0.85rem',
+  fontWeight: 600,
+};
+
+const lineItemDescStyle: React.CSSProperties = {
+  fontSize: '0.75rem',
+  color: '#888',
+  marginTop: '0.15rem',
+  lineHeight: 1.3,
+};
+
+const dragHandleStyle: React.CSSProperties = {
+  color: '#ccc',
+  fontSize: '1rem',
+  cursor: 'grab',
+  userSelect: 'none',
+};
+
+const inlineEditTextInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.3rem 0.5rem',
+  border: '1px solid #00a89d',
+  borderRadius: 4,
+  fontSize: '0.9rem',
+  textAlign: 'left',
+  outline: 'none',
+  boxSizing: 'border-box' as const,
+};
+
+const updateCatalogLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  fontSize: '0.7rem',
+  color: '#888',
+  marginTop: '0.25rem',
+  cursor: 'pointer',
+  userSelect: 'none',
 };

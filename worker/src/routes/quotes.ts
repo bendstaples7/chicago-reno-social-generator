@@ -507,6 +507,53 @@ app.post('/catalog', async (c) => {
 });
 
 /**
+ * PATCH /catalog/:id
+ * Update a single catalog entry's name and/or description.
+ */
+app.patch('/catalog/:id', async (c) => {
+  const db = c.env.DB;
+  const userId = c.get('user').id;
+  const entryId = c.req.param('id');
+  const body = await c.req.json() as { name?: string; description?: string };
+
+  // Verify ownership
+  const existing = await db.prepare(
+    'SELECT id FROM manual_catalog_entries WHERE id = ? AND user_id = ?'
+  ).bind(entryId, userId).first();
+
+  if (!existing) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'updateCatalogEntry',
+      description: 'Catalog entry not found.',
+      recommendedActions: ['Verify the entry exists'],
+    });
+  }
+
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+
+  if (body.name !== undefined) {
+    setClauses.push('name = ?');
+    values.push(body.name);
+  }
+  if (body.description !== undefined) {
+    setClauses.push('description = ?');
+    values.push(body.description);
+  }
+
+  if (setClauses.length > 0) {
+    values.push(entryId, userId);
+    await db.prepare(
+      'UPDATE manual_catalog_entries SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?'
+    ).bind(...values).run();
+  }
+
+  return c.json({ success: true });
+});
+
+/**
  * GET /templates
  * Get the current template library (always from D1 manual_templates).
  * Jobber's public API does not expose quote templates.

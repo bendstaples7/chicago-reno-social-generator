@@ -19,7 +19,15 @@ const remote = process.argv.includes('--remote');
 const flag = remote ? '--remote' : '--local';
 
 const userIdFlagIdx = process.argv.indexOf('--user-id');
-const explicitUserId = userIdFlagIdx !== -1 ? process.argv[userIdFlagIdx + 1] : null;
+let explicitUserId = null;
+if (userIdFlagIdx !== -1) {
+  const val = process.argv[userIdFlagIdx + 1];
+  if (!val || val.startsWith('--')) {
+    console.error('--user-id requires a value. Usage: --user-id <id>');
+    process.exit(1);
+  }
+  explicitUserId = val;
+}
 
 const templates = JSON.parse(readFileSync(resolve(__dirname, 'template-data.json'), 'utf-8'));
 console.log(`Loaded ${templates.length} templates`);

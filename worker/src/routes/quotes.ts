@@ -537,6 +537,15 @@ app.post('/templates', async (c) => {
   // Check for duplicate names within the batch
   const nameSet = new Set<string>();
   for (const entry of body.entries) {
+    if (!entry.name || typeof entry.name !== 'string' || !entry.name.trim()) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'saveTemplates',
+        description: 'Each template entry must have a non-empty name.',
+        recommendedActions: ['Provide a name for every template entry'],
+      });
+    }
     const normalized = entry.name.trim().toLowerCase();
     if (nameSet.has(normalized)) {
       throw new PlatformError({

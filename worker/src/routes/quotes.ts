@@ -527,6 +527,7 @@ app.patch('/catalog/:id', async (c) => {
         recommendedActions: ['Provide a non-empty name'],
       });
     }
+    body.name = body.name.trim();
     if (body.name.length > 200) {
       throw new PlatformError({
         severity: 'error',
@@ -536,7 +537,6 @@ app.patch('/catalog/:id', async (c) => {
         recommendedActions: ['Shorten the name'],
       });
     }
-    body.name = body.name.trim();
   }
   if (body.description !== undefined) {
     if (typeof body.description !== 'string') {
@@ -548,6 +548,7 @@ app.patch('/catalog/:id', async (c) => {
         recommendedActions: ['Provide a valid description'],
       });
     }
+    body.description = body.description.trim();
     if (body.description.length > 1000) {
       throw new PlatformError({
         severity: 'error',
@@ -557,7 +558,6 @@ app.patch('/catalog/:id', async (c) => {
         recommendedActions: ['Shorten the description'],
       });
     }
-    body.description = body.description.trim();
   }
 
   // Verify ownership — only manual catalog entries can be updated

@@ -12,9 +12,15 @@ export class QuoteDraftService {
    * Save a new quote draft with its line items.
    */
   async save(draft: QuoteDraft): Promise<QuoteDraft> {
+    // Generate the next sequential draft number for this user
+    const countResult = await this.db.prepare(
+      'SELECT COALESCE(MAX(draft_number), 0) AS max_num FROM quote_drafts WHERE user_id = ?'
+    ).bind(draft.userId).first() as any;
+    const nextDraftNumber: number = (countResult?.max_num ?? 0) + 1;
+
     const statements: D1PreparedStatement[] = [
       this.db.prepare(
-        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         draft.id,
         draft.userId,
@@ -24,6 +30,7 @@ export class QuoteDraftService {
         draft.catalogSource,
         draft.status,
         draft.jobberRequestId ?? null,
+        nextDraftNumber,
       ),
     ];
 
@@ -55,7 +62,7 @@ export class QuoteDraftService {
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ?'
     ).bind(draft.id).first() as any;
 
     return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems);
@@ -66,7 +73,7 @@ export class QuoteDraftService {
    */
   async getById(draftId: string, userId: string): Promise<QuoteDraft> {
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
     ).bind(draftId, userId).first() as any;
 
     if (!row) {
@@ -88,7 +95,7 @@ export class QuoteDraftService {
    */
   async list(userId: string): Promise<QuoteDraft[]> {
     const result = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
     ).bind(userId).all();
 
     const drafts: QuoteDraft[] = [];
@@ -165,7 +172,7 @@ export class QuoteDraftService {
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, draft_number, created_at, updated_at FROM quote_drafts WHERE id = ?'
     ).bind(draftId).first() as any;
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
@@ -283,6 +290,7 @@ export class QuoteDraftService {
   ): QuoteDraft {
     return {
       id: row.id as string,
+      draftNumber: (row.draft_number as number) ?? 0,
       userId: row.user_id as string,
       customerRequestText: row.customer_request_text as string,
       selectedTemplateId: (row.selected_template_id as string) ?? null,

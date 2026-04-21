@@ -31,6 +31,7 @@ export interface QuoteLineItem {
   id: string;
   productCatalogEntryId: string | null;
   productName: string;
+  description: string;
   quantity: number;
   unitPrice: number;
   confidenceScore: number;

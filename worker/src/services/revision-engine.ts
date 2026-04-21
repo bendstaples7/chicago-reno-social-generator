@@ -7,6 +7,7 @@ const CONFIDENCE_THRESHOLD = 70;
 
 export interface RevisionInput {
   feedbackText: string;
+  customerRequestText: string;
   currentLineItems: QuoteLineItem[];
   currentUnresolvedItems: QuoteLineItem[];
   catalog: ProductCatalogEntry[];
@@ -33,7 +34,7 @@ interface AILineItem {
 
 const SYSTEM_PROMPT = [
   'You are a quote revision assistant for a home services company.',
-  'You will receive the current line items of a quote draft, a product catalog, and user feedback.',
+  'You will receive the original customer request, the current line items of a quote draft, a product catalog, and user feedback.',
   'Interpret the feedback as delta operations on the current line items.',
   '',
   'SUPPORTED OPERATIONS:',
@@ -41,12 +42,15 @@ const SYSTEM_PROMPT = [
   '- Change quantity on existing items (e.g., "increase drywall to 12 sheets")',
   '- Adjust unit price on existing items (e.g., "change labor rate to $75/hour")',
   '- Remove line items (e.g., "remove the painting line item")',
-  '- Add new line items by matching against the product catalog (e.g., "add trim installation")',
+  '- Add new line items ONLY when the feedback explicitly requests it (e.g., "add trim installation")',
   '',
   'RULES:',
   '- Preserve all line items NOT referenced in the feedback without modification.',
-  '- When adding new items, match against the provided catalog. Use catalog pricing for matched items.',
-  '- If a new item cannot be matched to the catalog, include it with productCatalogEntryId: null and a descriptive unmatchedReason.',
+  '- CRITICAL: Do NOT add line items that the feedback does not explicitly ask for. Only add items when the user clearly requests a specific addition.',
+  '- When the feedback references the customer request (e.g., "if the request mentions X, add Y"), check the ORIGINAL CUSTOMER REQUEST section to evaluate the condition.',
+  '- When adding new items, match against the provided catalog by name. Use catalog pricing for matched items.',
+  '- Set productName to the EXACT catalog product name for matched items.',
+  '- If a new item cannot be matched to the catalog, include it with a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
   '- When BUSINESS RULES are provided, follow them when revising line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
@@ -55,8 +59,7 @@ const SYSTEM_PROMPT = [
   '{',
   '  "lineItems": [',
   '    {',
-  '      "productCatalogEntryId": "catalog id or null",',
-  '      "productName": "name",',
+  '      "productName": "exact catalog product name",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -153,12 +156,15 @@ export class RevisionEngine {
   private buildPrompt(input: RevisionInput): string {
     const parts: string[] = [];
 
-    parts.push('CURRENT LINE ITEMS:');
+    parts.push('ORIGINAL CUSTOMER REQUEST:');
+    parts.push(input.customerRequestText || '(no customer request text available)');
+
+    parts.push('\nCURRENT LINE ITEMS:');
     if (input.currentLineItems.length === 0 && input.currentUnresolvedItems.length === 0) {
       parts.push('(no current line items)');
     } else {
       for (const item of input.currentLineItems) {
-        parts.push(`- [${item.productCatalogEntryId ?? 'unmatched'}] ${item.productName} — qty: ${item.quantity}, price: ${item.unitPrice}`);
+        parts.push(`- ${item.productName} — qty: ${item.quantity}, price: $${item.unitPrice}`);
       }
       if (input.currentUnresolvedItems.length > 0) {
         parts.push('\nUNRESOLVED ITEMS:');
@@ -173,7 +179,7 @@ export class RevisionEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of input.catalog) {
-        parts.push(`- [${p.id}] ${p.name} — ${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
       }
     }
 
@@ -211,35 +217,70 @@ export class RevisionEngine {
   }
 
   private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[]): RevisionOutput {
-    const catalogIds = new Set(catalog.map((c) => c.id));
+    // Build a name-based lookup (case-insensitive) for catalog matching.
+    // Skip empty/whitespace names; on duplicate keys keep the first entry.
+    const catalogByName = new Map<string, ProductCatalogEntry>();
+    for (const c of catalog) {
+      const key = c.name.trim().toLowerCase();
+      if (key && !catalogByName.has(key)) {
+        catalogByName.set(key, c);
+      }
+    }
+
     const lineItems: QuoteLineItem[] = [];
     const unresolvedItems: QuoteLineItem[] = [];
 
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
-      let finalItem: QuoteLineItem;
+      const nameLower = (item.productName ?? '').trim().toLowerCase();
 
-      if (item.productCatalogEntryId && !catalogIds.has(item.productCatalogEntryId)) {
-        finalItem = {
+      // Skip fuzzy matching for empty/blank product names
+      if (!nameLower) {
+        unresolvedItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
-          productName: item.productName,
+          productName: item.productName ?? '',
+          description: '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
           originalText: item.originalText ?? '',
           resolved: false,
-          unmatchedReason: item.unmatchedReason || 'Referenced product not found in catalog',
+          unmatchedReason: 'Empty product name',
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
-      } else if (item.productCatalogEntryId) {
-        const catalogEntry = catalog.find((c) => c.id === item.productCatalogEntryId);
+        });
+        continue;
+      }
+
+      // Try exact name match first
+      let catalogEntry = catalogByName.get(nameLower);
+
+      // Fuzzy fallback: prefer the closest length match
+      if (!catalogEntry) {
+        let bestMatch: ProductCatalogEntry | undefined;
+        let bestDiff = Infinity;
+        for (const [key, entry] of catalogByName) {
+          if (key.includes(nameLower) || nameLower.includes(key)) {
+            const diff = Math.abs(key.length - nameLower.length);
+            if (diff < bestDiff) {
+              bestMatch = entry;
+              bestDiff = diff;
+            }
+          }
+        }
+        catalogEntry = bestMatch;
+      }
+
+      let finalItem: QuoteLineItem;
+
+      if (catalogEntry) {
         finalItem = {
           id: crypto.randomUUID(),
-          productCatalogEntryId: item.productCatalogEntryId,
-          productName: catalogEntry?.name ?? item.productName,
+          productCatalogEntryId: catalogEntry.id,
+          productName: catalogEntry.name,
+          description: catalogEntry.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: Math.max(0, catalogEntry?.unitPrice ?? item.unitPrice ?? 0),
+          unitPrice: Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
@@ -251,12 +292,13 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
+          description: '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
-          confidenceScore: score,
+          confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
           originalText: item.originalText ?? '',
           resolved: false,
-          unmatchedReason: item.unmatchedReason || 'No catalog match',
+          unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
         };
       }

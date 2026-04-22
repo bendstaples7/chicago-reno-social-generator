@@ -26,3 +26,4 @@ export { SimilarityEngine } from './similarity-engine.js';
 export type { SimilarQuoteResult } from './similarity-engine.js';
 export { QuoteSyncService } from './quote-sync-service.js';
 export type { SyncResult } from './quote-sync-service.js';
+export { deduplicateLineItems } from './line-item-utils.js';

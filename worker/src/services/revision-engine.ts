@@ -1,5 +1,6 @@
 import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
+import { deduplicateLineItems } from './line-item-utils.js';
 import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
@@ -55,6 +56,7 @@ const SYSTEM_PROMPT = [
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
   '- When BUSINESS RULES are provided, follow them when revising line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- CRITICAL: Do NOT include duplicate line items. Each product should appear at most once. If the same product applies to multiple areas, use a single line item with an appropriate quantity instead of separate entries.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -335,6 +337,11 @@ export class RevisionEngine {
       }
     }
 
-    return { lineItems, unresolvedItems };
+    // Deduplicate: merge items that share the same product name.
+    // The AI sometimes returns the same product twice despite prompt instructions.
+    const dedupedLineItems = deduplicateLineItems(lineItems);
+    const dedupedUnresolved = deduplicateLineItems(unresolvedItems);
+
+    return { lineItems: dedupedLineItems, unresolvedItems: dedupedUnresolved };
   }
 }

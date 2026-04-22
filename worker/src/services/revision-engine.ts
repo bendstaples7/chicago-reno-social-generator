@@ -242,8 +242,7 @@ export class RevisionEngine {
       }
     }
 
-    const lineItems: QuoteLineItem[] = [];
-    const unresolvedItems: QuoteLineItem[] = [];
+    const allItems: QuoteLineItem[] = [];
 
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
@@ -254,7 +253,7 @@ export class RevisionEngine {
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
-        unresolvedItems.push({
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName ?? '',
@@ -289,15 +288,13 @@ export class RevisionEngine {
         catalogEntry = bestMatch;
       }
 
-      let finalItem: QuoteLineItem;
-
       if (catalogEntry) {
         // When rules were applied, the AI's values for description, quantity,
         // and unitPrice take precedence over catalog defaults. This allows
         // business rules to override any field on a line item.
         const aiPrice = item.unitPrice;
         const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
-        finalItem = {
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
           productName: catalogEntry.name,
@@ -313,9 +310,9 @@ export class RevisionEngine {
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
+        });
       } else {
-        finalItem = {
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
@@ -327,21 +324,16 @@ export class RevisionEngine {
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
-      }
-
-      if (finalItem.resolved) {
-        lineItems.push(finalItem);
-      } else {
-        unresolvedItems.push(finalItem);
+        });
       }
     }
 
-    // Deduplicate: merge items that share the same product name.
-    // The AI sometimes returns the same product twice despite prompt instructions.
-    const dedupedLineItems = deduplicateLineItems(lineItems);
-    const dedupedUnresolved = deduplicateLineItems(unresolvedItems);
+    // Deduplicate BEFORE partitioning so duplicates split across the
+    // confidence threshold (one resolved, one unresolved) are caught.
+    const dedupedItems = deduplicateLineItems(allItems);
+    const lineItems = dedupedItems.filter((i) => i.resolved);
+    const unresolvedItems = dedupedItems.filter((i) => !i.resolved);
 
-    return { lineItems: dedupedLineItems, unresolvedItems: dedupedUnresolved };
+    return { lineItems, unresolvedItems };
   }
 }

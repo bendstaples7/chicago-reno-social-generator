@@ -38,7 +38,7 @@ export function deduplicateLineItems<
   let blankIndex = 0;
 
   for (const item of items) {
-    const nameTrimmed = item.productName.trim().toLowerCase();
+    const nameTrimmed = String(item.productName ?? '').trim().toLowerCase();
 
     // Blank product names are always distinct — use a unique key per item
     if (!nameTrimmed) {

@@ -1,5 +1,6 @@
 import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
+import { deduplicateLineItems } from './line-item-utils.js';
 import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 120_000;
@@ -54,6 +55,7 @@ const SYSTEM_PROMPT = [
   '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, but ONLY include items that are relevant to the customer\'s specific request. Remove template items that do not apply.',
   '- When SIMILAR PAST QUOTES are provided, use them only as pricing references. Do NOT copy line items from similar quotes unless the customer request explicitly calls for that type of work.',
   '- When BUSINESS RULES are provided, follow them when generating line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- CRITICAL: Do NOT include duplicate line items. Each product should appear at most once. If the same product applies to multiple areas, use a single line item with an appropriate quantity instead of separate entries.',
   '- If the customer request is vague, generate fewer items with lower confidence scores rather than guessing at work they might need.',
   '',
   'RESPONSE FORMAT (strict JSON):',
@@ -328,10 +330,14 @@ export class QuoteEngine {
       };
     });
 
+    // Deduplicate: merge items that share the same product name.
+    // The AI sometimes returns the same product twice despite prompt instructions.
+    const dedupedItems = deduplicateLineItems(validatedItems);
+
     return {
       selectedTemplateId: parsed.selectedTemplateId ?? null,
       selectedTemplateName: parsed.selectedTemplateName ?? null,
-      lineItems: validatedItems,
+      lineItems: dedupedItems,
     };
   }
 

@@ -1,3 +1,8 @@
+---
+description: Tech stack, frameworks, and build system details
+category: Tech Stack
+---
+
 # Tech Stack & Build System
 
 ## IMPORTANT: Production Architecture
@@ -59,9 +64,3 @@ npm run dev           # applies local D1 migrations + wrangler dev
 npm run deploy        # applies remote D1 migrations + wrangler deploy
 npm run build         # tsc -b
 ```
-
-## Key External Integrations
-- **OpenAI API** — text generation (content, quotes) and embeddings (similarity search)
-- **Instagram Graph API** — post publishing, account management
-- **Jobber GraphQL API** — customer requests, products, quotes, webhooks
-  - ⚠️ The public API does NOT expose `requestDetails.form` (customer form submissions). This data is only available via Jobber's internal API using web session cookies. See `JobberWebSession` service and `JobberCookieRefresher` (uses Cloudflare Browser Rendering for automated cookie refresh). Do not remove these without confirming Jobber has added form data to their public API.

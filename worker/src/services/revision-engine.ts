@@ -1,5 +1,6 @@
 import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
+import { deduplicateLineItems } from './line-item-utils.js';
 import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
@@ -55,6 +56,7 @@ const SYSTEM_PROMPT = [
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
   '- When BUSINESS RULES are provided, follow them when revising line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- CRITICAL: Do NOT include duplicate line items. Each product should appear at most once. If the same product applies to multiple areas, use a single line item with an appropriate quantity instead of separate entries.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
@@ -240,8 +242,7 @@ export class RevisionEngine {
       }
     }
 
-    const lineItems: QuoteLineItem[] = [];
-    const unresolvedItems: QuoteLineItem[] = [];
+    const allItems: QuoteLineItem[] = [];
 
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
@@ -252,7 +253,7 @@ export class RevisionEngine {
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
-        unresolvedItems.push({
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName ?? '',
@@ -287,15 +288,13 @@ export class RevisionEngine {
         catalogEntry = bestMatch;
       }
 
-      let finalItem: QuoteLineItem;
-
       if (catalogEntry) {
         // When rules were applied, the AI's values for description, quantity,
         // and unitPrice take precedence over catalog defaults. This allows
         // business rules to override any field on a line item.
         const aiPrice = item.unitPrice;
         const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
-        finalItem = {
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
           productName: catalogEntry.name,
@@ -311,9 +310,9 @@ export class RevisionEngine {
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
+        });
       } else {
-        finalItem = {
+        allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
@@ -325,15 +324,15 @@ export class RevisionEngine {
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
           ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
-        };
-      }
-
-      if (finalItem.resolved) {
-        lineItems.push(finalItem);
-      } else {
-        unresolvedItems.push(finalItem);
+        });
       }
     }
+
+    // Deduplicate BEFORE partitioning so duplicates split across the
+    // confidence threshold (one resolved, one unresolved) are caught.
+    const dedupedItems = deduplicateLineItems(allItems);
+    const lineItems = dedupedItems.filter((i) => i.resolved);
+    const unresolvedItems = dedupedItems.filter((i) => !i.resolved);
 
     return { lineItems, unresolvedItems };
   }

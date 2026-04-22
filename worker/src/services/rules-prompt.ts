@@ -15,7 +15,11 @@ export function sanitizeRuleIds(raw: unknown): string[] {
  * grouped by group name with each rule's ID and description listed.
  */
 export function buildRulesSection(rules: RuleGroupWithRules[]): string {
-  const parts: string[] = ['BUSINESS RULES:'];
+  const parts: string[] = [
+    'BUSINESS RULES:',
+    'These rules can override description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name.',
+    'When a rule applies, set the field to the value the rule dictates and include the rule ID in ruleIdsApplied.',
+  ];
 
   for (const group of rules) {
     if (group.rules.length === 0) continue;

@@ -53,7 +53,7 @@ const SYSTEM_PROMPT = [
   '- Set productName to the EXACT catalog product name for matched items.',
   '- If a template matches the type of work, reference it by ID and name. Use the template\'s line items as a starting point, but ONLY include items that are relevant to the customer\'s specific request. Remove template items that do not apply.',
   '- When SIMILAR PAST QUOTES are provided, use them only as pricing references. Do NOT copy line items from similar quotes unless the customer request explicitly calls for that type of work.',
-  '- When BUSINESS RULES are provided, follow them when generating line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- When BUSINESS RULES are provided, follow them when generating line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '- If the customer request is vague, generate fewer items with lower confidence scores rather than guessing at work they might need.',
   '',
   'RESPONSE FORMAT (strict JSON):',
@@ -63,6 +63,7 @@ const SYSTEM_PROMPT = [
   '  "lineItems": [',
   '    {',
   '      "productName": "exact catalog product name",',
+  '      "description": "line item description (include if a rule modifies it, otherwise omit)",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -109,6 +110,17 @@ export class QuoteEngine {
     const systemPrompt = rules && rules.length > 0
       ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(rules)
       : SYSTEM_PROMPT;
+
+    // Collect valid rule IDs so we can verify AI claims in validation
+    const validRuleIds = new Set<string>();
+    if (rules) {
+      for (const group of rules) {
+        for (const rule of group.rules) {
+          validRuleIds.add(rule.id);
+        }
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
@@ -146,7 +158,7 @@ export class QuoteEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      const aiResult = this.parseAIResponse(raw, catalog);
+      const aiResult = this.parseAIResponse(raw, catalog, validRuleIds);
       return this.buildDraft(input, aiResult);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
@@ -226,18 +238,18 @@ export class QuoteEngine {
 
   // ── AI response parsing ──────────────────────────────────────────────
 
-  private parseAIResponse(raw: string, catalog: ProductCatalogEntry[]): AIResponse {
+  private parseAIResponse(raw: string, catalog: ProductCatalogEntry[], validRuleIds: Set<string>): AIResponse {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     try {
       const parsed = JSON.parse(cleaned) as AIResponse;
-      return this.validateAIResponse(parsed, catalog);
+      return this.validateAIResponse(parsed, catalog, validRuleIds);
     } catch {
       return this.fallbackResponse();
     }
   }
 
-  private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[]): AIResponse {
+  private validateAIResponse(parsed: AIResponse, catalog: ProductCatalogEntry[], validRuleIds: Set<string>): AIResponse {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -251,13 +263,16 @@ export class QuoteEngine {
     const validatedItems: AILineItem[] = (parsed.lineItems ?? []).map((item) => {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
       const nameLower = (item.productName ?? '').trim().toLowerCase();
+      // Only trust rule overrides when at least one claimed rule ID is a real active rule
+      const verifiedRuleIds = sanitizeRuleIds(item.ruleIdsApplied).filter(id => validRuleIds.has(id));
+      const hasRules = verifiedRuleIds.length > 0;
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
         return {
           ...item,
           productCatalogEntryId: null,
-          description: '',
+          description: item.description ?? '',
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
           unmatchedReason: item.unmatchedReason || 'Empty product name',
         };
@@ -285,12 +300,20 @@ export class QuoteEngine {
       }
 
       if (catalogEntry) {
+        // When rules were applied, the AI's values for description, quantity,
+        // and unitPrice take precedence over catalog defaults. This allows
+        // business rules to override any field on a line item.
+        const aiPrice = item.unitPrice;
+        const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
         return {
           ...item,
           productCatalogEntryId: catalogEntry.id,
-          unitPrice: catalogEntry.unitPrice,
           productName: catalogEntry.name,
-          description: catalogEntry.description ?? '',
+          description: hasRules && item.description != null
+            ? item.description
+            : (catalogEntry.description ?? ''),
+          quantity: item.quantity ?? 1,
+          unitPrice: useAiPrice ? aiPrice : catalogEntry.unitPrice,
           confidenceScore: score,
         };
       }
@@ -299,7 +322,7 @@ export class QuoteEngine {
       return {
         ...item,
         productCatalogEntryId: null,
-        description: '',
+        description: item.description ?? '',
         confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
         unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
       };

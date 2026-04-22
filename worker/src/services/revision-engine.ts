@@ -24,6 +24,7 @@ export interface RevisionOutput {
 interface AILineItem {
   productCatalogEntryId: string | null;
   productName: string;
+  description?: string;
   quantity: number;
   unitPrice: number;
   confidenceScore: number;
@@ -53,13 +54,14 @@ const SYSTEM_PROMPT = [
   '- If a new item cannot be matched to the catalog, include it with a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
-  '- When BUSINESS RULES are provided, follow them when revising line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- When BUSINESS RULES are provided, follow them when revising line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
   '  "lineItems": [',
   '    {',
   '      "productName": "exact catalog product name",',
+  '      "description": "line item description (include if a rule modifies it, otherwise omit)",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -97,6 +99,17 @@ export class RevisionEngine {
     const systemPrompt = input.rules && input.rules.length > 0
       ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(input.rules)
       : SYSTEM_PROMPT;
+
+    // Collect valid rule IDs so we can verify AI claims in validation
+    const validRuleIds = new Set<string>();
+    if (input.rules) {
+      for (const group of input.rules) {
+        for (const rule of group.rules) {
+          validRuleIds.add(rule.id);
+        }
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);
 
@@ -134,7 +147,7 @@ export class RevisionEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      return this.parseAndValidate(raw, input);
+      return this.parseAndValidate(raw, input, validRuleIds);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -189,7 +202,7 @@ export class RevisionEngine {
     return parts.join('\n');
   }
 
-  private parseAndValidate(raw: string, input: RevisionInput): RevisionOutput {
+  private parseAndValidate(raw: string, input: RevisionInput, validRuleIds: Set<string>): RevisionOutput {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     let parsed: { lineItems?: AILineItem[] };
@@ -213,10 +226,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, validRuleIds);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[]): RevisionOutput {
+  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], validRuleIds: Set<string>): RevisionOutput {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -233,6 +246,9 @@ export class RevisionEngine {
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
       const nameLower = (item.productName ?? '').trim().toLowerCase();
+      // Only trust rule overrides when at least one claimed rule ID is a real active rule
+      const verifiedRuleIds = sanitizeRuleIds(item.ruleIdsApplied).filter(id => validRuleIds.has(id));
+      const hasRules = verifiedRuleIds.length > 0;
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
@@ -240,7 +256,7 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName ?? '',
-          description: '',
+          description: item.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
@@ -274,13 +290,22 @@ export class RevisionEngine {
       let finalItem: QuoteLineItem;
 
       if (catalogEntry) {
+        // When rules were applied, the AI's values for description, quantity,
+        // and unitPrice take precedence over catalog defaults. This allows
+        // business rules to override any field on a line item.
+        const aiPrice = item.unitPrice;
+        const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
         finalItem = {
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
           productName: catalogEntry.name,
-          description: catalogEntry.description ?? '',
+          description: hasRules && item.description != null
+            ? item.description
+            : (catalogEntry.description ?? ''),
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
+          unitPrice: useAiPrice
+            ? Math.max(0, aiPrice)
+            : Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
@@ -292,7 +317,7 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
-          description: '',
+          description: item.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),

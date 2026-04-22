@@ -1,3 +1,8 @@
+---
+description: Directory layout, architecture patterns, and naming conventions
+category: Architecture
+---
+
 # Project Structure & Conventions
 
 ## Directory Layout

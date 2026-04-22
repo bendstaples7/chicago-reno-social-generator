@@ -9,7 +9,7 @@ category: Integrations
 
 The Jobber public GraphQL API is **incomplete**. The following data is NOT available through the public API and requires Jobber web session cookies (internal API access):
 
-- **`requestDetails.form`** — The actual form submission data that customers fill out when submitting a request through Jobber's online booking form. This includes text inputs, multiple choice answers, date fields, and other structured form data. This is the primary source of customer request details for many requests.
+- **`requestDetails.form`** — The actual form submission data that customers fill out when submitting a request through Jobber's online booking form. This includes text inputs, multiple-choice answers, date fields, and other structured form data. This is the primary source of customer request details for many requests.
 
 The public API only exposes `notes` and `noteAttachments` on requests. For requests where the customer submitted a form but no team member manually added notes, the public API returns **no content** — even though the form data exists in Jobber's system.
 

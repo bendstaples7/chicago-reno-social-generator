@@ -3,7 +3,8 @@
  */
 
 /**
- * Merge duplicate line items that share the same product name (case-insensitive).
+ * Merge duplicate line items that share the same product name (case-insensitive)
+ * AND the same unit price.
  *
  * When duplicates are found:
  * - Quantities are summed
@@ -11,6 +12,12 @@
  * - Rule IDs are merged (union, deduplicated)
  * - Original text is concatenated with "; "
  * - All other fields come from the first occurrence
+ *
+ * Items with blank/empty productName are always treated as distinct and never
+ * merged, since they represent unmatched or incomplete entries.
+ *
+ * Items with the same product name but different unitPrice are kept as separate
+ * entries to avoid corrupting totals (e.g., rule-overridden pricing).
  *
  * This runs as a post-validation step to catch cases where the AI
  * returns the same product multiple times despite prompt instructions.
@@ -28,9 +35,21 @@ export function deduplicateLineItems<
 >(items: T[]): T[] {
   const seen = new Map<string, T>();
   const order: string[] = [];
+  let blankIndex = 0;
 
   for (const item of items) {
-    const key = item.productName.trim().toLowerCase();
+    const nameTrimmed = item.productName.trim().toLowerCase();
+
+    // Blank product names are always distinct — use a unique key per item
+    if (!nameTrimmed) {
+      const uniqueKey = `__blank_${blankIndex++}`;
+      seen.set(uniqueKey, { ...item });
+      order.push(uniqueKey);
+      continue;
+    }
+
+    // Include unitPrice in the merge key so items with different prices stay separate
+    const key = `${nameTrimmed}::${item.unitPrice}`;
     const existing = seen.get(key);
 
     if (!existing) {

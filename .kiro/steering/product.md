@@ -29,3 +29,5 @@ This is an internal business tool for **Chicago Reno**, a home services company.
 - **SimilarQuote**: Past quotes found via vector similarity to inform new quotes
 - **PlatformError**: Structured error with severity, component, operation, and recommended actions
 - **ContentIdea**: AI-suggested content topics for social media posts
+
+> **Moved: Jobber API Limitations** — Jobber API constraints and session cookie rules have been moved to `.kiro/steering/jobber-session-rules.md`. Refer to that file for authoritative guidance on the Jobber session gating requirements.

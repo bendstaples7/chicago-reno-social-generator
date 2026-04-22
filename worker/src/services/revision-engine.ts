@@ -24,6 +24,7 @@ export interface RevisionOutput {
 interface AILineItem {
   productCatalogEntryId: string | null;
   productName: string;
+  description?: string;
   quantity: number;
   unitPrice: number;
   confidenceScore: number;
@@ -53,13 +54,14 @@ const SYSTEM_PROMPT = [
   '- If a new item cannot be matched to the catalog, include it with a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
   '- Use unit prices from the catalog for matched items.',
-  '- When BUSINESS RULES are provided, follow them when revising line items. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
+  '- When BUSINESS RULES are provided, follow them when revising line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
   '  "lineItems": [',
   '    {',
   '      "productName": "exact catalog product name",',
+  '      "description": "line item description (include if a rule modifies it, otherwise omit)",',
   '      "quantity": 1,',
   '      "unitPrice": 0,',
   '      "confidenceScore": 85,',
@@ -233,6 +235,7 @@ export class RevisionEngine {
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
       const nameLower = (item.productName ?? '').trim().toLowerCase();
+      const hasRules = Array.isArray(item.ruleIdsApplied) && item.ruleIdsApplied.length > 0;
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
@@ -240,7 +243,7 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName ?? '',
-          description: '',
+          description: item.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),
@@ -274,13 +277,20 @@ export class RevisionEngine {
       let finalItem: QuoteLineItem;
 
       if (catalogEntry) {
+        // When rules were applied, the AI's values for description, quantity,
+        // and unitPrice take precedence over catalog defaults. This allows
+        // business rules to override any field on a line item.
         finalItem = {
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
           productName: catalogEntry.name,
-          description: catalogEntry.description ?? '',
+          description: hasRules && item.description != null
+            ? item.description
+            : (catalogEntry.description ?? ''),
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
+          unitPrice: hasRules && item.unitPrice != null
+            ? Math.max(0, item.unitPrice)
+            : Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
@@ -292,7 +302,7 @@ export class RevisionEngine {
           id: crypto.randomUUID(),
           productCatalogEntryId: null,
           productName: item.productName,
-          description: '',
+          description: item.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
           unitPrice: Math.max(0, item.unitPrice ?? 0),
           confidenceScore: Math.min(score, CONFIDENCE_THRESHOLD - 1),

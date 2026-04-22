@@ -99,6 +99,17 @@ export class RevisionEngine {
     const systemPrompt = input.rules && input.rules.length > 0
       ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(input.rules)
       : SYSTEM_PROMPT;
+
+    // Collect valid rule IDs so we can verify AI claims in validation
+    const validRuleIds = new Set<string>();
+    if (input.rules) {
+      for (const group of input.rules) {
+        for (const rule of group.rules) {
+          validRuleIds.add(rule.id);
+        }
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);
 
@@ -136,7 +147,7 @@ export class RevisionEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      return this.parseAndValidate(raw, input);
+      return this.parseAndValidate(raw, input, validRuleIds);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -191,7 +202,7 @@ export class RevisionEngine {
     return parts.join('\n');
   }
 
-  private parseAndValidate(raw: string, input: RevisionInput): RevisionOutput {
+  private parseAndValidate(raw: string, input: RevisionInput, validRuleIds: Set<string>): RevisionOutput {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     let parsed: { lineItems?: AILineItem[] };
@@ -215,10 +226,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, validRuleIds);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[]): RevisionOutput {
+  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], validRuleIds: Set<string>): RevisionOutput {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -235,7 +246,9 @@ export class RevisionEngine {
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
       const nameLower = (item.productName ?? '').trim().toLowerCase();
-      const hasRules = Array.isArray(item.ruleIdsApplied) && item.ruleIdsApplied.length > 0;
+      // Only trust rule overrides when at least one claimed rule ID is a real active rule
+      const verifiedRuleIds = sanitizeRuleIds(item.ruleIdsApplied).filter(id => validRuleIds.has(id));
+      const hasRules = verifiedRuleIds.length > 0;
 
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
@@ -280,6 +293,8 @@ export class RevisionEngine {
         // When rules were applied, the AI's values for description, quantity,
         // and unitPrice take precedence over catalog defaults. This allows
         // business rules to override any field on a line item.
+        const aiPrice = item.unitPrice;
+        const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
         finalItem = {
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
@@ -288,8 +303,8 @@ export class RevisionEngine {
             ? item.description
             : (catalogEntry.description ?? ''),
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: hasRules && item.unitPrice != null
-            ? Math.max(0, item.unitPrice)
+          unitPrice: useAiPrice
+            ? Math.max(0, aiPrice)
             : Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',

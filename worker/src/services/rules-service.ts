@@ -22,13 +22,6 @@ export class RulesService {
   }
 
   /**
-   * Fetch only active rules, grouped and ordered — used for prompt injection.
-   */
-  async getActiveRulesGrouped(): Promise<RuleGroupWithRules[]> {
-    return this.fetchGroupedRules(true);
-  }
-
-  /**
    * Fetch active structured rules (those with valid condition and action JSON).
    * Returns typed StructuredRule[] for use by the rules engine.
    * Skips rules with invalid JSON (logs warning, doesn't throw).
@@ -92,6 +85,9 @@ export class RulesService {
     conditionJson?: RuleCondition;
     actionJson?: RuleAction[];
     triggerMode?: TriggerMode;
+    catalogNames?: string[];
+    apiKey?: string;
+    apiUrl?: string;
   }): Promise<Rule> {
     const missing: string[] = [];
     if (!data.name || data.name.trim() === '') missing.push('name');
@@ -162,10 +158,30 @@ export class RulesService {
       });
     }
 
-    const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
+    // Auto-generate structured condition/action if not provided and API key is available
+    let conditionJson = data.conditionJson;
+    let actionJson = data.actionJson;
+    if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
+      const generated = await this.generateStructuredRule(
+        data.description,
+        data.catalogNames,
+        data.apiKey,
+        data.apiUrl,
+      );
+      if (generated) {
+        conditionJson = generated.condition;
+        actionJson = generated.actions;
+      }
+    }
+
+    // Auto-categorize into trade group based on rule text
+    const groupId = await this.resolveGroupId(
+      `${data.name} ${data.description}`,
+      data.ruleGroupId,
+    );
     const id = crypto.randomUUID();
-    const conditionJsonStr = data.conditionJson ? JSON.stringify(data.conditionJson) : null;
-    const actionJsonStr = data.actionJson ? JSON.stringify(data.actionJson) : null;
+    const conditionJsonStr = conditionJson ? JSON.stringify(conditionJson) : null;
+    const actionJsonStr = actionJson ? JSON.stringify(actionJson) : null;
     const triggerMode = data.triggerMode ?? 'chained';
 
     try {
@@ -711,26 +727,6 @@ export class RulesService {
    * current group.
    */
   async autoCategorizeRules(): Promise<{ moved: number; total: number }> {
-    // Trade keywords mapped to group names (case-insensitive matching against rule description)
-    // Order matters: more specific patterns are checked before broader ones to avoid
-    // misclassification (e.g., "shower surround" → Tile, not Plumbing).
-    // Exterior is checked before Tile so "drain tile" (exterior waterproofing) isn't
-    // caught by Tile's generic \btile\b pattern.
-    const tradeKeywords: Array<{ groupName: string; patterns: RegExp }> = [
-      { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
-      { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
-      { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
-      { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
-      { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
-      { groupName: 'Carpentry', patterns: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
-      { groupName: 'Drywall', patterns: /\b(drywall|hole patch)\b/i },
-      { groupName: 'HVAC', patterns: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
-      { groupName: 'Demo', patterns: /\b(demo|demolition|tear out|rip out)\b/i },
-      { groupName: 'Insulation', patterns: /\b(insulation|insulate)\b/i },
-      { groupName: 'Appliances', patterns: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
-      { groupName: 'Countertops', patterns: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
-    ];
-
     // Fetch all groups to build a name→id map
     const groupsResult = await this.db.prepare(
       'SELECT id, name FROM rule_groups'
@@ -750,16 +746,8 @@ export class RulesService {
     const statements: D1PreparedStatement[] = [];
 
     for (const rule of rules) {
-      // Try to match rule description + name against trade keywords
       const textToMatch = `${rule.name} ${rule.description}`;
-      let matchedGroupName: string | null = null;
-
-      for (const { groupName, patterns } of tradeKeywords) {
-        if (patterns.test(textToMatch)) {
-          matchedGroupName = groupName;
-          break;
-        }
-      }
+      const matchedGroupName = this.matchTradeGroupName(textToMatch);
 
       if (matchedGroupName) {
         const targetGroupId = groupNameToId.get(matchedGroupName.toLowerCase());
@@ -787,17 +775,23 @@ export class RulesService {
    * Create a rule from revision feedback text.
    * Uses AI summarization for the title when an API key is provided.
    */
-  async createRuleFromFeedback(feedbackText: string, apiKey?: string, apiUrl?: string): Promise<Rule> {
+  async createRuleFromFeedback(
+    feedbackText: string,
+    apiKey?: string,
+    apiUrl?: string,
+    catalogNames?: string[],
+  ): Promise<Rule> {
     const name = apiKey
       ? await this.summarizeRuleTitle(feedbackText, apiKey, apiUrl)
       : this.deriveRuleName(feedbackText);
-    const groupId = await this.getDefaultGroupId();
 
     return this.createRule({
       name,
       description: feedbackText,
-      ruleGroupId: groupId,
       isActive: true,
+      catalogNames,
+      apiKey,
+      apiUrl,
     });
   }
 
@@ -854,6 +848,171 @@ export class RulesService {
   }
 
   // ── Private helpers ───────────────────────────────────────────
+
+  /** Trade keyword patterns for auto-categorization. Order matters: specific patterns first. */
+  private static readonly TRADE_KEYWORDS: Array<{ groupName: string; patterns: RegExp }> = [
+    { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
+    { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
+    { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
+    { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
+    { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
+    { groupName: 'Carpentry', patterns: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
+    { groupName: 'Drywall', patterns: /\b(drywall|hole patch)\b/i },
+    { groupName: 'HVAC', patterns: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
+    { groupName: 'Demo', patterns: /\b(demo|demolition|tear out|rip out)\b/i },
+    { groupName: 'Insulation', patterns: /\b(insulation|insulate)\b/i },
+    { groupName: 'Appliances', patterns: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
+    { groupName: 'Countertops', patterns: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
+  ];
+
+  /**
+   * Match text against trade keywords and return the group name, or null if no match.
+   */
+  private matchTradeGroupName(text: string): string | null {
+    for (const { groupName, patterns } of RulesService.TRADE_KEYWORDS) {
+      if (patterns.test(text)) return groupName;
+    }
+    return null;
+  }
+
+  /**
+   * Find the best trade group ID for the given text, falling back to the default group.
+   */
+  private async resolveGroupId(text: string, explicitGroupId?: string): Promise<string> {
+    // If an explicit non-General group was provided, use it
+    const defaultGroupId = await this.getDefaultGroupId();
+    if (explicitGroupId && explicitGroupId !== defaultGroupId) {
+      return explicitGroupId;
+    }
+
+    // Try to auto-categorize by trade keywords
+    const matchedGroupName = this.matchTradeGroupName(text);
+    if (matchedGroupName) {
+      const row = await this.db.prepare(
+        'SELECT id FROM rule_groups WHERE name = ? COLLATE NOCASE'
+      ).bind(matchedGroupName).first() as { id: string } | null;
+      if (row) return row.id;
+    }
+
+    return explicitGroupId ?? defaultGroupId;
+  }
+
+  /**
+   * Use OpenAI to generate structured condition/action JSON from a natural language
+   * rule description and the product catalog. Returns null if the rule cannot be
+   * expressed as a structured rule.
+   */
+  async generateStructuredRule(
+    description: string,
+    catalogNames: string[],
+    apiKey: string,
+    apiUrl?: string,
+  ): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> {
+    if (!apiKey) return null;
+
+    const url = apiUrl || 'https://api.openai.com/v1/chat/completions';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+
+    const conditionTypes = [
+      'line_item_exists — fires when a line item with the given productNamePattern exists',
+      'line_item_not_exists — fires when NO line item matches the productNamePattern',
+      'line_item_quantity_gte — fires when a matching line item has quantity >= threshold',
+      'line_item_quantity_lte — fires when a matching line item has quantity <= threshold',
+      'always — fires unconditionally',
+    ];
+
+    const actionTypes = [
+      'add_line_item — adds a new line item: { type, productName, quantity, unitPrice, description? }',
+      'remove_line_item — removes matching items: { type, productNamePattern }',
+      'set_quantity — sets quantity: { type, productNamePattern, quantity }',
+      'adjust_quantity — adjusts quantity by delta: { type, productNamePattern, delta }',
+      'set_unit_price — sets price: { type, productNamePattern, unitPrice }',
+      'set_description — replaces description: { type, productNamePattern, description }',
+      'append_description — appends to description: { type, productNamePattern, text, separator? }',
+    ];
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + apiKey,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'You convert natural language business rules into structured JSON for a deterministic rules engine used in a home renovation quoting system.',
+                'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist.',
+                '',
+                'CONDITION TYPES:',
+                ...conditionTypes.map(t => `  ${t}`),
+                '',
+                'ACTION TYPES:',
+                ...actionTypes.map(t => `  ${t}`),
+                '',
+                'PRODUCT CATALOG (use these exact names for productNamePattern and productName):',
+                ...catalogNames.map(n => `  - ${n}`),
+                '',
+                'RULES:',
+                '- productNamePattern must EXACTLY match a catalog product name (case-insensitive)',
+                '- add_line_item productName must EXACTLY match a catalog product name',
+                '- Return a JSON object with "condition" and "actions" fields',
+                '- "actions" is an array of one or more actions',
+                '- If the rule cannot be expressed with these condition/action types, return {"unsupported": true}',
+                '- Return ONLY valid JSON, no markdown, no explanation',
+              ].join('\n'),
+            },
+            { role: 'user', content: description },
+          ],
+          temperature: 0.1,
+          max_tokens: 500,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        console.warn(`Structured rule generation failed (${response.status})`);
+        return null;
+      }
+
+      const data = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      const raw = data.choices?.[0]?.message?.content?.trim();
+      if (!raw) return null;
+
+      // Strip markdown code fences if present
+      const jsonStr = raw.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+      const parsed = JSON.parse(jsonStr);
+
+      if (parsed.unsupported) return null;
+
+      // Validate the generated condition and actions
+      const condResult = validateCondition(parsed.condition);
+      if (!condResult.valid) {
+        console.warn(`AI-generated condition invalid: ${condResult.error}`);
+        return null;
+      }
+
+      const actResult = validateActions(parsed.actions);
+      if (!actResult.valid) {
+        console.warn(`AI-generated actions invalid: ${actResult.errors?.join('; ')}`);
+        return null;
+      }
+
+      return { condition: parsed.condition as RuleCondition, actions: parsed.actions as RuleAction[] };
+    } catch {
+      clearTimeout(timeout);
+      console.warn('Structured rule generation error');
+      return null;
+    }
+  }
 
   private async fetchGroupedRules(activeOnly: boolean): Promise<RuleGroupWithRules[]> {
     const groupsResult = await this.db.prepare(

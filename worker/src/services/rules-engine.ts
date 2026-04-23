@@ -87,6 +87,9 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
       if (typeof cond.threshold !== 'number') {
         return { valid: false, error: `Condition type "${cond.type}" requires a number "threshold" field` };
       }
+      if (!Number.isFinite(cond.threshold) || cond.threshold < 0) {
+        return { valid: false, error: `Condition type "${cond.type}" threshold must be a finite non-negative number` };
+      }
       break;
 
     case 'always':
@@ -120,8 +123,14 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (typeof act.quantity !== 'number') {
         return { valid: false, error: 'Action type "add_line_item" requires a number "quantity" field' };
       }
+      if (!Number.isFinite(act.quantity) || act.quantity < 0) {
+        return { valid: false, error: 'Action type "add_line_item" quantity must be a finite non-negative number' };
+      }
       if (typeof act.unitPrice !== 'number') {
         return { valid: false, error: 'Action type "add_line_item" requires a number "unitPrice" field' };
+      }
+      if (!Number.isFinite(act.unitPrice) || act.unitPrice < 0) {
+        return { valid: false, error: 'Action type "add_line_item" unitPrice must be a finite non-negative number' };
       }
       if (act.description !== undefined && typeof act.description !== 'string') {
         return { valid: false, error: 'Action type "add_line_item" optional "description" must be a string' };
@@ -141,6 +150,9 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (typeof act.quantity !== 'number') {
         return { valid: false, error: 'Action type "set_quantity" requires a number "quantity" field' };
       }
+      if (!Number.isFinite(act.quantity) || act.quantity < 0) {
+        return { valid: false, error: 'Action type "set_quantity" quantity must be a finite non-negative number' };
+      }
       break;
 
     case 'adjust_quantity':
@@ -150,6 +162,9 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (typeof act.delta !== 'number') {
         return { valid: false, error: 'Action type "adjust_quantity" requires a number "delta" field' };
       }
+      if (!Number.isFinite(act.delta)) {
+        return { valid: false, error: 'Action type "adjust_quantity" delta must be a finite number' };
+      }
       break;
 
     case 'set_unit_price':
@@ -158,6 +173,9 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       }
       if (typeof act.unitPrice !== 'number') {
         return { valid: false, error: 'Action type "set_unit_price" requires a number "unitPrice" field' };
+      }
+      if (!Number.isFinite(act.unitPrice) || act.unitPrice < 0) {
+        return { valid: false, error: 'Action type "set_unit_price" unitPrice must be a finite non-negative number' };
       }
       break;
   }
@@ -513,9 +531,9 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
       // Check duplicate application: skip if this rule has already been
       // applied to all of the matching line items in this execution run.
       const matchingIds = condResult.matchingLineItemIds;
-      const allAlreadyApplied =
-        matchingIds.length > 0 &&
-        matchingIds.every((id) => applied.has(`${rule.id}:${id}`));
+      const allAlreadyApplied = matchingIds.length > 0
+        ? matchingIds.every((id) => applied.has(`${rule.id}:${id}`))
+        : applied.has(`${rule.id}:__global__`);
       if (allAlreadyApplied) continue;
 
       // Execute each action

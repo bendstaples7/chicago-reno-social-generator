@@ -219,7 +219,7 @@ export interface Rule {
   isActive: boolean;
   conditionJson?: RuleCondition | null;
   actionJson?: RuleAction[] | null;
-  triggerMode?: TriggerMode;
+  triggerMode: TriggerMode;
   createdAt: Date;
   updatedAt: Date;
 }

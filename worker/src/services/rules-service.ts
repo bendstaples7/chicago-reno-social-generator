@@ -107,16 +107,31 @@ export class RulesService {
       });
     }
 
+    // Reject providing only one of conditionJson/actionJson
+    const hasCondition = data.conditionJson !== undefined;
+    const hasAction = data.actionJson !== undefined;
+    if (hasCondition !== hasAction) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: 'Structured rules require both conditionJson and actionJson. Provide both or neither.',
+        recommendedActions: ['Provide both conditionJson and actionJson together'],
+        statusCode: 400,
+      });
+    }
+
     // Validate structured rule schemas if provided
     if (data.conditionJson !== undefined) {
       const condResult = validateCondition(data.conditionJson);
       if (!condResult.valid) {
         throw new PlatformError({
-          severity: 'error',
+          severity: 'warning',
           component: 'RulesService',
           operation: 'createRule',
           description: `Invalid condition schema: ${condResult.error}`,
           recommendedActions: ['Fix the condition JSON and retry'],
+          statusCode: 400,
         });
       }
     }
@@ -125,13 +140,26 @@ export class RulesService {
       const actResult = validateActions(data.actionJson);
       if (!actResult.valid) {
         throw new PlatformError({
-          severity: 'error',
+          severity: 'warning',
           component: 'RulesService',
           operation: 'createRule',
           description: `Invalid action schema: ${actResult.errors?.join('; ')}`,
           recommendedActions: ['Fix the action JSON and retry'],
+          statusCode: 400,
         });
       }
+    }
+
+    const VALID_TRIGGER_MODES = new Set(['on_create', 'chained']);
+    if (data.triggerMode !== undefined && !VALID_TRIGGER_MODES.has(data.triggerMode)) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: `Invalid trigger mode: "${data.triggerMode}". Must be "on_create" or "chained".`,
+        recommendedActions: ['Use "on_create" or "chained" as the trigger mode'],
+        statusCode: 400,
+      });
     }
 
     const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
@@ -208,6 +236,32 @@ export class RulesService {
       });
     }
 
+    // Reject providing only one of conditionJson/actionJson
+    const hasCondition = data.conditionJson !== undefined;
+    const hasAction = data.actionJson !== undefined;
+    if (hasCondition !== hasAction) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'updateRule',
+        description: 'Structured rules require both conditionJson and actionJson. Provide both or neither.',
+        recommendedActions: ['Provide both conditionJson and actionJson together'],
+        statusCode: 400,
+      });
+    }
+
+    const VALID_TRIGGER_MODES = new Set(['on_create', 'chained']);
+    if (data.triggerMode !== undefined && !VALID_TRIGGER_MODES.has(data.triggerMode as string)) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'updateRule',
+        description: `Invalid trigger mode: "${data.triggerMode}". Must be "on_create" or "chained".`,
+        recommendedActions: ['Use "on_create" or "chained" as the trigger mode'],
+        statusCode: 400,
+      });
+    }
+
     const setClauses: string[] = ["updated_at = datetime('now')"];
     const values: unknown[] = [];
 
@@ -234,11 +288,12 @@ export class RulesService {
         const condResult = validateCondition(data.conditionJson);
         if (!condResult.valid) {
           throw new PlatformError({
-            severity: 'error',
+            severity: 'warning',
             component: 'RulesService',
             operation: 'updateRule',
             description: `Invalid condition schema: ${condResult.error}`,
             recommendedActions: ['Fix the condition JSON and retry'],
+            statusCode: 400,
           });
         }
       }
@@ -251,11 +306,12 @@ export class RulesService {
         const actResult = validateActions(data.actionJson);
         if (!actResult.valid) {
           throw new PlatformError({
-            severity: 'error',
+            severity: 'warning',
             component: 'RulesService',
             operation: 'updateRule',
             description: `Invalid action schema: ${actResult.errors?.join('; ')}`,
             recommendedActions: ['Fix the action JSON and retry'],
+            statusCode: 400,
           });
         }
       }
@@ -656,7 +712,7 @@ export class RulesService {
   private mapRuleRow(row: Record<string, unknown>): Rule {
     let conditionJson: RuleCondition | null = null;
     let actionJson: RuleAction[] | null = null;
-    let triggerMode: TriggerMode | undefined;
+    let triggerMode: TriggerMode = 'chained';
 
     if (row.condition_json != null && typeof row.condition_json === 'string') {
       try {

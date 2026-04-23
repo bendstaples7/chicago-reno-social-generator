@@ -5,6 +5,8 @@ import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemp
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
+const MANUALLY_ADDED_SENTINEL = 'Manually added';
+
 export default function QuoteDraftPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -342,7 +344,7 @@ export default function QuoteDraftPage() {
       quantity: qty,
       unitPrice: Math.round(price * 100) / 100,
       confidenceScore: 100,
-      originalText: 'Manually added',
+      originalText: MANUALLY_ADDED_SENTINEL,
       resolved: true,
     };
     const updatedLineItems = [...draft.lineItems, newItem];
@@ -682,14 +684,14 @@ export default function QuoteDraftPage() {
                             >
                               {!hasRules ? (
                                 <div>
-                                  {item.originalText && item.originalText !== 'Manually added' ? (
+                                  {item.originalText && item.originalText !== MANUALLY_ADDED_SENTINEL ? (
                                     <>
                                       <p style={ruleGroupHeadingStyle}>AI-Matched from Request</p>
                                       <p style={{ ...noRulesTextStyle, fontStyle: 'normal' }}>
                                         &ldquo;{item.originalText}&rdquo;
                                       </p>
                                     </>
-                                  ) : item.originalText === 'Manually added' ? (
+                                  ) : item.originalText === MANUALLY_ADDED_SENTINEL ? (
                                     <p style={noRulesTextStyle}>Manually added by user</p>
                                   ) : (
                                     <p style={noRulesTextStyle}>No specific rules were applied</p>
@@ -697,7 +699,7 @@ export default function QuoteDraftPage() {
                                 </div>
                               ) : (
                                 <>
-                                  {item.originalText && item.originalText !== 'Manually added' && (
+                                  {item.originalText && item.originalText !== MANUALLY_ADDED_SENTINEL && (
                                     <div style={{ marginBottom: '0.5rem' }}>
                                       <p style={ruleGroupHeadingStyle}>AI-Matched from Request</p>
                                       <p style={{ ...noRulesTextStyle, fontStyle: 'normal' }}>

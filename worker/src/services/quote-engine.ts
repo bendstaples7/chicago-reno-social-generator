@@ -24,6 +24,7 @@ export interface QuoteEngineOutput {
 }
 
 interface AILineItem {
+  id?: string;
   productCatalogEntryId: string | null;
   productName: string;
   description?: string;
@@ -193,6 +194,7 @@ export class QuoteEngine {
 
         // Convert engine output back to AILineItem format
         aiResult.lineItems = engineResult.lineItems.map((eli) => ({
+          id: eli.id,
           productCatalogEntryId: eli.productCatalogEntryId,
           productName: eli.productName,
           description: eli.description,
@@ -409,7 +411,7 @@ export class QuoteEngine {
     const allItems: QuoteLineItem[] = aiResult.lineItems.map((item) => {
       const resolved = item.confidenceScore >= CONFIDENCE_THRESHOLD && item.productCatalogEntryId !== null;
       return {
-        id: crypto.randomUUID(),
+        id: item.id ?? crypto.randomUUID(),
         productCatalogEntryId: item.productCatalogEntryId,
         productName: item.productName,
         description: item.description ?? '',

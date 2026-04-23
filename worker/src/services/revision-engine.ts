@@ -337,6 +337,14 @@ export class RevisionEngine {
     // deterministic rules engine, then convert back for deduplication.
     let auditTrail: AuditEntry[] | undefined;
 
+    // Capture original unmatchedReasons before the rules engine may rebuild allItems
+    const unmatchedReasonById = new Map<string, string>();
+    for (const item of allItems) {
+      if (item.unmatchedReason) {
+        unmatchedReasonById.set(item.id, item.unmatchedReason);
+      }
+    }
+
     if (structuredRules && structuredRules.length > 0) {
       const engineLineItems: EngineLineItem[] = allItems.map((item) => ({
         id: item.id,
@@ -372,7 +380,7 @@ export class RevisionEngine {
           confidenceScore: eli.confidenceScore,
           originalText: eli.originalText,
           resolved,
-          unmatchedReason: resolved ? undefined : 'Low confidence match',
+          unmatchedReason: resolved ? undefined : (unmatchedReasonById.get(eli.id) ?? 'Low confidence match'),
           ruleIdsApplied: eli.ruleIdsApplied,
         });
       }

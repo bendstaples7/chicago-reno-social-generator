@@ -284,7 +284,7 @@ export interface EngineLineItem {
 
 ### Database Migration
 
-**File**: `worker/src/migrations/0009_structured_rules.sql`
+**File**: `worker/src/migrations/0016_structured_rules.sql`
 
 ```sql
 -- Add structured rule columns to existing rules table

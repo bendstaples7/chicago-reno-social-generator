@@ -57,6 +57,7 @@ export interface QuoteDraft {
   status: 'draft' | 'finalized';
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];
+  pendingEnrichments?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -160,7 +161,7 @@ export type RuleActionType =
   | 'set_unit_price'
   | 'set_description'
   | 'append_description'
-  | 'append_request_context';
+  | 'extract_request_context';
 
 /** A typed action for a structured rule */
 export type RuleAction =
@@ -171,7 +172,7 @@ export type RuleAction =
   | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }
   | { type: 'set_description'; productNamePattern: string; description: string }
   | { type: 'append_description'; productNamePattern: string; text: string; separator?: string }
-  | { type: 'append_request_context'; productNamePattern: string; contextPattern: string; prefix?: string; separator?: string };
+  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string };
 
 /** A structured rule with typed condition and actions */
 export interface StructuredRule {
@@ -215,6 +216,17 @@ export interface RulesEngineResult {
   auditTrail: AuditEntry[];
   iterationCount: number;
   converged: boolean;
+  pendingEnrichments: PendingEnrichment[];
+}
+
+/** A pending AI enrichment for a line item description */
+export interface PendingEnrichment {
+  lineItemId: string;
+  productNamePattern: string;
+  extractionPrompt: string;
+  separator?: string;
+  ruleId: string;
+  ruleName: string;
 }
 
 /** A business rule that influences quote generation */

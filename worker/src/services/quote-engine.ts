@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
 import { deduplicateLineItems } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem, PendingEnrichment } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -20,6 +20,7 @@ export interface QuoteEngineOutput {
   draft: QuoteDraft;
   similarQuotes?: SimilarQuote[];
   rulesEngineAuditTrail?: AuditEntry[];
+  pendingEnrichments?: PendingEnrichment[];
 }
 
 interface AILineItem {
@@ -156,6 +157,7 @@ export class QuoteEngine {
       // Convert validated AI line items to EngineLineItem format, run the
       // deterministic rules engine, then convert back for deduplication.
       let auditTrail: AuditEntry[] | undefined;
+      let pendingEnrichments: PendingEnrichment[] | undefined;
 
       if (structuredRules && structuredRules.length > 0) {
         const engineLineItems: EngineLineItem[] = aiResult.lineItems.map((item) => ({
@@ -174,10 +176,10 @@ export class QuoteEngine {
           lineItems: engineLineItems,
           rules: structuredRules,
           catalog,
-          customerRequestText: input.customerText,
         });
 
         auditTrail = engineResult.auditTrail;
+        pendingEnrichments = engineResult.pendingEnrichments;
 
         // Convert engine output back to AILineItem format
         aiResult.lineItems = engineResult.lineItems.map((eli) => ({
@@ -196,7 +198,7 @@ export class QuoteEngine {
       // Deduplicate after rules engine has had a chance to add/modify items
       aiResult.lineItems = deduplicateLineItems(aiResult.lineItems);
 
-      return this.buildDraft(input, aiResult, auditTrail);
+      return this.buildDraft(input, aiResult, auditTrail, pendingEnrichments);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -378,6 +380,7 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     aiResult: AIResponse,
     auditTrail?: AuditEntry[],
+    pendingEnrichments?: PendingEnrichment[],
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
@@ -424,6 +427,7 @@ export class QuoteEngine {
       draft,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
+      pendingEnrichments: pendingEnrichments && pendingEnrichments.length > 0 ? pendingEnrichments : undefined,
     };
   }
 

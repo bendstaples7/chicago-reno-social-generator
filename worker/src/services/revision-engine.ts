@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
 import { deduplicateLineItems } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem, PendingEnrichment } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -22,6 +22,8 @@ export interface RevisionOutput {
   revisionFailed?: boolean;
   /** Audit trail from the deterministic rules engine, if structured rules were applied. */
   rulesEngineAuditTrail?: AuditEntry[];
+  /** Pending AI enrichments that need async processing. */
+  pendingEnrichments?: PendingEnrichment[];
 }
 
 interface AILineItem {
@@ -218,10 +220,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string): RevisionOutput {
+  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[]): RevisionOutput {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -309,6 +311,7 @@ export class RevisionEngine {
     // Convert validated AI line items to EngineLineItem format, run the
     // deterministic rules engine, then convert back for deduplication.
     let auditTrail: AuditEntry[] | undefined;
+    let pendingEnrichments: PendingEnrichment[] | undefined;
 
     // Capture original unmatchedReasons before the rules engine may rebuild allItems
     const unmatchedReasonById = new Map<string, string>();
@@ -335,10 +338,10 @@ export class RevisionEngine {
         lineItems: engineLineItems,
         rules: structuredRules,
         catalog,
-        customerRequestText,
       });
 
       auditTrail = engineResult.auditTrail;
+      pendingEnrichments = engineResult.pendingEnrichments;
 
       // Replace allItems with engine output, preserving resolved/unresolved partitioning
       allItems.length = 0;
@@ -370,6 +373,7 @@ export class RevisionEngine {
       lineItems,
       unresolvedItems,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
+      pendingEnrichments: pendingEnrichments && pendingEnrichments.length > 0 ? pendingEnrichments : undefined,
     };
   }
 }

@@ -6,6 +6,7 @@ import type {
   AuditEntry,
   RulesEngineResult,
   ProductCatalogEntry,
+  PendingEnrichment,
 } from 'shared';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,6 @@ export interface RulesEngineInput {
   lineItems: EngineLineItem[];
   rules: StructuredRule[];
   catalog: ProductCatalogEntry[];
-  customerRequestText?: string;
   maxIterations?: number;
 }
 
@@ -35,6 +35,12 @@ interface ActionResult {
   warning?: string;
   beforeSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
   afterSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
+  pendingEnrichment?: {
+    productNamePattern: string;
+    extractionPrompt: string;
+    separator?: string;
+    matchingLineItemIds: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +64,7 @@ const ACTION_TYPES = new Set([
   'set_unit_price',
   'set_description',
   'append_description',
-  'append_request_context',
+  'extract_request_context',
 ]);
 
 export function validateCondition(condition: unknown): { valid: boolean; error?: string } {
@@ -211,18 +217,15 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       }
       break;
 
-    case 'append_request_context':
+    case 'extract_request_context':
       if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "append_request_context" requires a string "productNamePattern" field' };
+        return { valid: false, error: 'Action type "extract_request_context" requires a string "productNamePattern" field' };
       }
-      if (typeof act.contextPattern !== 'string') {
-        return { valid: false, error: 'Action type "append_request_context" requires a string "contextPattern" field' };
-      }
-      if (act.prefix !== undefined && typeof act.prefix !== 'string') {
-        return { valid: false, error: 'Action type "append_request_context" optional "prefix" must be a string' };
+      if (typeof act.extractionPrompt !== 'string') {
+        return { valid: false, error: 'Action type "extract_request_context" requires a string "extractionPrompt" field' };
       }
       if (act.separator !== undefined && typeof act.separator !== 'string') {
-        return { valid: false, error: 'Action type "append_request_context" optional "separator" must be a string' };
+        return { valid: false, error: 'Action type "extract_request_context" optional "separator" must be a string' };
       }
       break;
   }
@@ -350,7 +353,6 @@ function executeAction(
   lineItems: EngineLineItem[],
   catalog: ProductCatalogEntry[],
   ruleId: string,
-  customerRequestText?: string,
 ): ActionResult {
   switch (action.type) {
     case 'add_line_item': {
@@ -573,72 +575,31 @@ function executeAction(
       };
     }
 
-    case 'append_request_context': {
-      if (!customerRequestText) {
-        return {
-          modified: false,
-          lineItems,
-          warning: 'No customer request text available — skipping append_request_context',
-        };
-      }
-
+    case 'extract_request_context': {
+      // This action is handled asynchronously after the engine completes.
+      // We just record that it matched and return unmodified line items.
+      // The caller collects these as pending enrichments.
       const pattern = action.productNamePattern.toLowerCase();
-      const separator = action.separator ?? ' ';
-      const prefix = action.prefix ?? '';
+      const matching = lineItems.filter(
+        (li) => li.productName.toLowerCase() === pattern,
+      );
 
-      // Extract matching context from the customer request using the contextPattern as a regex
-      let extractedText: string | null = null;
-      try {
-        const regex = new RegExp(action.contextPattern, 'i');
-        const match = customerRequestText.match(regex);
-        if (match) {
-          // Use the first capture group if available, otherwise the full match
-          extractedText = (match[1] ?? match[0]).trim();
-        }
-      } catch {
-        return {
-          modified: false,
-          lineItems,
-          warning: `Invalid contextPattern regex: "${action.contextPattern}" — skipping append_request_context`,
-        };
-      }
-
-      if (!extractedText) {
+      if (matching.length === 0) {
         return { modified: false, lineItems };
       }
 
-      const textToAppend = prefix ? `${prefix}${extractedText}` : extractedText;
-      let modified = false;
-      const affected: EngineLineItem[] = [];
-
-      const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
-          affected.push(li);
-          modified = true;
-          const existing = li.description.trim();
-          const newDesc = existing
-            ? `${existing}${separator}${textToAppend}`
-            : textToAppend;
-          return {
-            ...li,
-            description: newDesc,
-            ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
-          };
-        }
-        return li;
-      });
-
-      if (!modified) {
-        return { modified: false, lineItems };
-      }
-
+      // Mark as "modified" so the audit trail records it, but don't change line items
       return {
-        modified: true,
-        lineItems: updated,
-        beforeSnapshot: snapshot(affected),
-        afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
-        ),
+        modified: false,
+        lineItems,
+        beforeSnapshot: snapshot(matching),
+        afterSnapshot: snapshot(matching),
+        pendingEnrichment: {
+          productNamePattern: action.productNamePattern,
+          extractionPrompt: action.extractionPrompt,
+          separator: action.separator,
+          matchingLineItemIds: matching.map((li) => li.id),
+        },
       };
     }
 
@@ -654,7 +615,7 @@ function executeAction(
 const DEFAULT_MAX_ITERATIONS = 10;
 
 export function executeRules(input: RulesEngineInput): RulesEngineResult {
-  const { rules, catalog, customerRequestText, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
+  const { rules, catalog, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
 
   // Clone input line items to avoid mutation
   let lineItems: EngineLineItem[] = input.lineItems.map((li) => ({
@@ -663,10 +624,11 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
   }));
 
   const auditTrail: AuditEntry[] = [];
+  const pendingEnrichments: PendingEnrichment[] = [];
 
   // Early exit: no rules → return unmodified
   if (rules.length === 0) {
-    return { lineItems, auditTrail, iterationCount: 0, converged: true };
+    return { lineItems, auditTrail, iterationCount: 0, converged: true, pendingEnrichments: [] };
   }
 
   // Track which (ruleId, lineItemId) pairs have been applied to prevent
@@ -736,10 +698,10 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
       // Execute each action
       for (const action of rule.actions) {
-        const actionResult = executeAction(action, lineItems, catalog, rule.id, customerRequestText);
+        const actionResult = executeAction(action, lineItems, catalog, rule.id);
         lineItems = actionResult.lineItems;
 
-        if (actionResult.modified || actionResult.warning) {
+        if (actionResult.modified || actionResult.warning || actionResult.pendingEnrichment) {
           auditTrail.push({
             ruleId: rule.id,
             ruleName: rule.name,
@@ -751,6 +713,19 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
             afterSnapshot: actionResult.afterSnapshot ?? [],
             warning: actionResult.warning,
           });
+        }
+
+        if (actionResult.pendingEnrichment) {
+          for (const liId of actionResult.pendingEnrichment.matchingLineItemIds) {
+            pendingEnrichments.push({
+              lineItemId: liId,
+              productNamePattern: actionResult.pendingEnrichment.productNamePattern,
+              extractionPrompt: actionResult.pendingEnrichment.extractionPrompt,
+              separator: actionResult.pendingEnrichment.separator,
+              ruleId: rule.id,
+              ruleName: rule.name,
+            });
+          }
         }
 
         if (actionResult.modified) {
@@ -772,7 +747,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
     // Convergence: no modifications this iteration
     if (!anyModified) {
-      return { lineItems, auditTrail, iterationCount, converged: true };
+      return { lineItems, auditTrail, iterationCount, converged: true, pendingEnrichments };
     }
   }
 
@@ -791,5 +766,5 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
     warning: `Rules engine did not converge after ${maxIterations} iterations`,
   });
 
-  return { lineItems, auditTrail, iterationCount, converged: false };
+  return { lineItems, auditTrail, iterationCount, converged: false, pendingEnrichments };
 }

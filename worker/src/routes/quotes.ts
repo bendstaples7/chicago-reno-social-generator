@@ -14,6 +14,7 @@ import {
   EmbeddingService,
   SimilarityEngine,
   QuoteSyncService,
+  EnrichmentService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -349,7 +350,55 @@ app.post('/generate', async (c) => {
   if (body.jobberRequestId) {
     result.draft.jobberRequestId = body.jobberRequestId;
   }
+
+  // Set pending enrichments count on the draft
+  const enrichmentCount = result.pendingEnrichments?.length ?? 0;
+  result.draft.pendingEnrichments = enrichmentCount;
+
   const saved = await quoteDraftService.save(result.draft);
+
+  // Fire off async enrichment processing (don't await — return draft immediately)
+  if (enrichmentCount > 0 && result.pendingEnrichments) {
+    const enrichmentService = new EnrichmentService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+    const customerText = body.customerText ?? '';
+    const enrichments = result.pendingEnrichments;
+    const draftId = saved.id;
+
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const enrichedDescriptions = await enrichmentService.processEnrichments(
+            enrichments,
+            customerText,
+            saved.lineItems,
+          );
+
+          if (enrichedDescriptions.size > 0) {
+            // Update line item descriptions in the database
+            const updatedLineItems = saved.lineItems.map(li => {
+              const newDesc = enrichedDescriptions.get(li.id);
+              return newDesc ? { ...li, description: newDesc } : li;
+            });
+            await quoteDraftService.update(draftId, userId, {
+              lineItems: updatedLineItems,
+            });
+          }
+
+          // Clear pending enrichments count
+          await db.prepare(
+            "UPDATE quote_drafts SET pending_enrichments = 0, updated_at = datetime('now') WHERE id = ?"
+          ).bind(draftId).run();
+        } catch (err) {
+          console.warn(`Enrichment processing failed for draft ${draftId}: ${err instanceof Error ? err.message : err}`);
+          // Clear pending count even on failure so the UI doesn't spin forever
+          await db.prepare(
+            "UPDATE quote_drafts SET pending_enrichments = 0, updated_at = datetime('now') WHERE id = ?"
+          ).bind(draftId).run();
+        }
+      })(),
+    );
+  }
+
   return c.json(saved, 201);
 });
 
@@ -503,6 +552,7 @@ app.post('/drafts/:id/revise', async (c) => {
   }
 
   // Update the draft with revised line items
+  const enrichmentCount = revised.pendingEnrichments?.length ?? 0;
   const updated = await quoteDraftService.update(draftId, userId, {
     lineItems: revised.lineItems,
     unresolvedItems: revised.unresolvedItems,
@@ -511,8 +561,51 @@ app.post('/drafts/:id/revise', async (c) => {
   // Persist the revision history entry (after successful update)
   await quoteDraftService.addRevisionEntry(draftId, userId, trimmed);
 
+  // Fire off async enrichment processing (don't await — return draft immediately)
+  if (enrichmentCount > 0 && revised.pendingEnrichments) {
+    const enrichmentService = new EnrichmentService(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+    const enrichments = revised.pendingEnrichments;
+
+    // Set pending enrichments count
+    await db.prepare(
+      "UPDATE quote_drafts SET pending_enrichments = ?, updated_at = datetime('now') WHERE id = ?"
+    ).bind(enrichmentCount, draftId).run();
+
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const enrichedDescriptions = await enrichmentService.processEnrichments(
+            enrichments,
+            draft.customerRequestText,
+            revised.lineItems,
+          );
+
+          if (enrichedDescriptions.size > 0) {
+            const updatedLineItems = revised.lineItems.map(li => {
+              const newDesc = enrichedDescriptions.get(li.id);
+              return newDesc ? { ...li, description: newDesc } : li;
+            });
+            await quoteDraftService.update(draftId, userId, {
+              lineItems: updatedLineItems,
+            });
+          }
+
+          await db.prepare(
+            "UPDATE quote_drafts SET pending_enrichments = 0, updated_at = datetime('now') WHERE id = ?"
+          ).bind(draftId).run();
+        } catch (err) {
+          console.warn(`Enrichment processing failed for draft ${draftId}: ${err instanceof Error ? err.message : err}`);
+          await db.prepare(
+            "UPDATE quote_drafts SET pending_enrichments = 0, updated_at = datetime('now') WHERE id = ?"
+          ).bind(draftId).run();
+        }
+      })(),
+    );
+  }
+
   return c.json({
     ...updated,
+    pendingEnrichments: enrichmentCount,
     ...(ruleCreated ? { ruleCreated } : {}),
     ...(ruleCreationError ? { ruleCreationError } : {}),
     ...(revised.rulesEngineAuditTrail ? { rulesEngineAuditTrail: revised.rulesEngineAuditTrail } : {}),

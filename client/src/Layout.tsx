@@ -115,7 +115,10 @@ function InstagramBanner({ instagram, onSkip, onSettings }: {
  * cookies are refreshed. The app is completely unusable without them.
  * Do NOT make this skippable or non-blocking.
  */
-function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promise<void> }) {
+function JobberSessionOverlay({ recheckSystems, recheckSystemsSilent }: {
+  recheckSystems: () => Promise<void>;
+  recheckSystemsSilent: () => Promise<void>;
+}) {
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [pollCount, setPollCount] = useState(0);
@@ -163,9 +166,10 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
           }
 
           try {
-            await recheckSystems();
-            // If recheckSystems succeeds and cookies are valid, the overlay will unmount
-            // and the useEffect cleanup above will clear this interval.
+            await recheckSystemsSilent();
+            // If cookies are now valid, systemsStatus transitions to 'ready'
+            // without flashing the 'checking' spinner. The overlay unmounts
+            // and the useEffect cleanup above clears this interval.
           } catch {
             // Keep polling
           }
@@ -246,7 +250,7 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
 }
 
 export default function Layout() {
-  const { user, logout, systemsStatus, recheckSystems, skipInstagram, skipJobberSession } = useAuth();
+  const { user, logout, systemsStatus, recheckSystems, recheckSystemsSilent, skipInstagram, skipJobberSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = getActiveTab(location.pathname);
@@ -323,7 +327,7 @@ export default function Layout() {
    * See .kiro/steering/product.md "Jobber API Limitations" for full context.
    */
   if (systemsStatus.state === 'jobber_session_expired') {
-    return <JobberSessionOverlay recheckSystems={recheckSystems} />;
+    return <JobberSessionOverlay recheckSystems={recheckSystems} recheckSystemsSilent={recheckSystemsSilent} />;
   }
 
   if (systemsStatus.state === 'error') {

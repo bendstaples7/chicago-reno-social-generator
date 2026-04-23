@@ -155,7 +155,9 @@ export type RuleActionType =
   | 'remove_line_item'
   | 'set_quantity'
   | 'adjust_quantity'
-  | 'set_unit_price';
+  | 'set_unit_price'
+  | 'set_description'
+  | 'append_description';
 
 /** A typed action for a structured rule */
 export type RuleAction =
@@ -163,7 +165,9 @@ export type RuleAction =
   | { type: 'remove_line_item'; productNamePattern: string }
   | { type: 'set_quantity'; productNamePattern: string; quantity: number }
   | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
-  | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number };
+  | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }
+  | { type: 'set_description'; productNamePattern: string; description: string }
+  | { type: 'append_description'; productNamePattern: string; text: string; separator?: string };
 
 /** A structured rule with typed condition and actions */
 export interface StructuredRule {
@@ -196,8 +200,8 @@ export interface AuditEntry {
   condition: RuleCondition;
   action: RuleAction;
   matchingLineItemIds: string[];
-  beforeSnapshot: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
-  afterSnapshot: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
+  beforeSnapshot: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
+  afterSnapshot: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
   warning?: string;
 }
 

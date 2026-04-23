@@ -9,6 +9,7 @@ import {
   deleteRuleGroup,
   summarizeRuleTitle,
   regenerateRuleTitles,
+  autoCategorizeRules,
 } from '../api';
 
 interface RuleFormData {
@@ -45,6 +46,10 @@ export default function RulesPage() {
   // Regenerate titles
   const [regenerating, setRegenerating] = useState(false);
   const [regenerateResult, setRegenerateResult] = useState<string | null>(null);
+
+  // Auto-categorize
+  const [categorizing, setCategorizing] = useState(false);
+  const [categorizeResult, setCategorizeResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -215,6 +220,24 @@ export default function RulesPage() {
     }
   };
 
+  const handleAutoCategorize = async () => {
+    setCategorizing(true);
+    setCategorizeResult(null);
+    try {
+      const result = await autoCategorizeRules();
+      setCategorizeResult(
+        result.moved > 0
+          ? `Moved ${result.moved} of ${result.total} rules into trade groups.`
+          : `All ${result.total} rules are already categorized.`,
+      );
+      await load();
+    } catch {
+      setCategorizeResult('Failed to auto-categorize. Please try again.');
+    } finally {
+      setCategorizing(false);
+    }
+  };
+
   if (loading) return <p>Loading rules…</p>;
 
   const renderForm = () => (
@@ -376,9 +399,9 @@ export default function RulesPage() {
         )}
       </div>
 
-      {/* Regenerate titles button */}
+      {/* Rule management actions */}
       {totalRuleCount > 0 && (
-        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             onClick={handleRegenerateTitles}
             disabled={regenerating}
@@ -395,8 +418,27 @@ export default function RulesPage() {
           >
             {regenerating ? 'Regenerating…' : '✨ Regenerate Rule Titles'}
           </button>
+          <button
+            onClick={handleAutoCategorize}
+            disabled={categorizing}
+            style={{
+              background: '#fff',
+              color: '#555',
+              border: '1px solid #ccc',
+              padding: '0.4rem 0.75rem',
+              borderRadius: 6,
+              cursor: categorizing ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              opacity: categorizing ? 0.6 : 1,
+            }}
+          >
+            {categorizing ? 'Categorizing…' : '🏷️ Auto-Categorize by Trade'}
+          </button>
           {regenerateResult && (
             <span style={{ fontSize: '0.8rem', color: '#666' }}>{regenerateResult}</span>
+          )}
+          {categorizeResult && (
+            <span style={{ fontSize: '0.8rem', color: '#666' }}>{categorizeResult}</span>
           )}
         </div>
       )}
@@ -493,6 +535,19 @@ export default function RulesPage() {
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <span style={{ fontWeight: 600 }}>{rule.name}</span>
+                          {rule.conditionJson && rule.actionJson && (
+                            <span style={{
+                              fontSize: '0.7rem',
+                              background: '#e3f2fd',
+                              color: '#1565c0',
+                              padding: '1px 6px',
+                              borderRadius: 10,
+                            }}
+                            title="This rule has structured conditions and actions that are enforced deterministically"
+                            >
+                              Structured
+                            </span>
+                          )}
                           {!rule.isActive && (
                             <span style={{
                               fontSize: '0.7rem',

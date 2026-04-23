@@ -6,6 +6,7 @@ import type {
   ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
   JobberCustomerRequest, SimilarQuote, JobberRequestFormData,
   Rule, RuleGroup, RuleGroupWithRules, SystemsStatusResponse,
+  RuleCondition, RuleAction, TriggerMode,
 } from 'shared';
 
 const TOKEN_KEY = 'session_token';
@@ -649,6 +650,9 @@ export async function createRule(data: {
   description: string;
   ruleGroupId?: string;
   isActive?: boolean;
+  conditionJson?: RuleCondition;
+  actionJson?: RuleAction[];
+  triggerMode?: TriggerMode;
 }): Promise<Rule> {
   const res = await fetch(API_BASE + '/api/quotes/rules', {
     method: 'POST',
@@ -663,6 +667,9 @@ export async function updateRule(id: string, data: {
   description?: string;
   ruleGroupId?: string;
   isActive?: boolean;
+  conditionJson?: RuleCondition | null;
+  actionJson?: RuleAction[] | null;
+  triggerMode?: TriggerMode;
 }): Promise<Rule> {
   const res = await fetch(API_BASE + '/api/quotes/rules/' + id, {
     method: 'PUT',
@@ -725,6 +732,14 @@ export async function summarizeRuleTitle(description: string): Promise<string> {
 
 export async function regenerateRuleTitles(): Promise<{ updated: number; total: number }> {
   const res = await fetch(API_BASE + '/api/quotes/rules/regenerate-titles', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponseWithToast(res);
+}
+
+export async function autoCategorizeRules(): Promise<{ moved: number; total: number }> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/auto-categorize', {
     method: 'POST',
     headers: { ...authHeaders() },
   });

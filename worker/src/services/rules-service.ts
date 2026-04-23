@@ -705,6 +705,82 @@ export class RulesService {
     return { updated, total: rules.length };
   }
 
+  /**
+   * Auto-categorize rules into trade-based groups by matching rule descriptions
+   * against known trade keywords. Rules that don't match any trade stay in their
+   * current group.
+   */
+  async autoCategorizeRules(): Promise<{ moved: number; total: number }> {
+    // Trade keywords mapped to group names (case-insensitive matching against rule description)
+    // Order matters: more specific patterns are checked before broader ones to avoid
+    // misclassification (e.g., "shower surround" → Tile, not Plumbing).
+    // Exterior is checked before Tile so "drain tile" (exterior waterproofing) isn't
+    // caught by Tile's generic \btile\b pattern.
+    const tradeKeywords: Array<{ groupName: string; patterns: RegExp }> = [
+      { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
+      { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
+      { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
+      { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
+      { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
+      { groupName: 'Carpentry', patterns: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
+      { groupName: 'Drywall', patterns: /\b(drywall|hole patch)\b/i },
+      { groupName: 'HVAC', patterns: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
+      { groupName: 'Demo', patterns: /\b(demo|demolition|tear out|rip out)\b/i },
+      { groupName: 'Insulation', patterns: /\b(insulation|insulate)\b/i },
+      { groupName: 'Appliances', patterns: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
+      { groupName: 'Countertops', patterns: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
+    ];
+
+    // Fetch all groups to build a name→id map
+    const groupsResult = await this.db.prepare(
+      'SELECT id, name FROM rule_groups'
+    ).all();
+    const groupNameToId = new Map<string, string>();
+    for (const row of groupsResult.results as Record<string, unknown>[]) {
+      groupNameToId.set((row.name as string).toLowerCase(), row.id as string);
+    }
+
+    // Fetch all rules
+    const rulesResult = await this.db.prepare(
+      `SELECT ${RULE_COLUMNS} FROM rules ORDER BY priority_order ASC`
+    ).all();
+    const rules = (rulesResult.results as Record<string, unknown>[]).map((row) => this.mapRuleRow(row));
+
+    let moved = 0;
+    const statements: D1PreparedStatement[] = [];
+
+    for (const rule of rules) {
+      // Try to match rule description + name against trade keywords
+      const textToMatch = `${rule.name} ${rule.description}`;
+      let matchedGroupName: string | null = null;
+
+      for (const { groupName, patterns } of tradeKeywords) {
+        if (patterns.test(textToMatch)) {
+          matchedGroupName = groupName;
+          break;
+        }
+      }
+
+      if (matchedGroupName) {
+        const targetGroupId = groupNameToId.get(matchedGroupName.toLowerCase());
+        if (targetGroupId && targetGroupId !== rule.ruleGroupId) {
+          statements.push(
+            this.db.prepare(
+              "UPDATE rules SET rule_group_id = ?, updated_at = datetime('now') WHERE id = ?"
+            ).bind(targetGroupId, rule.id),
+          );
+          moved++;
+        }
+      }
+    }
+
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
+
+    return { moved, total: rules.length };
+  }
+
   // ── Feedback & line-item-rules ────────────────────────────────
 
   /**

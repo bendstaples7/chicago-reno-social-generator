@@ -1,7 +1,8 @@
 import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
 import { deduplicateLineItems } from './line-item-utils.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote } from 'shared';
+import { executeRules } from './rules-engine.js';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, RuleGroupWithRules, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -19,9 +20,11 @@ export interface QuoteEngineInput {
 export interface QuoteEngineOutput {
   draft: QuoteDraft;
   similarQuotes?: SimilarQuote[];
+  rulesEngineAuditTrail?: AuditEntry[];
 }
 
 interface AILineItem {
+  id?: string;
   productCatalogEntryId: string | null;
   productName: string;
   description?: string;
@@ -97,6 +100,7 @@ export class QuoteEngine {
     catalog: ProductCatalogEntry[],
     templates: QuoteTemplate[],
     rules?: RuleGroupWithRules[],
+    structuredRules?: StructuredRule[],
   ): Promise<QuoteEngineOutput> {
     if (!this.apiKey) {
       throw new PlatformError({
@@ -161,7 +165,51 @@ export class QuoteEngine {
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
       const aiResult = this.parseAIResponse(raw, catalog, validRuleIds);
-      return this.buildDraft(input, aiResult);
+
+      // --- Rules Engine Integration ---
+      // Convert validated AI line items to EngineLineItem format, run the
+      // deterministic rules engine, then convert back for deduplication.
+      let auditTrail: AuditEntry[] | undefined;
+
+      if (structuredRules && structuredRules.length > 0) {
+        const engineLineItems: EngineLineItem[] = aiResult.lineItems.map((item) => ({
+          id: crypto.randomUUID(),
+          productCatalogEntryId: item.productCatalogEntryId,
+          productName: item.productName,
+          description: item.description ?? '',
+          quantity: item.quantity ?? 1,
+          unitPrice: item.unitPrice ?? 0,
+          confidenceScore: item.confidenceScore,
+          originalText: item.originalText ?? '',
+          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
+        }));
+
+        const engineResult = executeRules({
+          lineItems: engineLineItems,
+          rules: structuredRules,
+          catalog,
+        });
+
+        auditTrail = engineResult.auditTrail;
+
+        // Convert engine output back to AILineItem format
+        aiResult.lineItems = engineResult.lineItems.map((eli) => ({
+          id: eli.id,
+          productCatalogEntryId: eli.productCatalogEntryId,
+          productName: eli.productName,
+          description: eli.description,
+          quantity: eli.quantity,
+          unitPrice: eli.unitPrice,
+          confidenceScore: eli.confidenceScore,
+          originalText: eli.originalText,
+          ruleIdsApplied: eli.ruleIdsApplied,
+        }));
+      }
+
+      // Deduplicate after rules engine has had a chance to add/modify items
+      aiResult.lineItems = deduplicateLineItems(aiResult.lineItems);
+
+      return this.buildDraft(input, aiResult, auditTrail);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -332,12 +380,12 @@ export class QuoteEngine {
 
     // Deduplicate: merge items that share the same product name.
     // The AI sometimes returns the same product twice despite prompt instructions.
-    const dedupedItems = deduplicateLineItems(validatedItems);
+    // NOTE: Deduplication is now handled in generateQuote() after the rules engine runs.
 
     return {
       selectedTemplateId: parsed.selectedTemplateId ?? null,
       selectedTemplateName: parsed.selectedTemplateName ?? null,
-      lineItems: dedupedItems,
+      lineItems: validatedItems,
     };
   }
 
@@ -354,6 +402,7 @@ export class QuoteEngine {
   private buildDraft(
     input: QuoteEngineInput,
     aiResult: AIResponse,
+    auditTrail?: AuditEntry[],
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
@@ -362,7 +411,7 @@ export class QuoteEngine {
     const allItems: QuoteLineItem[] = aiResult.lineItems.map((item) => {
       const resolved = item.confidenceScore >= CONFIDENCE_THRESHOLD && item.productCatalogEntryId !== null;
       return {
-        id: crypto.randomUUID(),
+        id: item.id ?? crypto.randomUUID(),
         productCatalogEntryId: item.productCatalogEntryId,
         productName: item.productName,
         description: item.description ?? '',
@@ -399,6 +448,7 @@ export class QuoteEngine {
     return {
       draft,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
+      rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
     };
   }
 

@@ -126,6 +126,89 @@ export interface QuoteDraftUpdate {
   status?: 'draft' | 'finalized';
 }
 
+// ---------------------------------------------------------------------------
+// Rules Engine Types
+// ---------------------------------------------------------------------------
+
+/** Trigger mode for structured rules */
+export type TriggerMode = 'on_create' | 'chained';
+
+/** Condition types supported by the rules engine */
+export type RuleConditionType =
+  | 'line_item_exists'
+  | 'line_item_not_exists'
+  | 'line_item_quantity_gte'
+  | 'line_item_quantity_lte'
+  | 'always';
+
+/** A typed condition for a structured rule */
+export type RuleCondition =
+  | { type: 'line_item_exists'; productNamePattern: string }
+  | { type: 'line_item_not_exists'; productNamePattern: string }
+  | { type: 'line_item_quantity_gte'; productNamePattern: string; threshold: number }
+  | { type: 'line_item_quantity_lte'; productNamePattern: string; threshold: number }
+  | { type: 'always' };
+
+/** Action types supported by the rules engine */
+export type RuleActionType =
+  | 'add_line_item'
+  | 'remove_line_item'
+  | 'set_quantity'
+  | 'adjust_quantity'
+  | 'set_unit_price';
+
+/** A typed action for a structured rule */
+export type RuleAction =
+  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string }
+  | { type: 'remove_line_item'; productNamePattern: string }
+  | { type: 'set_quantity'; productNamePattern: string; quantity: number }
+  | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
+  | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number };
+
+/** A structured rule with typed condition and actions */
+export interface StructuredRule {
+  id: string;
+  name: string;
+  priorityOrder: number;
+  triggerMode: TriggerMode;
+  condition: RuleCondition;
+  actions: RuleAction[];
+}
+
+/** Line item representation used internally by the rules engine */
+export interface EngineLineItem {
+  id: string;
+  productCatalogEntryId: string | null;
+  productName: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  confidenceScore: number;
+  originalText: string;
+  ruleIdsApplied: string[];
+}
+
+/** An audit entry produced by the rules engine */
+export interface AuditEntry {
+  ruleId: string;
+  ruleName: string;
+  iteration: number;
+  condition: RuleCondition;
+  action: RuleAction;
+  matchingLineItemIds: string[];
+  beforeSnapshot: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
+  afterSnapshot: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
+  warning?: string;
+}
+
+/** Result of a rules engine execution */
+export interface RulesEngineResult {
+  lineItems: EngineLineItem[];
+  auditTrail: AuditEntry[];
+  iterationCount: number;
+  converged: boolean;
+}
+
 /** A business rule that influences quote generation */
 export interface Rule {
   id: string;
@@ -134,6 +217,9 @@ export interface Rule {
   ruleGroupId: string;
   priorityOrder: number;
   isActive: boolean;
+  conditionJson?: RuleCondition | null;
+  actionJson?: RuleAction[] | null;
+  triggerMode: TriggerMode;
   createdAt: Date;
   updatedAt: Date;
 }

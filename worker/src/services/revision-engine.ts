@@ -1,7 +1,8 @@
 import { PlatformError } from '../errors/index.js';
 import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
 import { deduplicateLineItems } from './line-item-utils.js';
-import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules } from 'shared';
+import { executeRules } from './rules-engine.js';
+import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -13,6 +14,7 @@ export interface RevisionInput {
   currentUnresolvedItems: QuoteLineItem[];
   catalog: ProductCatalogEntry[];
   rules?: RuleGroupWithRules[];
+  structuredRules?: StructuredRule[];
 }
 
 export interface RevisionOutput {
@@ -20,6 +22,8 @@ export interface RevisionOutput {
   unresolvedItems: QuoteLineItem[];
   /** True when the AI response could not be parsed and the original items were returned unchanged. */
   revisionFailed?: boolean;
+  /** Audit trail from the deterministic rules engine, if structured rules were applied. */
+  rulesEngineAuditTrail?: AuditEntry[];
 }
 
 interface AILineItem {
@@ -228,10 +232,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, validRuleIds);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, validRuleIds, input.structuredRules);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], validRuleIds: Set<string>): RevisionOutput {
+  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], validRuleIds: Set<string>, structuredRules?: StructuredRule[]): RevisionOutput {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -328,12 +332,70 @@ export class RevisionEngine {
       }
     }
 
+    // --- Rules Engine Integration ---
+    // Convert validated AI line items to EngineLineItem format, run the
+    // deterministic rules engine, then convert back for deduplication.
+    let auditTrail: AuditEntry[] | undefined;
+
+    // Capture original unmatchedReasons before the rules engine may rebuild allItems
+    const unmatchedReasonById = new Map<string, string>();
+    for (const item of allItems) {
+      if (item.unmatchedReason) {
+        unmatchedReasonById.set(item.id, item.unmatchedReason);
+      }
+    }
+
+    if (structuredRules && structuredRules.length > 0) {
+      const engineLineItems: EngineLineItem[] = allItems.map((item) => ({
+        id: item.id,
+        productCatalogEntryId: item.productCatalogEntryId,
+        productName: item.productName,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        confidenceScore: item.confidenceScore,
+        originalText: item.originalText,
+        ruleIdsApplied: item.ruleIdsApplied ?? [],
+      }));
+
+      const engineResult = executeRules({
+        lineItems: engineLineItems,
+        rules: structuredRules,
+        catalog,
+      });
+
+      auditTrail = engineResult.auditTrail;
+
+      // Replace allItems with engine output, preserving resolved/unresolved partitioning
+      allItems.length = 0;
+      for (const eli of engineResult.lineItems) {
+        const resolved = eli.confidenceScore >= CONFIDENCE_THRESHOLD && eli.productCatalogEntryId !== null;
+        allItems.push({
+          id: eli.id,
+          productCatalogEntryId: eli.productCatalogEntryId,
+          productName: eli.productName,
+          description: eli.description,
+          quantity: Math.max(0, eli.quantity),
+          unitPrice: Math.max(0, eli.unitPrice),
+          confidenceScore: eli.confidenceScore,
+          originalText: eli.originalText,
+          resolved,
+          unmatchedReason: resolved ? undefined : (unmatchedReasonById.get(eli.id) ?? 'Low confidence match'),
+          ruleIdsApplied: eli.ruleIdsApplied,
+        });
+      }
+    }
+
     // Deduplicate BEFORE partitioning so duplicates split across the
     // confidence threshold (one resolved, one unresolved) are caught.
     const dedupedItems = deduplicateLineItems(allItems);
     const lineItems = dedupedItems.filter((i) => i.resolved);
     const unresolvedItems = dedupedItems.filter((i) => !i.resolved);
 
-    return { lineItems, unresolvedItems };
+    return {
+      lineItems,
+      unresolvedItems,
+      rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
+    };
   }
 }

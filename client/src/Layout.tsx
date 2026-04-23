@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { API_BASE, triggerCookieRefresh } from './api';
 
 const TAB_STORAGE_KEY = 'app_active_tab';
@@ -119,6 +119,25 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [pollCount, setPollCount] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef = useRef(0);
+
+  // Clean up the polling interval when the overlay unmounts (i.e. cookies became valid)
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -128,20 +147,25 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
       if (result.triggered) {
         setMessage('Refresh started. Waiting for completion (~60 seconds)…');
         setPollCount(0);
+        pollCountRef.current = 0;
+        // Clear any previous polling interval before starting a new one
+        stopPolling();
         // Start polling — the workflow takes ~30-60 seconds
-        const interval = setInterval(async () => {
-          setPollCount((c) => {
-            if (c >= 12) { // 12 * 10s = 2 minutes max
-              clearInterval(interval);
-              setMessage('Refresh is taking longer than expected. Click Re-check to try again.');
-              setRefreshing(false);
-              return c;
-            }
-            return c + 1;
-          });
+        intervalRef.current = setInterval(async () => {
+          pollCountRef.current += 1;
+          setPollCount(pollCountRef.current);
+
+          if (pollCountRef.current >= 12) { // 12 * 10s = 2 minutes max
+            stopPolling();
+            setMessage('Refresh is taking longer than expected. Click Re-check to try again.');
+            setRefreshing(false);
+            return;
+          }
+
           try {
             await recheckSystems();
             // If recheckSystems succeeds and cookies are valid, the overlay will unmount
+            // and the useEffect cleanup above will clear this interval.
           } catch {
             // Keep polling
           }

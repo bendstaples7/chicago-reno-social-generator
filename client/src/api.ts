@@ -712,3 +712,21 @@ export async function deleteRuleGroup(id: string): Promise<void> {
   });
   await handleResponseWithToast(res);
 }
+
+export async function summarizeRuleTitle(description: string): Promise<string> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/summarize-title', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ description }),
+  });
+  const data = await handleResponse<{ title: string }>(res);
+  return data.title;
+}
+
+export async function regenerateRuleTitles(): Promise<{ updated: number; total: number }> {
+  const res = await fetch(API_BASE + '/api/quotes/rules/regenerate-titles', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponseWithToast(res);
+}

@@ -611,13 +611,110 @@ export class RulesService {
     return row.id;
   }
 
+  // ── AI Title Summarization ───────────────────────────────────
+
+  /**
+   * Use OpenAI to generate a concise, descriptive title for a rule based on its description.
+   * Falls back to the simple truncation method if the API call fails.
+   */
+  async summarizeRuleTitle(
+    description: string,
+    apiKey: string,
+    apiUrl?: string,
+  ): Promise<string> {
+    if (!apiKey) return this.deriveRuleName(description);
+
+    const url = apiUrl || 'https://api.openai.com/v1/chat/completions';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + apiKey,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a concise title generator for business rules used in a home renovation quoting system. ' +
+                'Given a rule description, produce a short, clear title (max 8 words) that summarizes the rule\'s intent. ' +
+                'Do NOT use quotes or punctuation at the end. Just return the title text, nothing else.',
+            },
+            { role: 'user', content: description },
+          ],
+          temperature: 0.2,
+          max_tokens: 30,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        console.warn(`Rule title summarization failed (${response.status}), falling back to truncation`);
+        return this.deriveRuleName(description);
+      }
+
+      const data = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      const title = data.choices?.[0]?.message?.content?.trim();
+      if (!title || title.length === 0) return this.deriveRuleName(description);
+      // Cap at 80 chars just in case
+      return title.length > 80 ? title.slice(0, 80) : title;
+    } catch {
+      clearTimeout(timeout);
+      console.warn('Rule title summarization error, falling back to truncation');
+      return this.deriveRuleName(description);
+    }
+  }
+
+  /**
+   * Regenerate summarized titles for all rules that currently have truncated names.
+   * Returns the count of rules updated.
+   */
+  async regenerateAllTitles(apiKey: string, apiUrl?: string): Promise<{ updated: number; total: number }> {
+    const result = await this.db.prepare(
+      `SELECT ${RULE_COLUMNS} FROM rules ORDER BY priority_order ASC`
+    ).all();
+
+    const rules = (result.results as Record<string, unknown>[]).map((row) => this.mapRuleRow(row));
+    let updated = 0;
+
+    for (const rule of rules) {
+      // Only regenerate if the name looks like a truncation of the description
+      const nameIsTruncated = rule.description.toLowerCase().startsWith(rule.name.toLowerCase().replace('…', ''))
+        || rule.name.endsWith('…');
+
+      if (nameIsTruncated) {
+        const newTitle = await this.summarizeRuleTitle(rule.description, apiKey, apiUrl);
+        if (newTitle !== rule.name) {
+          await this.db.prepare(
+            'UPDATE rules SET name = ?, updated_at = datetime(\'now\') WHERE id = ?'
+          ).bind(newTitle, rule.id).run();
+          updated++;
+        }
+      }
+    }
+
+    return { updated, total: rules.length };
+  }
+
   // ── Feedback & line-item-rules ────────────────────────────────
 
   /**
    * Create a rule from revision feedback text.
+   * Uses AI summarization for the title when an API key is provided.
    */
-  async createRuleFromFeedback(feedbackText: string): Promise<Rule> {
-    const name = this.deriveRuleName(feedbackText);
+  async createRuleFromFeedback(feedbackText: string, apiKey?: string, apiUrl?: string): Promise<Rule> {
+    const name = apiKey
+      ? await this.summarizeRuleTitle(feedbackText, apiKey, apiUrl)
+      : this.deriveRuleName(feedbackText);
     const groupId = await this.getDefaultGroupId();
 
     return this.createRule({

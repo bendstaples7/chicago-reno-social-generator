@@ -158,6 +158,37 @@ app.delete('/rules/groups/:id', async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * POST /rules/summarize-title
+ * Generate an AI-summarized title for a rule description.
+ */
+app.post('/rules/summarize-title', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const { description } = await c.req.json() as { description?: string };
+  if (!description || description.trim() === '') {
+    return c.json({ title: '' }, 400);
+  }
+  const title = await rulesService.summarizeRuleTitle(
+    description.trim(),
+    c.env.AI_TEXT_API_KEY,
+    c.env.AI_TEXT_API_URL,
+  );
+  return c.json({ title });
+});
+
+/**
+ * POST /rules/regenerate-titles
+ * Regenerate AI-summarized titles for all rules with truncated names.
+ */
+app.post('/rules/regenerate-titles', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const result = await rulesService.regenerateAllTitles(
+    c.env.AI_TEXT_API_KEY,
+    c.env.AI_TEXT_API_URL,
+  );
+  return c.json(result);
+});
+
 // ── Helper functions ──────────────────────────────────────────
 
 async function fetchManualCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {
@@ -410,7 +441,7 @@ app.post('/drafts/:id/revise', async (c) => {
   let ruleCreationError: string | undefined;
   if (shouldCreateRule) {
     try {
-      const newRule = await rulesService.createRuleFromFeedback(trimmed);
+      const newRule = await rulesService.createRuleFromFeedback(trimmed, c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
       ruleCreated = { id: newRule.id, name: newRule.name };
       // Re-fetch rules so the newly created rule is included in the prompt
       try {

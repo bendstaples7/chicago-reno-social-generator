@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { API_BASE, triggerCookieRefresh } from './api';
 
 const TAB_STORAGE_KEY = 'app_active_tab';
@@ -115,10 +115,32 @@ function InstagramBanner({ instagram, onSkip, onSettings }: {
  * cookies are refreshed. The app is completely unusable without them.
  * Do NOT make this skippable or non-blocking.
  */
-function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promise<void> }) {
+function JobberSessionOverlay({ recheckSystems, recheckSystemsSilent }: {
+  recheckSystems: () => Promise<void>;
+  recheckSystemsSilent: () => Promise<void>;
+}) {
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [pollCount, setPollCount] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef = useRef(0);
+
+  // Clean up the polling interval when the overlay unmounts (i.e. cookies became valid)
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -128,20 +150,26 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
       if (result.triggered) {
         setMessage('Refresh started. Waiting for completion (~60 seconds)…');
         setPollCount(0);
+        pollCountRef.current = 0;
+        // Clear any previous polling interval before starting a new one
+        stopPolling();
         // Start polling — the workflow takes ~30-60 seconds
-        const interval = setInterval(async () => {
-          setPollCount((c) => {
-            if (c >= 12) { // 12 * 10s = 2 minutes max
-              clearInterval(interval);
-              setMessage('Refresh is taking longer than expected. Click Re-check to try again.');
-              setRefreshing(false);
-              return c;
-            }
-            return c + 1;
-          });
+        intervalRef.current = setInterval(async () => {
+          pollCountRef.current += 1;
+          setPollCount(pollCountRef.current);
+
+          if (pollCountRef.current >= 12) { // 12 * 10s = 2 minutes max
+            stopPolling();
+            setMessage('Refresh is taking longer than expected. Click Re-check to try again.');
+            setRefreshing(false);
+            return;
+          }
+
           try {
-            await recheckSystems();
-            // If recheckSystems succeeds and cookies are valid, the overlay will unmount
+            await recheckSystemsSilent();
+            // If cookies are now valid, systemsStatus transitions to 'ready'
+            // without flashing the 'checking' spinner. The overlay unmounts
+            // and the useEffect cleanup above clears this interval.
           } catch {
             // Keep polling
           }
@@ -222,7 +250,7 @@ function JobberSessionOverlay({ recheckSystems }: { recheckSystems: () => Promis
 }
 
 export default function Layout() {
-  const { user, logout, systemsStatus, recheckSystems, skipInstagram, skipJobberSession } = useAuth();
+  const { user, logout, systemsStatus, recheckSystems, recheckSystemsSilent, skipInstagram, skipJobberSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = getActiveTab(location.pathname);
@@ -299,7 +327,7 @@ export default function Layout() {
    * See .kiro/steering/product.md "Jobber API Limitations" for full context.
    */
   if (systemsStatus.state === 'jobber_session_expired') {
-    return <JobberSessionOverlay recheckSystems={recheckSystems} />;
+    return <JobberSessionOverlay recheckSystems={recheckSystems} recheckSystemsSilent={recheckSystemsSilent} />;
   }
 
   if (systemsStatus.state === 'error') {

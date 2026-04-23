@@ -18,6 +18,7 @@ interface AuthState {
   login: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   recheckSystems: () => Promise<void>;
+  recheckSystemsSilent: () => Promise<void>;
   skipInstagram: () => void;
   skipJobberSession: () => void;
   error: ErrorResponse | null;
@@ -122,6 +123,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await runSystemsCheck();
   }, [runSystemsCheck]);
 
+  /** Silent variant: re-fetches status without flashing the 'checking' spinner. */
+  const recheckSystemsSilent = useCallback(async () => {
+    try {
+      const response = await fetchSystemsStatus();
+      setSystemsStatus(evaluateSystemsStatus(response));
+    } catch {
+      // Silent check — don't overwrite current status on network error
+    }
+  }, []);
+
   const skipInstagram = useCallback(() => {
     setSystemsStatus({ state: 'ready' });
   }, []);
@@ -135,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, loading, systemsStatus, login, logout,
-      recheckSystems, skipInstagram, skipJobberSession, error, clearError,
+      recheckSystems, recheckSystemsSilent, skipInstagram, skipJobberSession, error, clearError,
     }}>
       {children}
     </AuthContext.Provider>

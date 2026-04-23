@@ -1,5 +1,9 @@
 import { PlatformError } from '../errors/index.js';
-import type { Rule, RuleGroup, RuleGroupWithRules } from 'shared';
+import type { Rule, RuleGroup, RuleGroupWithRules, StructuredRule, RuleCondition, RuleAction, TriggerMode } from 'shared';
+import { validateCondition, validateActions } from './rules-engine.js';
+
+/** Standard column list for rule SELECT queries */
+const RULE_COLUMNS = 'id, name, description, rule_group_id, priority_order, is_active, condition_json, action_json, trigger_mode, created_at, updated_at';
 
 export class RulesService {
   private readonly db: D1Database;
@@ -24,6 +28,57 @@ export class RulesService {
     return this.fetchGroupedRules(true);
   }
 
+  /**
+   * Fetch active structured rules (those with valid condition and action JSON).
+   * Returns typed StructuredRule[] for use by the rules engine.
+   * Skips rules with invalid JSON (logs warning, doesn't throw).
+   */
+  async getActiveStructuredRules(): Promise<StructuredRule[]> {
+    const result = await this.db.prepare(
+      `SELECT ${RULE_COLUMNS} FROM rules
+       WHERE is_active = 1
+         AND condition_json IS NOT NULL
+         AND action_json IS NOT NULL
+       ORDER BY priority_order ASC`
+    ).all();
+
+    const structuredRules: StructuredRule[] = [];
+
+    for (const row of result.results as Record<string, unknown>[]) {
+      try {
+        const conditionRaw = JSON.parse(row.condition_json as string);
+        const actionsRaw = JSON.parse(row.action_json as string);
+
+        // Validate condition schema
+        const condResult = validateCondition(conditionRaw);
+        if (!condResult.valid) {
+          console.warn(`Skipping rule ${row.id}: invalid condition — ${condResult.error}`);
+          continue;
+        }
+
+        // Validate actions schema
+        const actResult = validateActions(actionsRaw);
+        if (!actResult.valid) {
+          console.warn(`Skipping rule ${row.id}: invalid actions — ${actResult.errors?.join('; ')}`);
+          continue;
+        }
+
+        structuredRules.push({
+          id: row.id as string,
+          name: row.name as string,
+          priorityOrder: Number(row.priority_order),
+          triggerMode: (row.trigger_mode as TriggerMode) ?? 'chained',
+          condition: conditionRaw as RuleCondition,
+          actions: actionsRaw as RuleAction[],
+        });
+      } catch {
+        console.warn(`Skipping rule ${row.id}: failed to parse condition/action JSON`);
+      }
+    }
+
+    return structuredRules;
+  }
+
   // ── Rule CRUD ─────────────────────────────────────────────────
 
   /**
@@ -34,6 +89,9 @@ export class RulesService {
     description: string;
     ruleGroupId?: string;
     isActive?: boolean;
+    conditionJson?: RuleCondition;
+    actionJson?: RuleAction[];
+    triggerMode?: TriggerMode;
   }): Promise<Rule> {
     const missing: string[] = [];
     if (!data.name || data.name.trim() === '') missing.push('name');
@@ -49,19 +107,59 @@ export class RulesService {
       });
     }
 
+    // Validate structured rule schemas if provided
+    if (data.conditionJson !== undefined) {
+      const condResult = validateCondition(data.conditionJson);
+      if (!condResult.valid) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'RulesService',
+          operation: 'createRule',
+          description: `Invalid condition schema: ${condResult.error}`,
+          recommendedActions: ['Fix the condition JSON and retry'],
+        });
+      }
+    }
+
+    if (data.actionJson !== undefined) {
+      const actResult = validateActions(data.actionJson);
+      if (!actResult.valid) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'RulesService',
+          operation: 'createRule',
+          description: `Invalid action schema: ${actResult.errors?.join('; ')}`,
+          recommendedActions: ['Fix the action JSON and retry'],
+        });
+      }
+    }
+
     const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
     const id = crypto.randomUUID();
+    const conditionJsonStr = data.conditionJson ? JSON.stringify(data.conditionJson) : null;
+    const actionJsonStr = data.actionJson ? JSON.stringify(data.actionJson) : null;
+    const triggerMode = data.triggerMode ?? 'chained';
 
     try {
       // Atomic INSERT with computed priority_order to avoid race conditions
       await this.db.prepare(
-        `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active)
-         SELECT ?, ?, ?, ?, COALESCE(MAX(priority_order), -1) + 1, ?
+        `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active, condition_json, action_json, trigger_mode)
+         SELECT ?, ?, ?, ?, COALESCE(MAX(priority_order), -1) + 1, ?, ?, ?, ?
          FROM rules WHERE rule_group_id = ?`
-      ).bind(id, data.name.trim(), data.description.trim(), groupId, (data.isActive ?? true) ? 1 : 0, groupId).run();
+      ).bind(
+        id,
+        data.name.trim(),
+        data.description.trim(),
+        groupId,
+        (data.isActive ?? true) ? 1 : 0,
+        conditionJsonStr,
+        actionJsonStr,
+        triggerMode,
+        groupId,
+      ).run();
 
       const row = await this.db.prepare(
-        'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules WHERE id = ?'
+        `SELECT ${RULE_COLUMNS} FROM rules WHERE id = ?`
       ).bind(id).first() as Record<string, unknown>;
 
       return this.mapRuleRow(row);
@@ -87,6 +185,9 @@ export class RulesService {
     description?: string;
     ruleGroupId?: string;
     isActive?: boolean;
+    conditionJson?: RuleCondition | null;
+    actionJson?: RuleAction[] | null;
+    triggerMode?: TriggerMode;
   }): Promise<Rule> {
     if (data.name !== undefined && data.name.trim() === '') {
       throw new PlatformError({
@@ -127,6 +228,46 @@ export class RulesService {
       values.push(data.isActive ? 1 : 0);
     }
 
+    // Validate and apply structured rule fields
+    if (data.conditionJson !== undefined) {
+      if (data.conditionJson !== null) {
+        const condResult = validateCondition(data.conditionJson);
+        if (!condResult.valid) {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'RulesService',
+            operation: 'updateRule',
+            description: `Invalid condition schema: ${condResult.error}`,
+            recommendedActions: ['Fix the condition JSON and retry'],
+          });
+        }
+      }
+      setClauses.push('condition_json = ?');
+      values.push(data.conditionJson !== null ? JSON.stringify(data.conditionJson) : null);
+    }
+
+    if (data.actionJson !== undefined) {
+      if (data.actionJson !== null) {
+        const actResult = validateActions(data.actionJson);
+        if (!actResult.valid) {
+          throw new PlatformError({
+            severity: 'error',
+            component: 'RulesService',
+            operation: 'updateRule',
+            description: `Invalid action schema: ${actResult.errors?.join('; ')}`,
+            recommendedActions: ['Fix the action JSON and retry'],
+          });
+        }
+      }
+      setClauses.push('action_json = ?');
+      values.push(data.actionJson !== null ? JSON.stringify(data.actionJson) : null);
+    }
+
+    if (data.triggerMode !== undefined) {
+      setClauses.push('trigger_mode = ?');
+      values.push(data.triggerMode);
+    }
+
     values.push(ruleId);
 
     try {
@@ -135,7 +276,7 @@ export class RulesService {
       ).bind(...values).run();
 
       const row = await this.db.prepare(
-        'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules WHERE id = ?'
+        `SELECT ${RULE_COLUMNS} FROM rules WHERE id = ?`
       ).bind(ruleId).first() as Record<string, unknown> | null;
 
       if (!row) {
@@ -174,7 +315,7 @@ export class RulesService {
     ).bind(ruleId).run();
 
     const row = await this.db.prepare(
-      'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules WHERE id = ?'
+      `SELECT ${RULE_COLUMNS} FROM rules WHERE id = ?`
     ).bind(ruleId).first() as Record<string, unknown> | null;
 
     if (!row) {
@@ -463,7 +604,8 @@ export class RulesService {
   async getLineItemRules(quoteDraftId: string): Promise<Map<string, Rule[]>> {
     const result = await this.db.prepare(
       `SELECT lir.line_item_id, r.id, r.name, r.description, r.rule_group_id,
-              r.priority_order, r.is_active, r.created_at, r.updated_at
+              r.priority_order, r.is_active, r.condition_json, r.action_json,
+              r.trigger_mode, r.created_at, r.updated_at
        FROM line_item_rules lir
        JOIN rules r ON r.id = lir.rule_id
        WHERE lir.quote_draft_id = ?
@@ -490,8 +632,8 @@ export class RulesService {
     ).all();
 
     const rulesQuery = activeOnly
-      ? 'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules WHERE is_active = 1 ORDER BY priority_order ASC'
-      : 'SELECT id, name, description, rule_group_id, priority_order, is_active, created_at, updated_at FROM rules ORDER BY priority_order ASC';
+      ? `SELECT ${RULE_COLUMNS} FROM rules WHERE is_active = 1 ORDER BY priority_order ASC`
+      : `SELECT ${RULE_COLUMNS} FROM rules ORDER BY priority_order ASC`;
 
     const rulesResult = await this.db.prepare(rulesQuery).all();
 
@@ -512,6 +654,32 @@ export class RulesService {
   }
 
   private mapRuleRow(row: Record<string, unknown>): Rule {
+    let conditionJson: RuleCondition | null = null;
+    let actionJson: RuleAction[] | null = null;
+    let triggerMode: TriggerMode | undefined;
+
+    if (row.condition_json != null && typeof row.condition_json === 'string') {
+      try {
+        conditionJson = JSON.parse(row.condition_json) as RuleCondition;
+      } catch {
+        // Invalid JSON — treat as legacy rule
+        conditionJson = null;
+      }
+    }
+
+    if (row.action_json != null && typeof row.action_json === 'string') {
+      try {
+        actionJson = JSON.parse(row.action_json) as RuleAction[];
+      } catch {
+        // Invalid JSON — treat as legacy rule
+        actionJson = null;
+      }
+    }
+
+    if (row.trigger_mode != null && typeof row.trigger_mode === 'string') {
+      triggerMode = row.trigger_mode as TriggerMode;
+    }
+
     return {
       id: row.id as string,
       name: row.name as string,
@@ -519,6 +687,9 @@ export class RulesService {
       ruleGroupId: row.rule_group_id as string,
       priorityOrder: Number(row.priority_order),
       isActive: row.is_active === 1 || row.is_active === true,
+      conditionJson,
+      actionJson,
+      triggerMode,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };

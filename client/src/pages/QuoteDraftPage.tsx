@@ -681,19 +681,42 @@ export default function QuoteDraftPage() {
                               aria-label="Click to close rules panel"
                             >
                               {!hasRules ? (
-                                <p style={noRulesTextStyle}>No specific rules were applied</p>
+                                <div>
+                                  {item.originalText && item.originalText !== 'Manually added' ? (
+                                    <>
+                                      <p style={ruleGroupHeadingStyle}>AI-Matched from Request</p>
+                                      <p style={{ ...noRulesTextStyle, fontStyle: 'normal' }}>
+                                        &ldquo;{item.originalText}&rdquo;
+                                      </p>
+                                    </>
+                                  ) : item.originalText === 'Manually added' ? (
+                                    <p style={noRulesTextStyle}>Manually added by user</p>
+                                  ) : (
+                                    <p style={noRulesTextStyle}>No specific rules were applied</p>
+                                  )}
+                                </div>
                               ) : (
-                                Array.from(appliedGrouped.entries()).map(([groupName, rules]) => (
-                                  <div key={groupName} style={{ marginBottom: '0.5rem' }}>
-                                    <p style={ruleGroupHeadingStyle}>{groupName}</p>
-                                    {rules.map((rule) => (
-                                      <div key={rule.id} style={ruleEntryStyle}>
-                                        <span style={ruleNameStyle}>{rule.name}</span>
-                                        <span style={ruleDescStyle}>{rule.description}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ))
+                                <>
+                                  {item.originalText && item.originalText !== 'Manually added' && (
+                                    <div style={{ marginBottom: '0.5rem' }}>
+                                      <p style={ruleGroupHeadingStyle}>AI-Matched from Request</p>
+                                      <p style={{ ...noRulesTextStyle, fontStyle: 'normal' }}>
+                                        &ldquo;{item.originalText}&rdquo;
+                                      </p>
+                                    </div>
+                                  )}
+                                  {Array.from(appliedGrouped.entries()).map(([groupName, rules]) => (
+                                    <div key={groupName} style={{ marginBottom: '0.5rem' }}>
+                                      <p style={ruleGroupHeadingStyle}>{groupName}</p>
+                                      {rules.map((rule) => (
+                                        <div key={rule.id} style={ruleEntryStyle}>
+                                          <span style={ruleNameStyle}>{rule.name}</span>
+                                          <span style={ruleDescStyle}>{rule.description}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </>
                               )}
                             </div>
                           </td>

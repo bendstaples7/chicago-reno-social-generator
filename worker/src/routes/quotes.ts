@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote, StructuredRule, RuleCondition, RuleAction, TriggerMode } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import { JobberWebSession } from '../services/jobber-web-session.js';
@@ -57,17 +57,23 @@ app.get('/rules', async (c) => {
  */
 app.post('/rules', async (c) => {
   const rulesService = new RulesService(c.env.DB);
-  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+  const { name, description, ruleGroupId, isActive, conditionJson, actionJson, triggerMode } = await c.req.json() as {
     name?: string;
     description?: string;
     ruleGroupId?: string;
     isActive?: boolean;
+    conditionJson?: RuleCondition;
+    actionJson?: RuleAction[];
+    triggerMode?: TriggerMode;
   };
   const rule = await rulesService.createRule({
     name: name ?? '',
     description: description ?? '',
     ruleGroupId: ruleGroupId ?? undefined,
     isActive,
+    conditionJson,
+    actionJson,
+    triggerMode,
   });
   return c.json(rule, 201);
 });
@@ -78,17 +84,23 @@ app.post('/rules', async (c) => {
  */
 app.put('/rules/:id', async (c) => {
   const rulesService = new RulesService(c.env.DB);
-  const { name, description, ruleGroupId, isActive } = await c.req.json() as {
+  const { name, description, ruleGroupId, isActive, conditionJson, actionJson, triggerMode } = await c.req.json() as {
     name?: string;
     description?: string;
     ruleGroupId?: string;
     isActive?: boolean;
+    conditionJson?: RuleCondition | null;
+    actionJson?: RuleAction[] | null;
+    triggerMode?: TriggerMode;
   };
   const rule = await rulesService.updateRule(c.req.param('id'), {
     name,
     description,
     ruleGroupId,
     isActive,
+    conditionJson,
+    actionJson,
+    triggerMode,
   });
   return c.json(rule);
 });
@@ -240,6 +252,14 @@ app.post('/generate', async (c) => {
     activeRules = [];
   }
 
+  // Fetch structured rules for the deterministic rules engine (graceful degradation)
+  let structuredRules: StructuredRule[] = [];
+  try {
+    structuredRules = await rulesService.getActiveStructuredRules();
+  } catch {
+    structuredRules = [];
+  }
+
   // Find similar past quotes from the corpus (graceful degradation)
   let similarQuotes: SimilarQuote[] = [];
   const trimmedCustomerText = (body.customerText ?? '').trim();
@@ -273,6 +293,7 @@ app.post('/generate', async (c) => {
     catalog,
     templates,
     activeRules,
+    structuredRules,
   );
 
   if (body.jobberRequestId) {
@@ -404,6 +425,14 @@ app.post('/drafts/:id/revise', async (c) => {
     }
   }
 
+  // Fetch structured rules for the deterministic rules engine (graceful degradation)
+  let structuredRules: StructuredRule[] = [];
+  try {
+    structuredRules = await rulesService.getActiveStructuredRules();
+  } catch {
+    structuredRules = [];
+  }
+
   // Revise the draft
   const revised = await revisionEngine.revise({
     feedbackText: trimmed,
@@ -412,6 +441,7 @@ app.post('/drafts/:id/revise', async (c) => {
     currentUnresolvedItems: draft.unresolvedItems,
     catalog,
     rules: activeRules,
+    structuredRules,
   });
 
   // If the AI response couldn't be parsed, inform the user
@@ -438,6 +468,7 @@ app.post('/drafts/:id/revise', async (c) => {
     ...updated,
     ...(ruleCreated ? { ruleCreated } : {}),
     ...(ruleCreationError ? { ruleCreationError } : {}),
+    ...(revised.rulesEngineAuditTrail ? { rulesEngineAuditTrail: revised.rulesEngineAuditTrail } : {}),
   });
 });
 

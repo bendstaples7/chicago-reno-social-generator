@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Rule, RuleGroupWithRules } from 'shared';
 import {
   fetchRules,
@@ -7,6 +7,8 @@ import {
   deactivateRule,
   createRuleGroup,
   deleteRuleGroup,
+  summarizeRuleTitle,
+  regenerateRuleTitles,
 } from '../api';
 
 interface RuleFormData {
@@ -25,9 +27,13 @@ export default function RulesPage() {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Which rule is being edited (null = none, 'new' = creating)
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [formData, setFormData] = useState<RuleFormData>(emptyForm);
+  const [summarizingTitle, setSummarizingTitle] = useState(false);
 
   // Group creation
   const [showGroupForm, setShowGroupForm] = useState(false);
@@ -35,6 +41,10 @@ export default function RulesPage() {
   const [groupDescription, setGroupDescription] = useState('');
   const [groupError, setGroupError] = useState<string | null>(null);
   const [savingGroup, setSavingGroup] = useState(false);
+
+  // Regenerate titles
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerateResult, setRegenerateResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +62,32 @@ export default function RulesPage() {
   useEffect(() => { load(); }, [load]);
 
   const defaultGroupId = groups.find((g) => g.name === 'General')?.id || groups[0]?.id || '';
+
+  // Filtered groups based on search query
+  const filteredGroups = useMemo(() => {
+    if (!searchQuery.trim()) return groups;
+    const q = searchQuery.toLowerCase();
+    return groups
+      .map((group) => ({
+        ...group,
+        rules: group.rules.filter(
+          (rule) =>
+            rule.name.toLowerCase().includes(q) ||
+            rule.description.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((group) => group.rules.length > 0 || group.name.toLowerCase().includes(q));
+  }, [groups, searchQuery]);
+
+  const totalRuleCount = useMemo(
+    () => groups.reduce((sum, g) => sum + g.rules.length, 0),
+    [groups],
+  );
+
+  const filteredRuleCount = useMemo(
+    () => filteredGroups.reduce((sum, g) => sum + g.rules.length, 0),
+    [filteredGroups],
+  );
 
   const startCreate = () => {
     setEditingRuleId('new');
@@ -76,21 +112,44 @@ export default function RulesPage() {
     setFormError(null);
   };
 
+  const handleSummarizeTitle = async () => {
+    if (!formData.description.trim()) return;
+    setSummarizingTitle(true);
+    try {
+      const title = await summarizeRuleTitle(formData.description);
+      setFormData((prev) => ({ ...prev, name: title }));
+    } catch {
+      // Silently fail — user can still type manually
+    } finally {
+      setSummarizingTitle(false);
+    }
+  };
 
   const handleSubmit = async () => {
     setSaving(true);
     setFormError(null);
     try {
+      // Auto-summarize title if name is empty but description exists
+      let nameToUse = formData.name;
+      if (!nameToUse.trim() && formData.description.trim()) {
+        try {
+          nameToUse = await summarizeRuleTitle(formData.description);
+        } catch {
+          // Fall back to first part of description
+          nameToUse = formData.description.slice(0, 60);
+        }
+      }
+
       if (editingRuleId === 'new') {
         await createRule({
-          name: formData.name,
+          name: nameToUse,
           description: formData.description,
           ruleGroupId: formData.ruleGroupId || undefined,
           isActive: formData.isActive,
         });
       } else if (editingRuleId) {
         await updateRule(editingRuleId, {
-          name: formData.name,
+          name: nameToUse,
           description: formData.description,
           ruleGroupId: formData.ruleGroupId,
           isActive: formData.isActive,
@@ -142,22 +201,25 @@ export default function RulesPage() {
     }
   };
 
+  const handleRegenerateTitles = async () => {
+    setRegenerating(true);
+    setRegenerateResult(null);
+    try {
+      const result = await regenerateRuleTitles();
+      setRegenerateResult(`Updated ${result.updated} of ${result.total} rule titles.`);
+      await load();
+    } catch {
+      setRegenerateResult('Failed to regenerate titles. Please try again.');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   if (loading) return <p>Loading rules…</p>;
 
   const renderForm = () => (
     <div style={{ background: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: 6, padding: '1rem', marginBottom: '1rem' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <div>
-          <label htmlFor="rule-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Name</label>
-          <input
-            id="rule-name"
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            placeholder="Rule name"
-            style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box' }}
-          />
-        </div>
         <div>
           <label htmlFor="rule-description" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Description</label>
           <textarea
@@ -168,6 +230,44 @@ export default function RulesPage() {
             rows={3}
             style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box', resize: 'vertical' }}
           />
+        </div>
+        <div>
+          <label htmlFor="rule-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>
+            Title
+            <span style={{ fontWeight: 400, color: '#888', marginLeft: 6, fontSize: '0.8rem' }}>
+              (auto-generated if left blank)
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input
+              id="rule-name"
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Leave blank to auto-generate from description"
+              style={{ flex: 1, padding: '0.5rem', borderRadius: 4, border: '1px solid #ccc', boxSizing: 'border-box' }}
+            />
+            <button
+              type="button"
+              onClick={handleSummarizeTitle}
+              disabled={summarizingTitle || !formData.description.trim()}
+              title="Generate a concise title from the description"
+              style={{
+                background: '#fff',
+                color: '#00a89d',
+                border: '1px solid #00a89d',
+                padding: '0.5rem 0.75rem',
+                borderRadius: 4,
+                cursor: summarizingTitle || !formData.description.trim() ? 'not-allowed' : 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                opacity: summarizingTitle || !formData.description.trim() ? 0.5 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {summarizingTitle ? 'Generating…' : '✨ Summarize'}
+            </button>
+          </div>
         </div>
         <div>
           <label htmlFor="rule-group" style={{ display: 'block', fontWeight: 600, marginBottom: 4, fontSize: '0.85rem' }}>Group</label>
@@ -215,10 +315,9 @@ export default function RulesPage() {
     </div>
   );
 
-
   return (
     <div style={{ maxWidth: 800 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1 style={{ margin: 0 }}>Business Rules</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
@@ -236,6 +335,71 @@ export default function RulesPage() {
           </button>
         </div>
       </div>
+
+      {/* Search bar */}
+      <div style={{ marginBottom: '1rem' }}>
+        <div style={{ position: 'relative' }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search rules by title or description…"
+            aria-label="Search rules"
+            style={{
+              width: '100%',
+              padding: '0.6rem 0.75rem 0.6rem 2.25rem',
+              borderRadius: 6,
+              border: '1px solid #ccc',
+              boxSizing: 'border-box',
+              fontSize: '0.9rem',
+            }}
+          />
+          <span
+            style={{
+              position: 'absolute',
+              left: '0.75rem',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: '#999',
+              fontSize: '0.9rem',
+              pointerEvents: 'none',
+            }}
+            aria-hidden="true"
+          >
+            🔍
+          </span>
+        </div>
+        {searchQuery.trim() && (
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.8rem', color: '#666' }}>
+            Showing {filteredRuleCount} of {totalRuleCount} rules
+          </p>
+        )}
+      </div>
+
+      {/* Regenerate titles button */}
+      {totalRuleCount > 0 && (
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            onClick={handleRegenerateTitles}
+            disabled={regenerating}
+            style={{
+              background: '#fff',
+              color: '#555',
+              border: '1px solid #ccc',
+              padding: '0.4rem 0.75rem',
+              borderRadius: 6,
+              cursor: regenerating ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              opacity: regenerating ? 0.6 : 1,
+            }}
+          >
+            {regenerating ? 'Regenerating…' : '✨ Regenerate Rule Titles'}
+          </button>
+          {regenerateResult && (
+            <span style={{ fontSize: '0.8rem', color: '#666' }}>{regenerateResult}</span>
+          )}
+        </div>
+      )}
 
       {/* Group creation form */}
       {showGroupForm && (
@@ -284,7 +448,7 @@ export default function RulesPage() {
       {editingRuleId === 'new' && renderForm()}
 
       {/* Rule groups */}
-      {groups.map((group) => (
+      {filteredGroups.map((group) => (
         <section
           key={group.id}
           style={{ background: '#fff', borderRadius: 8, padding: '1.25rem', marginBottom: '1rem', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
@@ -369,7 +533,13 @@ export default function RulesPage() {
         </section>
       ))}
 
-      {groups.length === 0 && !loadError && (
+      {filteredGroups.length === 0 && searchQuery.trim() && (
+        <p style={{ color: '#999', textAlign: 'center', marginTop: '2rem' }}>
+          No rules match "{searchQuery}".
+        </p>
+      )}
+
+      {groups.length === 0 && !loadError && !searchQuery.trim() && (
         <p style={{ color: '#999', textAlign: 'center', marginTop: '2rem' }}>
           No rule groups found. Create a group to get started.
         </p>

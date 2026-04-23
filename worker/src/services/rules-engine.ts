@@ -16,6 +16,7 @@ export interface RulesEngineInput {
   lineItems: EngineLineItem[];
   rules: StructuredRule[];
   catalog: ProductCatalogEntry[];
+  customerRequestText?: string;
   maxIterations?: number;
 }
 
@@ -43,6 +44,7 @@ interface ActionResult {
 const CONDITION_TYPES = new Set([
   'line_item_exists',
   'line_item_not_exists',
+  'line_item_name_contains',
   'line_item_quantity_gte',
   'line_item_quantity_lte',
   'always',
@@ -56,6 +58,7 @@ const ACTION_TYPES = new Set([
   'set_unit_price',
   'set_description',
   'append_description',
+  'append_request_context',
 ]);
 
 export function validateCondition(condition: unknown): { valid: boolean; error?: string } {
@@ -78,6 +81,12 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
     case 'line_item_not_exists':
       if (typeof cond.productNamePattern !== 'string') {
         return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      }
+      break;
+
+    case 'line_item_name_contains':
+      if (typeof cond.substring !== 'string') {
+        return { valid: false, error: 'Condition type "line_item_name_contains" requires a string "substring" field' };
       }
       break;
 
@@ -201,6 +210,21 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
         return { valid: false, error: 'Action type "append_description" optional "separator" must be a string' };
       }
       break;
+
+    case 'append_request_context':
+      if (typeof act.productNamePattern !== 'string') {
+        return { valid: false, error: 'Action type "append_request_context" requires a string "productNamePattern" field' };
+      }
+      if (typeof act.contextPattern !== 'string') {
+        return { valid: false, error: 'Action type "append_request_context" requires a string "contextPattern" field' };
+      }
+      if (act.prefix !== undefined && typeof act.prefix !== 'string') {
+        return { valid: false, error: 'Action type "append_request_context" optional "prefix" must be a string' };
+      }
+      if (act.separator !== undefined && typeof act.separator !== 'string') {
+        return { valid: false, error: 'Action type "append_request_context" optional "separator" must be a string' };
+      }
+      break;
   }
 
   return { valid: true };
@@ -254,6 +278,17 @@ function evaluateCondition(
       // When no item matches the pattern, the condition is satisfied.
       // There are no specific "matching" line items to return.
       return { matched: !anyMatch, matchingLineItemIds: [] };
+    }
+
+    case 'line_item_name_contains': {
+      const sub = condition.substring.toLowerCase();
+      const matching = lineItems.filter(
+        (li) => li.productName.toLowerCase().includes(sub),
+      );
+      return {
+        matched: matching.length > 0,
+        matchingLineItemIds: matching.map((li) => li.id),
+      };
     }
 
     case 'line_item_quantity_gte': {
@@ -315,6 +350,7 @@ function executeAction(
   lineItems: EngineLineItem[],
   catalog: ProductCatalogEntry[],
   ruleId: string,
+  customerRequestText?: string,
 ): ActionResult {
   switch (action.type) {
     case 'add_line_item': {
@@ -537,6 +573,75 @@ function executeAction(
       };
     }
 
+    case 'append_request_context': {
+      if (!customerRequestText) {
+        return {
+          modified: false,
+          lineItems,
+          warning: 'No customer request text available — skipping append_request_context',
+        };
+      }
+
+      const pattern = action.productNamePattern.toLowerCase();
+      const separator = action.separator ?? ' ';
+      const prefix = action.prefix ?? '';
+
+      // Extract matching context from the customer request using the contextPattern as a regex
+      let extractedText: string | null = null;
+      try {
+        const regex = new RegExp(action.contextPattern, 'i');
+        const match = customerRequestText.match(regex);
+        if (match) {
+          // Use the first capture group if available, otherwise the full match
+          extractedText = (match[1] ?? match[0]).trim();
+        }
+      } catch {
+        return {
+          modified: false,
+          lineItems,
+          warning: `Invalid contextPattern regex: "${action.contextPattern}" — skipping append_request_context`,
+        };
+      }
+
+      if (!extractedText) {
+        return { modified: false, lineItems };
+      }
+
+      const textToAppend = prefix ? `${prefix}${extractedText}` : extractedText;
+      let modified = false;
+      const affected: EngineLineItem[] = [];
+
+      const updated = lineItems.map((li) => {
+        if (li.productName.toLowerCase() === pattern) {
+          affected.push(li);
+          modified = true;
+          const existing = li.description.trim();
+          const newDesc = existing
+            ? `${existing}${separator}${textToAppend}`
+            : textToAppend;
+          return {
+            ...li,
+            description: newDesc,
+            ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
+          };
+        }
+        return li;
+      });
+
+      if (!modified) {
+        return { modified: false, lineItems };
+      }
+
+      return {
+        modified: true,
+        lineItems: updated,
+        beforeSnapshot: snapshot(affected),
+        afterSnapshot: snapshot(
+          updated.filter((li) => li.productName.toLowerCase() === pattern),
+        ),
+      };
+    }
+
     default:
       return { modified: false, lineItems };
   }
@@ -549,7 +654,7 @@ function executeAction(
 const DEFAULT_MAX_ITERATIONS = 10;
 
 export function executeRules(input: RulesEngineInput): RulesEngineResult {
-  const { rules, catalog, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
+  const { rules, catalog, customerRequestText, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
 
   // Clone input line items to avoid mutation
   let lineItems: EngineLineItem[] = input.lineItems.map((li) => ({
@@ -631,7 +736,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
       // Execute each action
       for (const action of rule.actions) {
-        const actionResult = executeAction(action, lineItems, catalog, rule.id);
+        const actionResult = executeAction(action, lineItems, catalog, rule.id, customerRequestText);
         lineItems = actionResult.lineItems;
 
         if (actionResult.modified || actionResult.warning) {

@@ -915,8 +915,9 @@ export class RulesService {
     const timeout = setTimeout(() => controller.abort(), 20_000);
 
     const conditionTypes = [
-      'line_item_exists — fires when a line item with the given productNamePattern exists',
-      'line_item_not_exists — fires when NO line item matches the productNamePattern',
+      'line_item_exists — fires when a line item with the given productNamePattern exists (exact match)',
+      'line_item_not_exists — fires when NO line item matches the productNamePattern (exact match)',
+      'line_item_name_contains — fires when any line item name contains the given substring: { type, substring }',
       'line_item_quantity_gte — fires when a matching line item has quantity >= threshold',
       'line_item_quantity_lte — fires when a matching line item has quantity <= threshold',
       'always — fires unconditionally',
@@ -930,6 +931,7 @@ export class RulesService {
       'set_unit_price — sets price: { type, productNamePattern, unitPrice }',
       'set_description — replaces description: { type, productNamePattern, description }',
       'append_description — appends to description: { type, productNamePattern, text, separator? }',
+      'append_request_context — extracts text from customer request via regex and appends to description: { type, productNamePattern, contextPattern (regex), prefix?, separator? }',
     ];
 
     try {
@@ -954,15 +956,18 @@ export class RulesService {
                 'ACTION TYPES:',
                 ...actionTypes.map(t => `  ${t}`),
                 '',
-                'PRODUCT CATALOG (use these exact names for productNamePattern and productName):',
+                'PRODUCT CATALOG (use these names for productNamePattern and productName):',
                 ...catalogNames.map(n => `  - ${n}`),
                 '',
                 'RULES:',
-                '- productNamePattern must EXACTLY match a catalog product name (case-insensitive)',
-                '- add_line_item productName must EXACTLY match a catalog product name',
+                '- When the user references a product, find the CLOSEST matching catalog name. For example "TV mounting" should match "Carpentry: TV Mount".',
+                '- For productNamePattern in conditions, use the exact catalog name. If no exact match exists, use line_item_name_contains with a substring.',
+                '- For add_line_item productName, use the exact catalog name.',
+                '- For actions targeting line items (set_description, append_description, etc.), use the exact catalog name for productNamePattern.',
+                '- Use append_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities, etc.).',
                 '- Return a JSON object with "condition" and "actions" fields',
                 '- "actions" is an array of one or more actions',
-                '- If the rule cannot be expressed with these condition/action types, return {"unsupported": true}',
+                '- If the rule truly cannot be expressed with these types, return {"unsupported": true}',
                 '- Return ONLY valid JSON, no markdown, no explanation',
               ].join('\n'),
             },

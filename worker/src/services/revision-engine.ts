@@ -218,10 +218,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[]): RevisionOutput {
+  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string): RevisionOutput {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -335,6 +335,7 @@ export class RevisionEngine {
         lineItems: engineLineItems,
         rules: structuredRules,
         catalog,
+        customerRequestText,
       });
 
       auditTrail = engineResult.auditTrail;

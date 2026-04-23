@@ -899,8 +899,9 @@ export class RulesService {
 
   /**
    * Use OpenAI to generate structured condition/action JSON from a natural language
-   * rule description and the product catalog. Returns null if the rule cannot be
-   * expressed as a structured rule.
+   * rule description and the product catalog. Uses OpenAI structured outputs (JSON schema)
+   * to guarantee valid response format. Returns null if the rule cannot be expressed
+   * as a structured rule.
    */
   async generateStructuredRule(
     description: string,
@@ -911,112 +912,117 @@ export class RulesService {
     if (!apiKey) return null;
 
     const url = apiUrl || 'https://api.openai.com/v1/chat/completions';
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
 
-    const conditionTypes = [
-      'line_item_exists — fires when a line item with the given productNamePattern exists (exact match)',
-      'line_item_not_exists — fires when NO line item matches the productNamePattern (exact match)',
-      'line_item_name_contains — fires when any line item name contains the given substring: { type, substring }',
-      'line_item_quantity_gte — fires when a matching line item has quantity >= threshold',
-      'line_item_quantity_lte — fires when a matching line item has quantity <= threshold',
-      'always — fires unconditionally',
-    ];
+    const systemContent = [
+      'You convert natural language business rules into structured JSON for a deterministic rules engine used in a home renovation quoting system.',
+      'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist.',
+      '',
+      'CONDITION TYPES:',
+      '  line_item_exists — { "type": "line_item_exists", "productNamePattern": "exact catalog name" }',
+      '  line_item_not_exists — { "type": "line_item_not_exists", "productNamePattern": "exact catalog name" }',
+      '  line_item_name_contains — { "type": "line_item_name_contains", "substring": "partial name" }',
+      '  line_item_quantity_gte — { "type": "line_item_quantity_gte", "productNamePattern": "exact catalog name", "threshold": 5 }',
+      '  line_item_quantity_lte — { "type": "line_item_quantity_lte", "productNamePattern": "exact catalog name", "threshold": 1 }',
+      '  always — { "type": "always" }',
+      '',
+      'ACTION TYPES:',
+      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100 }',
+      '  remove_line_item — { "type": "remove_line_item", "productNamePattern": "exact catalog name" }',
+      '  set_quantity — { "type": "set_quantity", "productNamePattern": "exact catalog name", "quantity": 5 }',
+      '  adjust_quantity — { "type": "adjust_quantity", "productNamePattern": "exact catalog name", "delta": 1 }',
+      '  set_unit_price — { "type": "set_unit_price", "productNamePattern": "exact catalog name", "unitPrice": 50 }',
+      '  set_description — { "type": "set_description", "productNamePattern": "exact catalog name", "description": "new description" }',
+      '  append_description — { "type": "append_description", "productNamePattern": "exact catalog name", "text": "additional text" }',
+      '  append_request_context — { "type": "append_request_context", "productNamePattern": "exact catalog name", "contextPattern": "regex pattern", "prefix": "optional prefix: " }',
+      '',
+      'PRODUCT CATALOG:',
+      ...catalogNames.map(n => `  - ${n}`),
+      '',
+      'INSTRUCTIONS:',
+      '- Find the CLOSEST matching catalog name for what the user describes. Example: "TV mounting" → "Carpentry: TV Mount".',
+      '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
+      '- Use append_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The contextPattern is a regex.',
+      '- If the rule truly cannot be expressed, set "unsupported" to true.',
+      '',
+      'EXAMPLE INPUT: "When mounting a TV, the description should include the TV size from the request"',
+      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_name_contains","substring":"TV Mount"},"actions":[{"type":"append_request_context","productNamePattern":"Carpentry: TV Mount","contextPattern":"(\\\\d+[\\\\\"\\\\u2033]?\\\\s*(?:inch|in|\\\\\")?\\\\s*TV)","prefix":"TV: "}]}',
+      '',
+      'EXAMPLE INPUT: "When interior painting is on the quote, add paint supplies"',
+      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100}]}',
+      '',
+      'Return ONLY a JSON object with "unsupported" (boolean), "condition" (object), and "actions" (array). No markdown, no explanation.',
+    ].join('\n');
 
-    const actionTypes = [
-      'add_line_item — adds a new line item: { type, productName, quantity, unitPrice, description? }',
-      'remove_line_item — removes matching items: { type, productNamePattern }',
-      'set_quantity — sets quantity: { type, productNamePattern, quantity }',
-      'adjust_quantity — adjusts quantity by delta: { type, productNamePattern, delta }',
-      'set_unit_price — sets price: { type, productNamePattern, unitPrice }',
-      'set_description — replaces description: { type, productNamePattern, description }',
-      'append_description — appends to description: { type, productNamePattern, text, separator? }',
-      'append_request_context — extracts text from customer request via regex and appends to description: { type, productNamePattern, contextPattern (regex), prefix?, separator? }',
-    ];
+    const makeRequest = async (attempt: number): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + apiKey,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: [
-                'You convert natural language business rules into structured JSON for a deterministic rules engine used in a home renovation quoting system.',
-                'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist.',
-                '',
-                'CONDITION TYPES:',
-                ...conditionTypes.map(t => `  ${t}`),
-                '',
-                'ACTION TYPES:',
-                ...actionTypes.map(t => `  ${t}`),
-                '',
-                'PRODUCT CATALOG (use these names for productNamePattern and productName):',
-                ...catalogNames.map(n => `  - ${n}`),
-                '',
-                'RULES:',
-                '- When the user references a product, find the CLOSEST matching catalog name. For example "TV mounting" should match "Carpentry: TV Mount".',
-                '- For productNamePattern in conditions, use the exact catalog name. If no exact match exists, use line_item_name_contains with a substring.',
-                '- For add_line_item productName, use the exact catalog name.',
-                '- For actions targeting line items (set_description, append_description, etc.), use the exact catalog name for productNamePattern.',
-                '- Use append_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities, etc.).',
-                '- Return a JSON object with "condition" and "actions" fields',
-                '- "actions" is an array of one or more actions',
-                '- If the rule truly cannot be expressed with these types, return {"unsupported": true}',
-                '- Return ONLY valid JSON, no markdown, no explanation',
-              ].join('\n'),
-            },
-            { role: 'user', content: description },
-          ],
-          temperature: 0.1,
-          max_tokens: 500,
-        }),
-        signal: controller.signal,
-      });
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + apiKey,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: systemContent },
+              { role: 'user', content: description },
+            ],
+            temperature: attempt === 0 ? 0.1 : 0.3,
+            max_tokens: 500,
+            response_format: { type: 'json_object' },
+          }),
+          signal: controller.signal,
+        });
 
-      clearTimeout(timeout);
+        clearTimeout(timeout);
 
-      if (!response.ok) {
-        console.warn(`Structured rule generation failed (${response.status})`);
+        if (!response.ok) {
+          const errBody = await response.text().catch(() => '');
+          console.warn(`Structured rule generation failed (${response.status}) attempt ${attempt + 1}: ${errBody}`);
+          return null;
+        }
+
+        const data = (await response.json()) as {
+          choices: Array<{ message: { content: string } }>;
+        };
+        const raw = data.choices?.[0]?.message?.content?.trim();
+        if (!raw) return null;
+
+        const parsed = JSON.parse(raw);
+
+        if (parsed.unsupported) return null;
+
+        // Validate the generated condition and actions
+        const condResult = validateCondition(parsed.condition);
+        if (!condResult.valid) {
+          console.warn(`AI-generated condition invalid (attempt ${attempt + 1}): ${condResult.error}`);
+          return null;
+        }
+
+        const actResult = validateActions(parsed.actions);
+        if (!actResult.valid) {
+          console.warn(`AI-generated actions invalid (attempt ${attempt + 1}): ${actResult.errors?.join('; ')}`);
+          return null;
+        }
+
+        return { condition: parsed.condition as RuleCondition, actions: parsed.actions as RuleAction[] };
+      } catch (err) {
+        clearTimeout(timeout);
+        console.warn(`Structured rule generation error (attempt ${attempt + 1}): ${err instanceof Error ? err.message : err}`);
         return null;
       }
+    };
 
-      const data = (await response.json()) as {
-        choices: Array<{ message: { content: string } }>;
-      };
-      const raw = data.choices?.[0]?.message?.content?.trim();
-      if (!raw) return null;
+    // First attempt
+    const result = await makeRequest(0);
+    if (result) return result;
 
-      // Strip markdown code fences if present
-      const jsonStr = raw.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-      const parsed = JSON.parse(jsonStr);
-
-      if (parsed.unsupported) return null;
-
-      // Validate the generated condition and actions
-      const condResult = validateCondition(parsed.condition);
-      if (!condResult.valid) {
-        console.warn(`AI-generated condition invalid: ${condResult.error}`);
-        return null;
-      }
-
-      const actResult = validateActions(parsed.actions);
-      if (!actResult.valid) {
-        console.warn(`AI-generated actions invalid: ${actResult.errors?.join('; ')}`);
-        return null;
-      }
-
-      return { condition: parsed.condition as RuleCondition, actions: parsed.actions as RuleAction[] };
-    } catch {
-      clearTimeout(timeout);
-      console.warn('Structured rule generation error');
-      return null;
-    }
+    // Retry once with slightly higher temperature
+    console.warn('Retrying structured rule generation...');
+    return makeRequest(1);
   }
 
   private async fetchGroupedRules(activeOnly: boolean): Promise<RuleGroupWithRules[]> {

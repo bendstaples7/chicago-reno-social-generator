@@ -32,8 +32,8 @@ interface ActionResult {
   modified: boolean;
   lineItems: EngineLineItem[];
   warning?: string;
-  beforeSnapshot?: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
-  afterSnapshot?: Array<{ id: string; productName: string; quantity: number; unitPrice: number }>;
+  beforeSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
+  afterSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,8 @@ const ACTION_TYPES = new Set([
   'set_quantity',
   'adjust_quantity',
   'set_unit_price',
+  'set_description',
+  'append_description',
 ]);
 
 export function validateCondition(condition: unknown): { valid: boolean; error?: string } {
@@ -178,6 +180,27 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
         return { valid: false, error: 'Action type "set_unit_price" unitPrice must be a finite non-negative number' };
       }
       break;
+
+    case 'set_description':
+      if (typeof act.productNamePattern !== 'string') {
+        return { valid: false, error: 'Action type "set_description" requires a string "productNamePattern" field' };
+      }
+      if (typeof act.description !== 'string') {
+        return { valid: false, error: 'Action type "set_description" requires a string "description" field' };
+      }
+      break;
+
+    case 'append_description':
+      if (typeof act.productNamePattern !== 'string') {
+        return { valid: false, error: 'Action type "append_description" requires a string "productNamePattern" field' };
+      }
+      if (typeof act.text !== 'string') {
+        return { valid: false, error: 'Action type "append_description" requires a string "text" field' };
+      }
+      if (act.separator !== undefined && typeof act.separator !== 'string') {
+        return { valid: false, error: 'Action type "append_description" optional "separator" must be a string' };
+      }
+      break;
   }
 
   return { valid: true };
@@ -273,10 +296,11 @@ function evaluateCondition(
 
 function snapshot(
   items: EngineLineItem[],
-): Array<{ id: string; productName: string; quantity: number; unitPrice: number }> {
+): Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }> {
   return items.map((li) => ({
     id: li.id,
     productName: li.productName,
+    description: li.description,
     quantity: li.quantity,
     unitPrice: li.unitPrice,
   }));
@@ -424,6 +448,75 @@ function executeAction(
           return {
             ...li,
             unitPrice: action.unitPrice,
+            ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
+          };
+        }
+        return li;
+      });
+
+      if (!modified) {
+        return { modified: false, lineItems };
+      }
+
+      return {
+        modified: true,
+        lineItems: updated,
+        beforeSnapshot: snapshot(affected),
+        afterSnapshot: snapshot(
+          updated.filter((li) => li.productName.toLowerCase() === pattern),
+        ),
+      };
+    }
+
+    case 'set_description': {
+      const pattern = action.productNamePattern.toLowerCase();
+      let modified = false;
+      const affected: EngineLineItem[] = [];
+
+      const updated = lineItems.map((li) => {
+        if (li.productName.toLowerCase() === pattern) {
+          affected.push(li);
+          modified = true;
+          return {
+            ...li,
+            description: action.description,
+            ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
+          };
+        }
+        return li;
+      });
+
+      if (!modified) {
+        return { modified: false, lineItems };
+      }
+
+      return {
+        modified: true,
+        lineItems: updated,
+        beforeSnapshot: snapshot(affected),
+        afterSnapshot: snapshot(
+          updated.filter((li) => li.productName.toLowerCase() === pattern),
+        ),
+      };
+    }
+
+    case 'append_description': {
+      const pattern = action.productNamePattern.toLowerCase();
+      const separator = action.separator ?? ' ';
+      let modified = false;
+      const affected: EngineLineItem[] = [];
+
+      const updated = lineItems.map((li) => {
+        if (li.productName.toLowerCase() === pattern) {
+          affected.push(li);
+          modified = true;
+          const existing = li.description.trim();
+          const newDesc = existing
+            ? `${existing}${separator}${action.text}`
+            : action.text;
+          return {
+            ...li,
+            description: newDesc,
             ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
           };
         }

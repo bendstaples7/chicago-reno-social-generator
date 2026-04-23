@@ -189,6 +189,17 @@ app.post('/rules/regenerate-titles', async (c) => {
   return c.json(result);
 });
 
+/**
+ * POST /rules/auto-categorize
+ * Auto-categorize rules into trade-based groups by matching descriptions
+ * against known trade keywords.
+ */
+app.post('/rules/auto-categorize', async (c) => {
+  const rulesService = new RulesService(c.env.DB);
+  const result = await rulesService.autoCategorizeRules();
+  return c.json(result);
+});
+
 // ── Helper functions ──────────────────────────────────────────
 
 async function fetchManualCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {

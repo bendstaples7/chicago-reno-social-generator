@@ -714,9 +714,11 @@ export class RulesService {
     // Trade keywords mapped to group names (case-insensitive matching against rule description)
     // Order matters: more specific patterns are checked before broader ones to avoid
     // misclassification (e.g., "shower surround" → Tile, not Plumbing).
+    // Exterior is checked before Tile so "drain tile" (exterior waterproofing) isn't
+    // caught by Tile's generic \btile\b pattern.
     const tradeKeywords: Array<{ groupName: string; patterns: RegExp }> = [
-      { groupName: 'Tile', patterns: /\b(tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
       { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
+      { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
       { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
       { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
       { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },

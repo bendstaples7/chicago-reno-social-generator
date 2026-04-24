@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem, PendingEnrichment } from 'shared';
+import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -22,8 +22,6 @@ export interface RevisionOutput {
   revisionFailed?: boolean;
   /** Audit trail from the deterministic rules engine, if structured rules were applied. */
   rulesEngineAuditTrail?: AuditEntry[];
-  /** Pending AI enrichments that need async processing. */
-  pendingEnrichments?: PendingEnrichment[];
 }
 
 interface AILineItem {
@@ -196,7 +194,7 @@ export class RevisionEngine {
     return parts.join('\n');
   }
 
-  private parseAndValidate(raw: string, input: RevisionInput): RevisionOutput {
+  private async parseAndValidate(raw: string, input: RevisionInput): Promise<RevisionOutput> {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     let parsed: { lineItems?: AILineItem[] };
@@ -220,10 +218,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[]): RevisionOutput {
+  private async validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string): Promise<RevisionOutput> {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -311,7 +309,6 @@ export class RevisionEngine {
     // Convert validated AI line items to EngineLineItem format, run the
     // deterministic rules engine, then convert back for deduplication.
     let auditTrail: AuditEntry[] | undefined;
-    let pendingEnrichments: PendingEnrichment[] | undefined;
 
     // Capture original unmatchedReasons before the rules engine may rebuild allItems
     const unmatchedReasonById = new Map<string, string>();
@@ -341,7 +338,25 @@ export class RevisionEngine {
       });
 
       auditTrail = engineResult.auditTrail;
-      pendingEnrichments = engineResult.pendingEnrichments;
+
+      // Process AI enrichments synchronously (extract_request_context actions)
+      if (engineResult.pendingEnrichments.length > 0 && customerRequestText) {
+        const { EnrichmentService } = await import('./enrichment-service.js');
+        const enrichmentService = new EnrichmentService(this.apiKey, this.apiUrl);
+        const enrichedDescriptions = await enrichmentService.processEnrichments(
+          engineResult.pendingEnrichments,
+          customerRequestText,
+          [], // use engine line items below
+        );
+
+        // Apply enriched descriptions to engine line items before converting
+        for (const eli of engineResult.lineItems) {
+          const newDesc = enrichedDescriptions.get(eli.id);
+          if (newDesc) {
+            eli.description = newDesc;
+          }
+        }
+      }
 
       // Replace allItems with engine output, preserving resolved/unresolved partitioning
       allItems.length = 0;
@@ -366,14 +381,14 @@ export class RevisionEngine {
     // Deduplicate BEFORE partitioning so duplicates split across the
     // confidence threshold (one resolved, one unresolved) are caught.
     const dedupedItems = deduplicateLineItems(allItems);
-    const lineItems = dedupedItems.filter((i) => i.resolved);
-    const unresolvedItems = dedupedItems.filter((i) => !i.resolved);
+    const sortedItems = sortLineItemsByCatalog(dedupedItems, catalog);
+    const lineItems = sortedItems.filter((i) => i.resolved);
+    const unresolvedItems = sortedItems.filter((i) => !i.resolved);
 
     return {
       lineItems,
       unresolvedItems,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
-      pendingEnrichments: pendingEnrichments && pendingEnrichments.length > 0 ? pendingEnrichments : undefined,
     };
   }
 }

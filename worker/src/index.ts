@@ -36,8 +36,11 @@ app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 // Override with 50 MB limit for media upload endpoints
 app.use('/api/media/*', bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
-// Health check — also validates critical environment bindings on each call
-app.get('/health', (c) => {
+// Health check — validates critical environment bindings and DB connectivity
+app.get('/health', async (c) => {
+  const checks: Record<string, string> = {};
+
+  // Check critical env vars
   const missing: string[] = [];
   const critical = [
     'AI_TEXT_API_KEY',
@@ -55,13 +58,23 @@ app.get('/health', (c) => {
   for (const key of critical) {
     if (!c.env[key]) missing.push(key);
   }
+  checks.env = missing.length > 0 ? `missing: ${missing.join(', ')}` : 'ok';
 
-  if (missing.length > 0) {
-    console.warn(`[health] Missing worker secrets: ${missing.join(', ')}. Set them via: npm run sync-secrets (from worker/)`);
-    return c.json({ status: 'degraded', missing }, 200);
+  // Check DB connectivity
+  try {
+    const result = await c.env.DB.prepare('SELECT COUNT(*) as count FROM rule_groups').first() as { count: number } | null;
+    checks.db = result ? `ok (${result.count} rule groups)` : 'error: no result';
+  } catch (err) {
+    checks.db = `error: ${err instanceof Error ? err.message : 'unknown'}`;
   }
 
-  return c.json({ status: 'ok' });
+  const status = Object.values(checks).every(v => v.startsWith('ok')) ? 'ok' : 'degraded';
+
+  if (status !== 'ok') {
+    console.warn(`[health] ${JSON.stringify(checks)}`);
+  }
+
+  return c.json({ status, checks });
 });
 
 // API routes

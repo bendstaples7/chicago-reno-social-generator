@@ -69,25 +69,6 @@ export default function QuoteDraftPage() {
 
   useEffect(() => { loadDraft(); }, [loadDraft]);
 
-  // Poll for enrichment completion when there are pending enrichments
-  useEffect(() => {
-    if (!draft || !id || (draft.pendingEnrichments ?? 0) === 0) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const updated = await fetchDraft(id);
-        setDraft(updated);
-        if ((updated.pendingEnrichments ?? 0) === 0) {
-          clearInterval(interval);
-        }
-      } catch {
-        // Ignore polling errors
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [draft?.pendingEnrichments, id]);
-
   useEffect(() => {
     fetchRules().then(setRuleGroups).catch(() => { /* rules are supplementary; ignore errors */ });
   }, []);
@@ -590,15 +571,6 @@ export default function QuoteDraftPage() {
                               aria-label={`Description: ${item.description}. Click to edit.`}
                             >
                               {item.description}
-                              {(draft?.pendingEnrichments ?? 0) > 0 && (
-                                <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#00a89d', fontStyle: 'italic' }}>
-                                  ⟳ enriching…
-                                </span>
-                              )}
-                            </div>
-                          ) : (draft?.pendingEnrichments ?? 0) > 0 ? (
-                            <div style={{ fontSize: '0.75rem', color: '#00a89d', fontStyle: 'italic', marginTop: '0.15rem' }}>
-                              ⟳ Extracting details from request…
                             </div>
                           ) : (
                             <div

@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem, PendingEnrichment } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -20,7 +20,6 @@ export interface QuoteEngineOutput {
   draft: QuoteDraft;
   similarQuotes?: SimilarQuote[];
   rulesEngineAuditTrail?: AuditEntry[];
-  pendingEnrichments?: PendingEnrichment[];
 }
 
 interface AILineItem {
@@ -157,7 +156,6 @@ export class QuoteEngine {
       // Convert validated AI line items to EngineLineItem format, run the
       // deterministic rules engine, then convert back for deduplication.
       let auditTrail: AuditEntry[] | undefined;
-      let pendingEnrichments: PendingEnrichment[] | undefined;
 
       if (structuredRules && structuredRules.length > 0) {
         const engineLineItems: EngineLineItem[] = aiResult.lineItems.map((item) => ({
@@ -179,7 +177,25 @@ export class QuoteEngine {
         });
 
         auditTrail = engineResult.auditTrail;
-        pendingEnrichments = engineResult.pendingEnrichments;
+
+        // Process AI enrichments synchronously (extract_request_context actions)
+        if (engineResult.pendingEnrichments.length > 0) {
+          const { EnrichmentService } = await import('./enrichment-service.js');
+          const enrichmentService = new EnrichmentService(this.apiKey, this.apiUrl);
+          const enrichedDescriptions = await enrichmentService.processEnrichments(
+            engineResult.pendingEnrichments,
+            input.customerText,
+            [], // no existing QuoteLineItems yet — use engine line items
+          );
+
+          // Apply enriched descriptions to engine line items
+          for (const eli of engineResult.lineItems) {
+            const newDesc = enrichedDescriptions.get(eli.id);
+            if (newDesc) {
+              eli.description = newDesc;
+            }
+          }
+        }
 
         // Convert engine output back to AILineItem format
         aiResult.lineItems = engineResult.lineItems.map((eli) => ({
@@ -198,7 +214,10 @@ export class QuoteEngine {
       // Deduplicate after rules engine has had a chance to add/modify items
       aiResult.lineItems = deduplicateLineItems(aiResult.lineItems);
 
-      return this.buildDraft(input, aiResult, auditTrail, pendingEnrichments);
+      // Sort by catalog sort order (renovation workflow sequence)
+      aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
+
+      return this.buildDraft(input, aiResult, auditTrail);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -380,7 +399,6 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     aiResult: AIResponse,
     auditTrail?: AuditEntry[],
-    pendingEnrichments?: PendingEnrichment[],
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
@@ -427,7 +445,6 @@ export class QuoteEngine {
       draft,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
-      pendingEnrichments: pendingEnrichments && pendingEnrichments.length > 0 ? pendingEnrichments : undefined,
     };
   }
 

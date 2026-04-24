@@ -5,6 +5,7 @@ export interface ProductCatalogEntry {
   unitPrice: number;
   description: string;
   category?: string;
+  sortOrder?: number;
   source: 'jobber' | 'manual';
 }
 
@@ -165,7 +166,7 @@ export type RuleActionType =
 
 /** A typed action for a structured rule */
 export type RuleAction =
-  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string }
+  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string }
   | { type: 'remove_line_item'; productNamePattern: string }
   | { type: 'set_quantity'; productNamePattern: string; quantity: number }
   | { type: 'adjust_quantity'; productNamePattern: string; delta: number }

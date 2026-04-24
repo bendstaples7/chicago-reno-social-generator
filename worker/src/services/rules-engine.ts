@@ -152,6 +152,9 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (act.description !== undefined && typeof act.description !== 'string') {
         return { valid: false, error: 'Action type "add_line_item" optional "description" must be a string' };
       }
+      if (act.placeAfter !== undefined && typeof act.placeAfter !== 'string') {
+        return { valid: false, error: 'Action type "add_line_item" optional "placeAfter" must be a string' };
+      }
       break;
 
     case 'remove_line_item':
@@ -379,7 +382,28 @@ function executeAction(
         originalText: '',
         ruleIdsApplied: [ruleId],
       };
-      const updated = [...lineItems, newItem];
+
+      let updated: EngineLineItem[];
+      if (action.placeAfter) {
+        // Insert the new item right after the specified product
+        const afterPattern = action.placeAfter.toLowerCase();
+        const afterIndex = lineItems.findLastIndex(
+          (li) => li.productName.toLowerCase() === afterPattern,
+        );
+        if (afterIndex >= 0) {
+          updated = [
+            ...lineItems.slice(0, afterIndex + 1),
+            newItem,
+            ...lineItems.slice(afterIndex + 1),
+          ];
+        } else {
+          // placeAfter target not found — append to end
+          updated = [...lineItems, newItem];
+        }
+      } else {
+        updated = [...lineItems, newItem];
+      }
+
       return {
         modified: true,
         lineItems: updated,

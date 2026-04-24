@@ -206,7 +206,14 @@ export class RulesService {
         `SELECT ${RULE_COLUMNS} FROM rules WHERE id = ?`
       ).bind(id).first() as Record<string, unknown>;
 
-      return this.mapRuleRow(row);
+      const rule = this.mapRuleRow(row);
+
+      // Update catalog sort orders for any add_line_item actions with placeAfter
+      if (actionJson) {
+        await this.updateCatalogSortOrders(actionJson);
+      }
+
+      return rule;
     } catch (err: unknown) {
       if (this.isUniqueViolation(err)) {
         throw new PlatformError({
@@ -876,6 +883,43 @@ export class RulesService {
   }
 
   /**
+   * Update catalog sort orders when a rule with add_line_item + placeAfter is created.
+   * Sets the added product's sort_order to parent's sort_order + 1, and bumps
+   * any products at or above that sort_order within the same range.
+   */
+  private async updateCatalogSortOrders(actions: RuleAction[]): Promise<void> {
+    for (const action of actions) {
+      if (action.type !== 'add_line_item' || !action.placeAfter) continue;
+
+      try {
+        // Find the parent product's sort order
+        const parentRow = await this.db.prepare(
+          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeAfter).first() as { sort_order: number } | null;
+
+        if (!parentRow) continue;
+
+        const parentOrder = parentRow.sort_order;
+        const childOrder = parentOrder + 1;
+
+        // Bump any products at or above childOrder that are in the same trade range
+        // (within 100 of the parent) to make room
+        const rangeMax = Math.ceil((parentOrder + 100) / 100) * 100;
+        await this.db.prepare(
+          'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+        ).bind(childOrder, rangeMax, action.productName).run();
+
+        // Set the child product's sort order
+        await this.db.prepare(
+          'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+        ).bind(childOrder, action.productName).run();
+      } catch (err) {
+        console.warn(`Failed to update catalog sort order for "${action.productName}": ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+
+  /**
    * Find the best trade group ID for the given text, falling back to the default group.
    */
   private async resolveGroupId(text: string, explicitGroupId?: string): Promise<string> {
@@ -926,7 +970,7 @@ export class RulesService {
       '  always — { "type": "always" }',
       '',
       'ACTION TYPES:',
-      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100 }',
+      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "exact catalog name of item it should follow" }',
       '  remove_line_item — { "type": "remove_line_item", "productNamePattern": "exact catalog name" }',
       '  set_quantity — { "type": "set_quantity", "productNamePattern": "exact catalog name", "quantity": 5 }',
       '  adjust_quantity — { "type": "adjust_quantity", "productNamePattern": "exact catalog name", "delta": 1 }',
@@ -942,13 +986,14 @@ export class RulesService {
       '- Find the CLOSEST matching catalog name for what the user describes. Example: "TV mounting" → "Carpentry: TV Mount".',
       '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
       '- Use extract_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The extractionPrompt is plain English.',
+      '- For add_line_item, always set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item).',
       '- If the rule truly cannot be expressed, set "unsupported" to true.',
       '',
       'EXAMPLE INPUT: "When mounting a TV, the description should include the TV size from the request"',
       'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_name_contains","substring":"TV Mount"},"actions":[{"type":"extract_request_context","productNamePattern":"Carpentry: TV Mount","extractionPrompt":"Extract the TV size (e.g. 65 inch) and the mounting location (e.g. living room, bedroom) from the customer request"}]}',
       '',
       'EXAMPLE INPUT: "When interior painting is on the quote, add paint supplies"',
-      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100}]}',
+      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100,"placeAfter":"Interior Painting"}]}',
       '',
       'Return ONLY a JSON object with "unsupported" (boolean), "condition" (object), and "actions" (array). No markdown, no explanation.',
     ].join('\n');

@@ -174,6 +174,18 @@ export class RulesService {
       }
     }
 
+    if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
+      // Generation was attempted but failed — don't save an inert rule
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: 'Could not generate structured conditions/actions for this rule. Please rephrase the rule description and try again.',
+        recommendedActions: ['Rephrase the rule description', 'Try using more specific product names from the catalog'],
+        statusCode: 400,
+      });
+    }
+
     // Auto-categorize into trade group based on rule text
     const groupId = await this.resolveGroupId(
       `${data.name} ${data.description}`,
@@ -366,6 +378,11 @@ export class RulesService {
           description: 'The rule was not found.',
           recommendedActions: ['Verify the rule ID is correct'],
         });
+      }
+
+      // Update catalog sort orders for any add_line_item actions with placeAfter
+      if (data.actionJson !== undefined && data.actionJson !== null) {
+        await this.updateCatalogSortOrders(data.actionJson);
       }
 
       return this.mapRuleRow(row);
@@ -891,31 +908,24 @@ export class RulesService {
     for (const action of actions) {
       if (action.type !== 'add_line_item' || !action.placeAfter) continue;
 
-      try {
-        // Find the parent product's sort order
-        const parentRow = await this.db.prepare(
-          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
-        ).bind(action.placeAfter).first() as { sort_order: number } | null;
+      const parentRow = await this.db.prepare(
+        'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+      ).bind(action.placeAfter).first() as { sort_order: number } | null;
 
-        if (!parentRow) continue;
+      if (!parentRow) continue;
 
-        const parentOrder = parentRow.sort_order;
-        const childOrder = parentOrder + 1;
+      const parentOrder = parentRow.sort_order;
+      const childOrder = parentOrder + 1;
+      const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
 
-        // Bump any products at or above childOrder that are in the same trade range
-        // (within 100 of the parent) to make room
-        const rangeMax = Math.ceil((parentOrder + 100) / 100) * 100;
-        await this.db.prepare(
+      await this.db.batch([
+        this.db.prepare(
           'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
-        ).bind(childOrder, rangeMax, action.productName).run();
-
-        // Set the child product's sort order
-        await this.db.prepare(
+        ).bind(childOrder, rangeMax, action.productName),
+        this.db.prepare(
           'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
-        ).bind(childOrder, action.productName).run();
-      } catch (err) {
-        console.warn(`Failed to update catalog sort order for "${action.productName}": ${err instanceof Error ? err.message : err}`);
-      }
+        ).bind(childOrder, action.productName),
+      ]);
     }
   }
 

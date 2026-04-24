@@ -58,14 +58,18 @@ app.get('/health', async (c) => {
   for (const key of critical) {
     if (!c.env[key]) missing.push(key);
   }
-  checks.env = missing.length > 0 ? `missing: ${missing.join(', ')}` : 'ok';
+  if (missing.length > 0) {
+    console.warn(`[health] Missing env vars: ${missing.join(', ')}`);
+  }
+  checks.env = missing.length > 0 ? 'degraded' : 'ok';
 
   // Check DB connectivity
   try {
     const result = await c.env.DB.prepare('SELECT COUNT(*) as count FROM rule_groups').first() as { count: number } | null;
-    checks.db = result ? `ok (${result.count} rule groups)` : 'error: no result';
+    checks.db = result ? 'ok' : 'error';
   } catch (err) {
-    checks.db = `error: ${err instanceof Error ? err.message : 'unknown'}`;
+    console.warn(`[health] DB check failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    checks.db = 'error';
   }
 
   const status = Object.values(checks).every(v => v.startsWith('ok')) ? 'ok' : 'degraded';

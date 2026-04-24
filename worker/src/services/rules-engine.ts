@@ -658,6 +658,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
   // Track which (ruleId, lineItemId) pairs have been applied to prevent
   // duplicate applications within a single execution run.
   const applied = new Set<string>();
+  const emittedEnrichments = new Set<string>();
 
   let iterationCount = 0;
 
@@ -741,6 +742,9 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
         if (actionResult.pendingEnrichment) {
           for (const liId of actionResult.pendingEnrichment.matchingLineItemIds) {
+            const key = `${rule.id}:${liId}`;
+            if (emittedEnrichments.has(key)) continue;
+            emittedEnrichments.add(key);
             pendingEnrichments.push({
               lineItemId: liId,
               productNamePattern: actionResult.pendingEnrichment.productNamePattern,

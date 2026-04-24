@@ -167,7 +167,7 @@ export class QuoteEngine {
           unitPrice: item.unitPrice ?? 0,
           confidenceScore: item.confidenceScore,
           originalText: item.originalText ?? '',
-          ruleIdsApplied: item.ruleIdsApplied ?? [],
+          ruleIdsApplied: Array.isArray(item.ruleIdsApplied) ? item.ruleIdsApplied.filter((id): id is string => typeof id === 'string') : [],
         }));
 
         const engineResult = executeRules({
@@ -179,13 +179,13 @@ export class QuoteEngine {
         auditTrail = engineResult.auditTrail;
 
         // Process AI enrichments synchronously (extract_request_context actions)
-        if (engineResult.pendingEnrichments.length > 0) {
+        if (engineResult.pendingEnrichments.length > 0 && input.customerText?.trim()) {
           const { EnrichmentService } = await import('./enrichment-service.js');
           const enrichmentService = new EnrichmentService(this.apiKey, this.apiUrl);
           const enrichedDescriptions = await enrichmentService.processEnrichments(
             engineResult.pendingEnrichments,
             input.customerText,
-            [], // no existing QuoteLineItems yet — use engine line items
+            engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description } as any)),
           );
 
           // Apply enriched descriptions to engine line items

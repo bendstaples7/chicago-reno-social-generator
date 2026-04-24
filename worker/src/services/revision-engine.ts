@@ -139,7 +139,7 @@ export class RevisionEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      return this.parseAndValidate(raw, input);
+      return await this.parseAndValidate(raw, input);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -340,13 +340,13 @@ export class RevisionEngine {
       auditTrail = engineResult.auditTrail;
 
       // Process AI enrichments synchronously (extract_request_context actions)
-      if (engineResult.pendingEnrichments.length > 0 && customerRequestText) {
+      if (engineResult.pendingEnrichments.length > 0 && customerRequestText?.trim()) {
         const { EnrichmentService } = await import('./enrichment-service.js');
         const enrichmentService = new EnrichmentService(this.apiKey, this.apiUrl);
         const enrichedDescriptions = await enrichmentService.processEnrichments(
           engineResult.pendingEnrichments,
           customerRequestText,
-          [], // use engine line items below
+          engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description } as any)),
         );
 
         // Apply enriched descriptions to engine line items before converting

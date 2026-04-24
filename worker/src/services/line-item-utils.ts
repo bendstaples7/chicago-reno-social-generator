@@ -100,8 +100,12 @@ export function sortLineItemsByCatalog<
   const sortOrderByName = new Map<string, number>();
   for (const entry of catalog) {
     const key = entry.name.trim().toLowerCase();
-    if (key && !sortOrderByName.has(key)) {
-      sortOrderByName.set(key, entry.sortOrder ?? 500);
+    if (key) {
+      const existing = sortOrderByName.get(key);
+      const newOrder = entry.sortOrder ?? 500;
+      if (existing === undefined || newOrder < existing) {
+        sortOrderByName.set(key, newOrder);
+      }
     }
   }
 

@@ -58,7 +58,6 @@ export interface QuoteDraft {
   status: 'draft' | 'finalized';
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];
-  pendingEnrichments?: number;
   createdAt: Date;
   updatedAt: Date;
 }

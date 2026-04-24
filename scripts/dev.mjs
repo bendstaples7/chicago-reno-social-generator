@@ -70,7 +70,9 @@ const healthCheck = async () => {
   console.warn('\n⚠️  Worker health check timed out after 30s. It may still be starting.');
 };
 
-healthCheck();
+healthCheck().catch(err => {
+  console.error('Health check failed:', err);
+});
 
 // Clean shutdown
 const cleanup = () => {
@@ -84,17 +86,13 @@ process.on('SIGTERM', cleanup);
 
 // If either process exits, kill the other
 worker.on('exit', (code) => {
-  if (code !== null && code !== 0) {
-    console.error(`\n❌ Worker exited with code ${code}`);
-    client.kill();
-    process.exit(code);
-  }
+  console.error(`\n❌ Worker exited${code !== null ? ` with code ${code}` : ''}`);
+  client.kill();
+  process.exit(code ?? 1);
 });
 
 client.on('exit', (code) => {
-  if (code !== null && code !== 0) {
-    console.error(`\n❌ Client exited with code ${code}`);
-    worker.kill();
-    process.exit(code);
-  }
+  console.error(`\n❌ Client exited${code !== null ? ` with code ${code}` : ''}`);
+  worker.kill();
+  process.exit(code ?? 1);
 });

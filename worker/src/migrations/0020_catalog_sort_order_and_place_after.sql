@@ -20,7 +20,7 @@ UPDATE manual_catalog_entries SET sort_order = 600 WHERE name LIKE 'Appliance%';
 UPDATE manual_catalog_entries SET sort_order = 650 WHERE name LIKE 'Exterior%' AND name NOT LIKE 'Exterior Painting%';
 UPDATE manual_catalog_entries SET sort_order = 700 WHERE name LIKE 'Misc%';
 UPDATE manual_catalog_entries SET sort_order = 800 WHERE name LIKE 'Materials%';
-UPDATE manual_catalog_entries SET sort_order = 900 WHERE name LIKE 'Labor' OR name LIKE 'Architectural%';
+UPDATE manual_catalog_entries SET sort_order = 900 WHERE name LIKE 'Labor%' OR name LIKE 'Architectural%';
 
 -- Materials get sort_order just above their parent trade so they group together:
 UPDATE manual_catalog_entries SET sort_order = 101 WHERE name = 'Materials: Demo Supplies';

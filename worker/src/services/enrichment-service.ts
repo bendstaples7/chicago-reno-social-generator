@@ -29,30 +29,34 @@ export class EnrichmentService {
       return results;
     }
 
-    // Process enrichments in parallel
-    const promises = enrichments.map(async (enrichment) => {
-      try {
-        const lineItem = currentLineItems.find(li => li.id === enrichment.lineItemId);
-        const productName = lineItem?.productName ?? enrichment.productNamePattern;
+    // Process enrichments in batches to limit concurrency
+    const MAX_CONCURRENT = 3;
+    for (let i = 0; i < enrichments.length; i += MAX_CONCURRENT) {
+      const batch = enrichments.slice(i, i + MAX_CONCURRENT);
+      const batchPromises = batch.map(async (enrichment) => {
+        try {
+          const lineItem = currentLineItems.find(li => li.id === enrichment.lineItemId);
+          const productName = lineItem?.productName ?? enrichment.productNamePattern;
 
-        const extracted = await this.extractContext(
-          customerRequestText,
-          enrichment.extractionPrompt,
-          productName,
-        );
+          const extracted = await this.extractContext(
+            customerRequestText,
+            enrichment.extractionPrompt,
+            productName,
+          );
 
-        if (extracted) {
-          const separator = enrichment.separator ?? '. ';
-          const existing = lineItem?.description?.trim() ?? '';
-          const newDesc = existing ? `${existing}${separator}${extracted}` : extracted;
-          results.set(enrichment.lineItemId, newDesc);
+          if (extracted) {
+            const separator = enrichment.separator ?? '. ';
+            const existing = lineItem?.description?.trim() ?? '';
+            const newDesc = existing ? `${existing}${separator}${extracted}` : extracted;
+            results.set(enrichment.lineItemId, newDesc);
+          }
+        } catch (err) {
+          console.warn(`Enrichment failed for line item ${enrichment.lineItemId}: ${err instanceof Error ? err.message : err}`);
         }
-      } catch (err) {
-        console.warn(`Enrichment failed for line item ${enrichment.lineItemId}: ${err instanceof Error ? err.message : err}`);
-      }
-    });
+      });
+      await Promise.all(batchPromises);
+    }
 
-    await Promise.all(promises);
     return results;
   }
 

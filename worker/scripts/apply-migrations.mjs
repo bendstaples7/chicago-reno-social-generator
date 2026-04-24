@@ -33,16 +33,18 @@ function getAppliedMigrations() {
     return names;
   } catch {
     // Try without --json flag (older wrangler versions)
+    console.warn('[migrations] JSON parse failed, trying text fallback');
     try {
       const output = run('npx wrangler d1 execute DB --local --command "SELECT name FROM d1_migrations ORDER BY id ASC"');
       const names = new Set();
       // Parse lines containing .sql filenames
       for (const line of output.split('\n')) {
-        const match = line.match(/(\d{4}_[^\s"│|]+\.sql)/);
+        const match = line.match(/(\d{4}_[\w-]+\.sql)/);
         if (match) names.add(match[1]);
       }
       return names;
     } catch {
+      console.warn('[migrations] Could not determine applied migrations, treating all as unapplied');
       return new Set();
     }
   }
@@ -67,7 +69,13 @@ if (pending.length === 0) {
 
 console.log(`[migrations] Applying ${pending.length} migration(s)...`);
 
+const SAFE_MIGRATION_NAME = /^\d{4}_[\w-]+\.sql$/;
+
 for (const migration of pending) {
+  if (!SAFE_MIGRATION_NAME.test(migration)) {
+    console.error(`  ❌ ${migration}: invalid migration filename`);
+    process.exit(1);
+  }
   const filePath = resolve(migrationsDir, migration);
   try {
     run(`npx wrangler d1 execute DB --local --file "${filePath}"`);
@@ -76,7 +84,7 @@ for (const migration of pending) {
     run(`npx wrangler d1 execute DB --local --command "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('${escapedName}')"`);
     console.log(`  ✅ ${migration}`);
   } catch (err) {
-    const msg = err.message || '';
+    const msg = (err.message || '') + (err.stderr ? err.stderr.toString() : '');
     if (msg.includes('duplicate column') || msg.includes('already exists') || msg.includes('UNIQUE constraint')) {
       try {
         const escapedName = migration.replace(/'/g, "''");

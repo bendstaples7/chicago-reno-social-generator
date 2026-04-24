@@ -274,7 +274,7 @@ export class JobberIntegration {
 
         return {
           id: r.id,
-          title: r.title ?? `Request from ${clientName}`,
+          title: r.title || `Request from ${clientName}`,
           clientName,
           description: r.notes.edges[0]?.node?.message || '',
           notes: r.notes.edges

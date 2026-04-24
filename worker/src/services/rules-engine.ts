@@ -742,7 +742,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
         if (actionResult.pendingEnrichment) {
           for (const liId of actionResult.pendingEnrichment.matchingLineItemIds) {
-            const key = `${rule.id}:${liId}`;
+            const key = `${rule.id}:${liId}:${actionResult.pendingEnrichment.extractionPrompt}`;
             if (emittedEnrichments.has(key)) continue;
             emittedEnrichments.add(key);
             pendingEnrichments.push({

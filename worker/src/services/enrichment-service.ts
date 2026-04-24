@@ -1,4 +1,11 @@
-import type { PendingEnrichment, QuoteLineItem } from 'shared';
+import type { PendingEnrichment } from 'shared';
+
+/** Minimal line item shape needed for enrichment lookups */
+interface EnrichmentLineItem {
+  id: string;
+  productName?: string;
+  description?: string;
+}
 
 /**
  * Service that processes pending AI enrichments for quote line item descriptions.
@@ -21,7 +28,7 @@ export class EnrichmentService {
   async processEnrichments(
     enrichments: PendingEnrichment[],
     customerRequestText: string,
-    currentLineItems: QuoteLineItem[],
+    currentLineItems: EnrichmentLineItem[],
   ): Promise<Map<string, string>> {
     const results = new Map<string, string>();
 
@@ -124,8 +131,9 @@ export class EnrichmentService {
       }
 
       return extracted;
-    } catch {
+    } catch (err) {
       clearTimeout(timeout);
+      console.warn(`Context extraction error: ${err instanceof Error ? err.message : 'unknown'}`);
       return null;
     }
   }

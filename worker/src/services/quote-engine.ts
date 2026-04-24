@@ -185,7 +185,7 @@ export class QuoteEngine {
           const enrichedDescriptions = await enrichmentService.processEnrichments(
             engineResult.pendingEnrichments,
             input.customerText,
-            engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description } as any)),
+            engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description })),
           );
 
           // Apply enriched descriptions to engine line items

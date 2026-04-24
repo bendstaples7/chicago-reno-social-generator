@@ -2,6 +2,8 @@
  * Utility functions for post-processing AI-generated line items.
  */
 
+import type { ProductCatalogEntry } from 'shared';
+
 /**
  * Merge duplicate line items that share the same product name (case-insensitive)
  * AND the same unit price.
@@ -84,8 +86,6 @@ export function deduplicateLineItems<
   // Preserve original insertion order
   return order.map((key) => seen.get(key)!);
 }
-
-import type { ProductCatalogEntry } from 'shared';
 
 /**
  * Sort line items by their catalog sort order.

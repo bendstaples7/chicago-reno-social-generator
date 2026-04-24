@@ -346,7 +346,7 @@ export class RevisionEngine {
         const enrichedDescriptions = await enrichmentService.processEnrichments(
           engineResult.pendingEnrichments,
           customerRequestText,
-          engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description } as any)),
+          engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description })),
         );
 
         // Apply enriched descriptions to engine line items before converting

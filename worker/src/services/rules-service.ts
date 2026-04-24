@@ -186,6 +186,18 @@ export class RulesService {
       });
     }
 
+    // Never persist rules without structured data — they would be invisible to the engine
+    if (!conditionJson || !actionJson) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: 'Rules require structured conditions and actions. Provide conditionJson and actionJson, or ensure an API key and catalog are available for auto-generation.',
+        recommendedActions: ['Provide conditionJson and actionJson', 'Ensure AI_TEXT_API_KEY is configured'],
+        statusCode: 400,
+      });
+    }
+
     // Auto-categorize into trade group based on rule text
     const groupId = await this.resolveGroupId(
       `${data.name} ${data.description}`,
@@ -874,27 +886,27 @@ export class RulesService {
   // ── Private helpers ───────────────────────────────────────────
 
   /** Trade keyword patterns for auto-categorization. Order matters: specific patterns first. */
-  private static readonly TRADE_KEYWORDS: Array<{ groupName: string; patterns: RegExp }> = [
-    { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
-    { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
-    { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
-    { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
-    { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
-    { groupName: 'Carpentry', patterns: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
-    { groupName: 'Drywall', patterns: /\b(drywall|hole patch)\b/i },
-    { groupName: 'HVAC', patterns: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
-    { groupName: 'Demo', patterns: /\b(demo|demolition|tear out|rip out)\b/i },
-    { groupName: 'Insulation', patterns: /\b(insulation|insulate)\b/i },
-    { groupName: 'Appliances', patterns: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
-    { groupName: 'Countertops', patterns: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
+  private static readonly TRADE_KEYWORDS: Array<{ groupName: string; pattern: RegExp }> = [
+    { groupName: 'Exterior', pattern: /\b(exterior|drain tile|siding|gutter)\b/i },
+    { groupName: 'Tile', pattern: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
+    { groupName: 'Painting', pattern: /\b(paint|painting|primer)\b/i },
+    { groupName: 'Electrical', pattern: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
+    { groupName: 'Plumbing', pattern: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
+    { groupName: 'Carpentry', pattern: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
+    { groupName: 'Drywall', pattern: /\b(drywall|hole patch)\b/i },
+    { groupName: 'HVAC', pattern: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
+    { groupName: 'Demo', pattern: /\b(demo|demolition|tear out|rip out)\b/i },
+    { groupName: 'Insulation', pattern: /\b(insulation|insulate)\b/i },
+    { groupName: 'Appliances', pattern: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
+    { groupName: 'Countertops', pattern: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
   ];
 
   /**
    * Match text against trade keywords and return the group name, or null if no match.
    */
   private matchTradeGroupName(text: string): string | null {
-    for (const { groupName, patterns } of RulesService.TRADE_KEYWORDS) {
-      if (patterns.test(text)) return groupName;
+    for (const { groupName, pattern } of RulesService.TRADE_KEYWORDS) {
+      if (pattern.test(text)) return groupName;
     }
     return null;
   }
@@ -933,9 +945,8 @@ export class RulesService {
    * Find the best trade group ID for the given text, falling back to the default group.
    */
   private async resolveGroupId(text: string, explicitGroupId?: string): Promise<string> {
-    // If an explicit non-General group was provided, use it
-    const defaultGroupId = await this.getDefaultGroupId();
-    if (explicitGroupId && explicitGroupId !== defaultGroupId) {
+    // If an explicit group was provided, use it
+    if (explicitGroupId !== undefined) {
       return explicitGroupId;
     }
 
@@ -948,14 +959,13 @@ export class RulesService {
       if (row) return row.id;
     }
 
-    return explicitGroupId ?? defaultGroupId;
+    return this.getDefaultGroupId();
   }
 
   /**
    * Use OpenAI to generate structured condition/action JSON from a natural language
-   * rule description and the product catalog. Uses OpenAI structured outputs (JSON schema)
-   * to guarantee valid response format. Returns null if the rule cannot be expressed
-   * as a structured rule.
+   * rule description and the product catalog. Uses JSON mode with validation and retry.
+   * Returns null if the rule cannot be expressed as a structured rule.
    */
   async generateStructuredRule(
     description: string,

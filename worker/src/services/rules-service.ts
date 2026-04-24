@@ -946,7 +946,7 @@ export class RulesService {
    */
   private async resolveGroupId(text: string, explicitGroupId?: string): Promise<string> {
     // If an explicit group was provided, use it
-    if (explicitGroupId !== undefined) {
+    if (explicitGroupId !== undefined && explicitGroupId !== '') {
       return explicitGroupId;
     }
 

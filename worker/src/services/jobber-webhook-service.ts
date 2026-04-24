@@ -452,7 +452,7 @@ export class JobberWebhookService {
 
       return {
         id: row.jobber_request_id as string,
-        title: (row.title as string) || 'Untitled Request',
+        title: (row.title as string) || `Request from ${(row.client_name as string) || 'Unknown'}`,
         clientName: (row.client_name as string) || 'Unknown',
         description: (row.description as string) || '',
         notes: structuredNotes.map((n) => n.message),

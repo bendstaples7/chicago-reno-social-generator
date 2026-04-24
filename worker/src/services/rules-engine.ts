@@ -6,6 +6,7 @@ import type {
   AuditEntry,
   RulesEngineResult,
   ProductCatalogEntry,
+  PendingEnrichment,
 } from 'shared';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,12 @@ interface ActionResult {
   warning?: string;
   beforeSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
   afterSnapshot?: Array<{ id: string; productName: string; description?: string; quantity: number; unitPrice: number }>;
+  pendingEnrichment?: {
+    productNamePattern: string;
+    extractionPrompt: string;
+    separator?: string;
+    matchingLineItemIds: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +50,7 @@ interface ActionResult {
 const CONDITION_TYPES = new Set([
   'line_item_exists',
   'line_item_not_exists',
+  'line_item_name_contains',
   'line_item_quantity_gte',
   'line_item_quantity_lte',
   'always',
@@ -56,6 +64,7 @@ const ACTION_TYPES = new Set([
   'set_unit_price',
   'set_description',
   'append_description',
+  'extract_request_context',
 ]);
 
 export function validateCondition(condition: unknown): { valid: boolean; error?: string } {
@@ -78,6 +87,12 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
     case 'line_item_not_exists':
       if (typeof cond.productNamePattern !== 'string') {
         return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      }
+      break;
+
+    case 'line_item_name_contains':
+      if (typeof cond.substring !== 'string') {
+        return { valid: false, error: 'Condition type "line_item_name_contains" requires a string "substring" field' };
       }
       break;
 
@@ -136,6 +151,9 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       }
       if (act.description !== undefined && typeof act.description !== 'string') {
         return { valid: false, error: 'Action type "add_line_item" optional "description" must be a string' };
+      }
+      if (act.placeAfter !== undefined && typeof act.placeAfter !== 'string') {
+        return { valid: false, error: 'Action type "add_line_item" optional "placeAfter" must be a string' };
       }
       break;
 
@@ -201,6 +219,18 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
         return { valid: false, error: 'Action type "append_description" optional "separator" must be a string' };
       }
       break;
+
+    case 'extract_request_context':
+      if (typeof act.productNamePattern !== 'string') {
+        return { valid: false, error: 'Action type "extract_request_context" requires a string "productNamePattern" field' };
+      }
+      if (typeof act.extractionPrompt !== 'string') {
+        return { valid: false, error: 'Action type "extract_request_context" requires a string "extractionPrompt" field' };
+      }
+      if (act.separator !== undefined && typeof act.separator !== 'string') {
+        return { valid: false, error: 'Action type "extract_request_context" optional "separator" must be a string' };
+      }
+      break;
   }
 
   return { valid: true };
@@ -254,6 +284,17 @@ function evaluateCondition(
       // When no item matches the pattern, the condition is satisfied.
       // There are no specific "matching" line items to return.
       return { matched: !anyMatch, matchingLineItemIds: [] };
+    }
+
+    case 'line_item_name_contains': {
+      const sub = condition.substring.toLowerCase();
+      const matching = lineItems.filter(
+        (li) => li.productName.toLowerCase().includes(sub),
+      );
+      return {
+        matched: matching.length > 0,
+        matchingLineItemIds: matching.map((li) => li.id),
+      };
     }
 
     case 'line_item_quantity_gte': {
@@ -341,7 +382,28 @@ function executeAction(
         originalText: '',
         ruleIdsApplied: [ruleId],
       };
-      const updated = [...lineItems, newItem];
+
+      let updated: EngineLineItem[];
+      if (action.placeAfter) {
+        // Insert the new item right after the specified product
+        const afterPattern = action.placeAfter.toLowerCase();
+        const afterIndex = lineItems.findLastIndex(
+          (li) => li.productName.toLowerCase() === afterPattern,
+        );
+        if (afterIndex >= 0) {
+          updated = [
+            ...lineItems.slice(0, afterIndex + 1),
+            newItem,
+            ...lineItems.slice(afterIndex + 1),
+          ];
+        } else {
+          // placeAfter target not found — append to end
+          updated = [...lineItems, newItem];
+        }
+      } else {
+        updated = [...lineItems, newItem];
+      }
+
       return {
         modified: true,
         lineItems: updated,
@@ -537,6 +599,34 @@ function executeAction(
       };
     }
 
+    case 'extract_request_context': {
+      // This action is handled asynchronously after the engine completes.
+      // We just record that it matched and return unmodified line items.
+      // The caller collects these as pending enrichments.
+      const pattern = action.productNamePattern.toLowerCase();
+      const matching = lineItems.filter(
+        (li) => li.productName.toLowerCase() === pattern,
+      );
+
+      if (matching.length === 0) {
+        return { modified: false, lineItems };
+      }
+
+      // Mark as "modified" so the audit trail records it, but don't change line items
+      return {
+        modified: false,
+        lineItems,
+        beforeSnapshot: snapshot(matching),
+        afterSnapshot: snapshot(matching),
+        pendingEnrichment: {
+          productNamePattern: action.productNamePattern,
+          extractionPrompt: action.extractionPrompt,
+          separator: action.separator,
+          matchingLineItemIds: matching.map((li) => li.id),
+        },
+      };
+    }
+
     default:
       return { modified: false, lineItems };
   }
@@ -558,15 +648,17 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
   }));
 
   const auditTrail: AuditEntry[] = [];
+  const pendingEnrichments: PendingEnrichment[] = [];
 
   // Early exit: no rules → return unmodified
   if (rules.length === 0) {
-    return { lineItems, auditTrail, iterationCount: 0, converged: true };
+    return { lineItems, auditTrail, iterationCount: 0, converged: true, pendingEnrichments: [] };
   }
 
   // Track which (ruleId, lineItemId) pairs have been applied to prevent
   // duplicate applications within a single execution run.
   const applied = new Set<string>();
+  const emittedEnrichments = new Set<string>();
 
   let iterationCount = 0;
 
@@ -634,7 +726,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
         const actionResult = executeAction(action, lineItems, catalog, rule.id);
         lineItems = actionResult.lineItems;
 
-        if (actionResult.modified || actionResult.warning) {
+        if (actionResult.modified || actionResult.warning || actionResult.pendingEnrichment) {
           auditTrail.push({
             ruleId: rule.id,
             ruleName: rule.name,
@@ -646,6 +738,22 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
             afterSnapshot: actionResult.afterSnapshot ?? [],
             warning: actionResult.warning,
           });
+        }
+
+        if (actionResult.pendingEnrichment) {
+          for (const liId of actionResult.pendingEnrichment.matchingLineItemIds) {
+            const key = `${rule.id}:${liId}:${actionResult.pendingEnrichment.extractionPrompt}`;
+            if (emittedEnrichments.has(key)) continue;
+            emittedEnrichments.add(key);
+            pendingEnrichments.push({
+              lineItemId: liId,
+              productNamePattern: actionResult.pendingEnrichment.productNamePattern,
+              extractionPrompt: actionResult.pendingEnrichment.extractionPrompt,
+              separator: actionResult.pendingEnrichment.separator,
+              ruleId: rule.id,
+              ruleName: rule.name,
+            });
+          }
         }
 
         if (actionResult.modified) {
@@ -667,7 +775,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
     // Convergence: no modifications this iteration
     if (!anyModified) {
-      return { lineItems, auditTrail, iterationCount, converged: true };
+      return { lineItems, auditTrail, iterationCount, converged: true, pendingEnrichments };
     }
   }
 
@@ -686,5 +794,5 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
     warning: `Rules engine did not converge after ${maxIterations} iterations`,
   });
 
-  return { lineItems, auditTrail, iterationCount, converged: false };
+  return { lineItems, auditTrail, iterationCount, converged: false, pendingEnrichments };
 }

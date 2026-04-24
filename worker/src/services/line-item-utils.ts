@@ -2,6 +2,8 @@
  * Utility functions for post-processing AI-generated line items.
  */
 
+import type { ProductCatalogEntry } from 'shared';
+
 /**
  * Merge duplicate line items that share the same product name (case-insensitive)
  * AND the same unit price.
@@ -83,4 +85,38 @@ export function deduplicateLineItems<
 
   // Preserve original insertion order
   return order.map((key) => seen.get(key)!);
+}
+
+/**
+ * Sort line items by their catalog sort order.
+ * Items whose product name matches a catalog entry are sorted by that entry's sortOrder.
+ * Items without a catalog match keep their relative position (stable sort).
+ * This ensures quotes follow the renovation workflow sequence.
+ */
+export function sortLineItemsByCatalog<
+  T extends { productName: string },
+>(items: T[], catalog: ProductCatalogEntry[]): T[] {
+  // Build a name→sortOrder lookup (case-insensitive)
+  const sortOrderByName = new Map<string, number>();
+  for (const entry of catalog) {
+    const key = entry.name.trim().toLowerCase();
+    if (key) {
+      const existing = sortOrderByName.get(key);
+      const newOrder = entry.sortOrder ?? 500;
+      if (existing === undefined || newOrder < existing) {
+        sortOrderByName.set(key, newOrder);
+      }
+    }
+  }
+
+  // Stable sort: items with the same sort order keep their relative position
+  const indexed = items.map((item, i) => ({ item, originalIndex: i }));
+  indexed.sort((a, b) => {
+    const aOrder = sortOrderByName.get(a.item.productName.trim().toLowerCase()) ?? 500;
+    const bOrder = sortOrderByName.get(b.item.productName.trim().toLowerCase()) ?? 500;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.originalIndex - b.originalIndex; // stable
+  });
+
+  return indexed.map(({ item }) => item);
 }

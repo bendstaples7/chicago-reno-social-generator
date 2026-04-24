@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler d1 migrations apply DB --local && node scripts/sync-tokens.mjs && node scripts/sync-cookies.mjs --target local && node scripts/sync-rules.mjs && wrangler dev",
+    "dev": "node scripts/apply-migrations.mjs && node scripts/sync-tokens.mjs && node scripts/sync-cookies.mjs --target local && node scripts/sync-rules.mjs && wrangler dev",
     "sync-rules": "node scripts/sync-rules.mjs",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy && node scripts/sync-rules.mjs --list-remote",
     "sync-secrets": "node scripts/sync-secrets.mjs",

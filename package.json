@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "dev:client": "npm run dev --workspace=client",
     "dev:worker": "npm run dev --workspace=worker",
+    "dev:all": "node scripts/dev.mjs",
     "build:client": "npm run build --workspace=client",
     "build:worker": "npm run build --workspace=worker",
     "test:e2e": "npx playwright test",

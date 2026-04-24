@@ -1,8 +1,7 @@
 import { PlatformError } from '../errors/index.js';
-import { sanitizeRuleIds, buildRulesSection } from './rules-prompt.js';
-import { deduplicateLineItems } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteLineItem, RuleGroupWithRules, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -13,7 +12,6 @@ export interface RevisionInput {
   currentLineItems: QuoteLineItem[];
   currentUnresolvedItems: QuoteLineItem[];
   catalog: ProductCatalogEntry[];
-  rules?: RuleGroupWithRules[];
   structuredRules?: StructuredRule[];
 }
 
@@ -102,19 +100,7 @@ export class RevisionEngine {
     }
 
     const userPrompt = this.buildPrompt(input);
-    const systemPrompt = input.rules && input.rules.length > 0
-      ? SYSTEM_PROMPT + '\n\n' + buildRulesSection(input.rules)
-      : SYSTEM_PROMPT;
-
-    // Collect valid rule IDs so we can verify AI claims in validation
-    const validRuleIds = new Set<string>();
-    if (input.rules) {
-      for (const group of input.rules) {
-        for (const rule of group.rules) {
-          validRuleIds.add(rule.id);
-        }
-      }
-    }
+    const systemPrompt = SYSTEM_PROMPT;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REVISION_TIMEOUT_MS);
@@ -153,7 +139,7 @@ export class RevisionEngine {
         choices: Array<{ message: { content: string } }>;
       };
       const raw = data.choices?.[0]?.message?.content?.trim() ?? '';
-      return this.parseAndValidate(raw, input, validRuleIds);
+      return await this.parseAndValidate(raw, input);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -208,7 +194,7 @@ export class RevisionEngine {
     return parts.join('\n');
   }
 
-  private parseAndValidate(raw: string, input: RevisionInput, validRuleIds: Set<string>): RevisionOutput {
+  private async parseAndValidate(raw: string, input: RevisionInput): Promise<RevisionOutput> {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     let parsed: { lineItems?: AILineItem[] };
@@ -232,10 +218,10 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, validRuleIds, input.structuredRules);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText);
   }
 
-  private validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], validRuleIds: Set<string>, structuredRules?: StructuredRule[]): RevisionOutput {
+  private async validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string): Promise<RevisionOutput> {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -251,10 +237,6 @@ export class RevisionEngine {
     for (const item of aiItems) {
       const score = Math.max(0, Math.min(100, Math.round(item.confidenceScore ?? 0)));
       const nameLower = (item.productName ?? '').trim().toLowerCase();
-      // Only trust rule overrides when at least one claimed rule ID is a real active rule
-      const verifiedRuleIds = sanitizeRuleIds(item.ruleIdsApplied).filter(id => validRuleIds.has(id));
-      const hasRules = verifiedRuleIds.length > 0;
-
       // Skip fuzzy matching for empty/blank product names
       if (!nameLower) {
         allItems.push({
@@ -268,7 +250,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: 'Empty product name',
-          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: item.ruleIdsApplied ?? [],
         });
         continue;
       }
@@ -293,27 +275,18 @@ export class RevisionEngine {
       }
 
       if (catalogEntry) {
-        // When rules were applied, the AI's values for description, quantity,
-        // and unitPrice take precedence over catalog defaults. This allows
-        // business rules to override any field on a line item.
-        const aiPrice = item.unitPrice;
-        const useAiPrice = hasRules && aiPrice != null && Number.isFinite(aiPrice);
         allItems.push({
           id: crypto.randomUUID(),
           productCatalogEntryId: catalogEntry.id,
           productName: catalogEntry.name,
-          description: hasRules && item.description != null
-            ? item.description
-            : (catalogEntry.description ?? ''),
+          description: catalogEntry.description ?? '',
           quantity: Math.max(0, item.quantity ?? 1),
-          unitPrice: useAiPrice
-            ? Math.max(0, aiPrice)
-            : Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
+          unitPrice: Math.max(0, catalogEntry.unitPrice ?? item.unitPrice ?? 0),
           confidenceScore: score,
           originalText: item.originalText ?? '',
           resolved: score >= CONFIDENCE_THRESHOLD,
           unmatchedReason: score >= CONFIDENCE_THRESHOLD ? undefined : (item.unmatchedReason || 'Low confidence match'),
-          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: item.ruleIdsApplied ?? [],
         });
       } else {
         allItems.push({
@@ -327,7 +300,7 @@ export class RevisionEngine {
           originalText: item.originalText ?? '',
           resolved: false,
           unmatchedReason: item.unmatchedReason || 'No matching product found in catalog',
-          ruleIdsApplied: sanitizeRuleIds(item.ruleIdsApplied),
+          ruleIdsApplied: item.ruleIdsApplied ?? [],
         });
       }
     }
@@ -366,6 +339,25 @@ export class RevisionEngine {
 
       auditTrail = engineResult.auditTrail;
 
+      // Process AI enrichments synchronously (extract_request_context actions)
+      if (engineResult.pendingEnrichments.length > 0 && customerRequestText?.trim()) {
+        const { EnrichmentService } = await import('./enrichment-service.js');
+        const enrichmentService = new EnrichmentService(this.apiKey, this.apiUrl);
+        const enrichedDescriptions = await enrichmentService.processEnrichments(
+          engineResult.pendingEnrichments,
+          customerRequestText,
+          engineResult.lineItems.map(eli => ({ id: eli.id, productName: eli.productName, description: eli.description })),
+        );
+
+        // Apply enriched descriptions to engine line items before converting
+        for (const eli of engineResult.lineItems) {
+          const newDesc = enrichedDescriptions.get(eli.id);
+          if (newDesc) {
+            eli.description = newDesc;
+          }
+        }
+      }
+
       // Replace allItems with engine output, preserving resolved/unresolved partitioning
       allItems.length = 0;
       for (const eli of engineResult.lineItems) {
@@ -389,8 +381,9 @@ export class RevisionEngine {
     // Deduplicate BEFORE partitioning so duplicates split across the
     // confidence threshold (one resolved, one unresolved) are caught.
     const dedupedItems = deduplicateLineItems(allItems);
-    const lineItems = dedupedItems.filter((i) => i.resolved);
-    const unresolvedItems = dedupedItems.filter((i) => !i.resolved);
+    const sortedItems = sortLineItemsByCatalog(dedupedItems, catalog);
+    const lineItems = sortedItems.filter((i) => i.resolved);
+    const unresolvedItems = sortedItems.filter((i) => !i.resolved);
 
     return {
       lineItems,

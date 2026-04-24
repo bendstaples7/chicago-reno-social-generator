@@ -64,6 +64,7 @@ export default function QuoteInputPage() {
   const [dragOver, setDragOver] = useState(false);
   const [jobberAvailable, setJobberAvailable] = useState(false);
   const [jobberRequestId, setJobberRequestId] = useState<string | null>(null);
+  const [hasLoadedFormData, setHasLoadedFormData] = useState(false);
 
   useEffect(() => {
     checkJobberStatus()
@@ -83,6 +84,7 @@ export default function QuoteInputPage() {
       if (token !== selectTokenRef.current) return; // stale
       if (formData && formData.text) {
         setCustomerText(formData.text);
+        setHasLoadedFormData(true);
         return;
       }
     } catch {
@@ -93,12 +95,14 @@ export default function QuoteInputPage() {
     if (token !== selectTokenRef.current) return;
     // Fallback: build text from the request object's notes/description
     setCustomerText(buildCustomerText(request));
+    setHasLoadedFormData(true);
   };
 
   const handleRequestClear = () => {
     ++selectTokenRef.current;
     setJobberRequestId(null);
     setCustomerText('');
+    setHasLoadedFormData(false);
   };
 
   const hasText = customerText.trim().length > 0;
@@ -191,6 +195,7 @@ export default function QuoteInputPage() {
           onSelect={handleRequestSelect}
           onClear={handleRequestClear}
           selectedRequestId={jobberRequestId}
+          hasFormData={hasLoadedFormData}
         />
       )}
 

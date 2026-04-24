@@ -26,6 +26,7 @@ export { SimilarityEngine } from './similarity-engine.js';
 export type { SimilarQuoteResult } from './similarity-engine.js';
 export { QuoteSyncService } from './quote-sync-service.js';
 export type { SyncResult } from './quote-sync-service.js';
-export { deduplicateLineItems } from './line-item-utils.js';
+export { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 export { executeRules, validateCondition, validateAction, validateActions } from './rules-engine.js';
 export type { RulesEngineInput } from './rules-engine.js';
+export { EnrichmentService } from './enrichment-service.js';

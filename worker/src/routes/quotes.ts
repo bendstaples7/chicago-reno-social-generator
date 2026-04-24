@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, RuleGroupWithRules, SimilarQuote, StructuredRule, RuleCondition, RuleAction, TriggerMode } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, SimilarQuote, StructuredRule, RuleCondition, RuleAction, TriggerMode } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import { JobberWebSession } from '../services/jobber-web-session.js';
@@ -56,7 +56,8 @@ app.get('/rules', async (c) => {
  * Create a new rule.
  */
 app.post('/rules', async (c) => {
-  const rulesService = new RulesService(c.env.DB);
+  const db = c.env.DB;
+  const rulesService = new RulesService(db);
   const { name, description, ruleGroupId, isActive, conditionJson, actionJson, triggerMode } = await c.req.json() as {
     name?: string;
     description?: string;
@@ -66,6 +67,19 @@ app.post('/rules', async (c) => {
     actionJson?: RuleAction[];
     triggerMode?: TriggerMode;
   };
+
+  // Fetch catalog names for AI-powered structured rule generation
+  let catalogNames: string[] = [];
+  if (!conditionJson && !actionJson) {
+    try {
+      const userId = c.get('user').id;
+      const catalogResult = await db.prepare(
+        'SELECT name FROM manual_catalog_entries WHERE user_id = ? ORDER BY name ASC'
+      ).bind(userId).all();
+      catalogNames = (catalogResult.results as Array<{ name: string }>).map(r => r.name);
+    } catch { /* graceful degradation */ }
+  }
+
   const rule = await rulesService.createRule({
     name: name ?? '',
     description: description ?? '',
@@ -74,6 +88,9 @@ app.post('/rules', async (c) => {
     conditionJson,
     actionJson,
     triggerMode,
+    catalogNames: catalogNames.length > 0 ? catalogNames : undefined,
+    apiKey: c.env.AI_TEXT_API_KEY,
+    apiUrl: c.env.AI_TEXT_API_URL,
   });
   return c.json(rule, 201);
 });
@@ -204,7 +221,7 @@ app.post('/rules/auto-categorize', async (c) => {
 
 async function fetchManualCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {
   const result = await db.prepare(
-    'SELECT id, name, unit_price, description, category FROM manual_catalog_entries WHERE user_id = ? ORDER BY created_at ASC'
+    'SELECT id, name, unit_price, description, category, sort_order FROM manual_catalog_entries WHERE user_id = ? ORDER BY sort_order ASC, created_at ASC'
   ).bind(userId).all();
 
   return (result.results as any[]).map((row) => ({
@@ -213,6 +230,7 @@ async function fetchManualCatalog(db: D1Database, userId: string): Promise<Produ
     unitPrice: Number(row.unit_price),
     description: (row.description as string) ?? '',
     category: (row.category as string) ?? undefined,
+    sortOrder: Number(row.sort_order ?? 500),
     source: 'manual' as const,
   }));
 }
@@ -285,16 +303,8 @@ app.post('/generate', async (c) => {
     catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
   }
 
-  // Fetch active rules for prompt injection (graceful degradation)
-  const rulesService = new RulesService(db);
-  let activeRules: RuleGroupWithRules[] = [];
-  try {
-    activeRules = await rulesService.getActiveRulesGrouped();
-  } catch {
-    activeRules = [];
-  }
-
   // Fetch structured rules for the deterministic rules engine (graceful degradation)
+  const rulesService = new RulesService(db);
   let structuredRules: StructuredRule[] = [];
   try {
     structuredRules = await rulesService.getActiveStructuredRules();
@@ -334,13 +344,13 @@ app.post('/generate', async (c) => {
     },
     catalog,
     templates,
-    activeRules,
     structuredRules,
   );
 
   if (body.jobberRequestId) {
     result.draft.jobberRequestId = body.jobberRequestId;
   }
+
   const saved = await quoteDraftService.save(result.draft);
   return c.json(saved, 201);
 });
@@ -439,24 +449,30 @@ app.post('/drafts/:id/revise', async (c) => {
     catalog = await fetchManualCatalog(db, userId);
   }
 
-  // Fetch active rules for prompt injection
-  let activeRules: RuleGroupWithRules[] = [];
+  // Fetch structured rules for the deterministic rules engine (graceful degradation)
+  let structuredRules: StructuredRule[] = [];
   try {
-    activeRules = await rulesService.getActiveRulesGrouped();
+    structuredRules = await rulesService.getActiveStructuredRules();
   } catch {
-    activeRules = [];
+    structuredRules = [];
   }
 
-  // Create the rule BEFORE revision so the AI sees it during this revision
+  // Create the rule BEFORE revision so it's included in the structured rules
   let ruleCreated: { id: string; name: string } | undefined;
   let ruleCreationError: string | undefined;
   if (shouldCreateRule) {
     try {
-      const newRule = await rulesService.createRuleFromFeedback(trimmed, c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
+      const catalogNames = catalog.map(c => c.name);
+      const newRule = await rulesService.createRuleFromFeedback(
+        trimmed,
+        c.env.AI_TEXT_API_KEY,
+        c.env.AI_TEXT_API_URL,
+        catalogNames,
+      );
       ruleCreated = { id: newRule.id, name: newRule.name };
-      // Re-fetch rules so the newly created rule is included in the prompt
+      // Re-fetch structured rules so the newly created rule is included
       try {
-        activeRules = await rulesService.getActiveRulesGrouped();
+        structuredRules = await rulesService.getActiveStructuredRules();
       } catch { /* keep the previously fetched rules */ }
     } catch (ruleErr) {
       ruleCreationError = ruleErr instanceof PlatformError
@@ -467,14 +483,6 @@ app.post('/drafts/:id/revise', async (c) => {
     }
   }
 
-  // Fetch structured rules for the deterministic rules engine (graceful degradation)
-  let structuredRules: StructuredRule[] = [];
-  try {
-    structuredRules = await rulesService.getActiveStructuredRules();
-  } catch {
-    structuredRules = [];
-  }
-
   // Revise the draft
   const revised = await revisionEngine.revise({
     feedbackText: trimmed,
@@ -482,7 +490,6 @@ app.post('/drafts/:id/revise', async (c) => {
     currentLineItems: draft.lineItems,
     currentUnresolvedItems: draft.unresolvedItems,
     catalog,
-    rules: activeRules,
     structuredRules,
   });
 

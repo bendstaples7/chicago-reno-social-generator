@@ -6,9 +6,10 @@ interface RequestSelectorProps {
   onSelect: (request: JobberCustomerRequest) => void;
   onClear: () => void;
   selectedRequestId: string | null;
+  hasFormData?: boolean;
 }
 
-export default function RequestSelector({ onSelect, onClear, selectedRequestId }: RequestSelectorProps) {
+export default function RequestSelector({ onSelect, onClear, selectedRequestId, hasFormData }: RequestSelectorProps) {
   const [requests, setRequests] = useState<JobberCustomerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +71,7 @@ export default function RequestSelector({ onSelect, onClear, selectedRequestId }
     const hasDescription = !!selectedRequest.description?.trim();
     const hasNotes = selectedRequest.structuredNotes.length > 0;
     const hasImages = selectedRequest.imageUrls.length > 0;
-    const hasNoContent = !hasDescription && !hasNotes && !hasImages;
+    const hasNoContent = !hasDescription && !hasNotes && !hasImages && !hasFormData;
 
     return (
       <div style={wrapperStyle}>

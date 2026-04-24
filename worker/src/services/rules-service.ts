@@ -22,13 +22,6 @@ export class RulesService {
   }
 
   /**
-   * Fetch only active rules, grouped and ordered — used for prompt injection.
-   */
-  async getActiveRulesGrouped(): Promise<RuleGroupWithRules[]> {
-    return this.fetchGroupedRules(true);
-  }
-
-  /**
    * Fetch active structured rules (those with valid condition and action JSON).
    * Returns typed StructuredRule[] for use by the rules engine.
    * Skips rules with invalid JSON (logs warning, doesn't throw).
@@ -92,6 +85,9 @@ export class RulesService {
     conditionJson?: RuleCondition;
     actionJson?: RuleAction[];
     triggerMode?: TriggerMode;
+    catalogNames?: string[];
+    apiKey?: string;
+    apiUrl?: string;
   }): Promise<Rule> {
     const missing: string[] = [];
     if (!data.name || data.name.trim() === '') missing.push('name');
@@ -162,10 +158,54 @@ export class RulesService {
       });
     }
 
-    const groupId = data.ruleGroupId ?? (await this.getDefaultGroupId());
+    // Auto-generate structured condition/action if not provided and API key is available
+    let conditionJson = data.conditionJson;
+    let actionJson = data.actionJson;
+    if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
+      const generated = await this.generateStructuredRule(
+        data.description,
+        data.catalogNames,
+        data.apiKey,
+        data.apiUrl,
+      );
+      if (generated) {
+        conditionJson = generated.condition;
+        actionJson = generated.actions;
+      }
+    }
+
+    if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
+      // Generation was attempted but failed — don't save an inert rule
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: 'Could not generate structured conditions/actions for this rule. Please rephrase the rule description and try again.',
+        recommendedActions: ['Rephrase the rule description', 'Try using more specific product names from the catalog'],
+        statusCode: 400,
+      });
+    }
+
+    // Never persist rules without structured data — they would be invisible to the engine
+    if (!conditionJson || !actionJson) {
+      throw new PlatformError({
+        severity: 'warning',
+        component: 'RulesService',
+        operation: 'createRule',
+        description: 'Rules require structured conditions and actions. Provide conditionJson and actionJson, or ensure an API key and catalog are available for auto-generation.',
+        recommendedActions: ['Provide conditionJson and actionJson', 'Ensure AI_TEXT_API_KEY is configured'],
+        statusCode: 400,
+      });
+    }
+
+    // Auto-categorize into trade group based on rule text
+    const groupId = await this.resolveGroupId(
+      `${data.name} ${data.description}`,
+      data.ruleGroupId,
+    );
     const id = crypto.randomUUID();
-    const conditionJsonStr = data.conditionJson ? JSON.stringify(data.conditionJson) : null;
-    const actionJsonStr = data.actionJson ? JSON.stringify(data.actionJson) : null;
+    const conditionJsonStr = conditionJson ? JSON.stringify(conditionJson) : null;
+    const actionJsonStr = actionJson ? JSON.stringify(actionJson) : null;
     const triggerMode = data.triggerMode ?? 'chained';
 
     try {
@@ -190,7 +230,14 @@ export class RulesService {
         `SELECT ${RULE_COLUMNS} FROM rules WHERE id = ?`
       ).bind(id).first() as Record<string, unknown>;
 
-      return this.mapRuleRow(row);
+      const rule = this.mapRuleRow(row);
+
+      // Update catalog sort orders for any add_line_item actions with placeAfter
+      if (actionJson) {
+        await this.updateCatalogSortOrders(actionJson);
+      }
+
+      return rule;
     } catch (err: unknown) {
       if (this.isUniqueViolation(err)) {
         throw new PlatformError({
@@ -343,6 +390,11 @@ export class RulesService {
           description: 'The rule was not found.',
           recommendedActions: ['Verify the rule ID is correct'],
         });
+      }
+
+      // Update catalog sort orders for any add_line_item actions with placeAfter
+      if (data.actionJson !== undefined && data.actionJson !== null) {
+        await this.updateCatalogSortOrders(data.actionJson);
       }
 
       return this.mapRuleRow(row);
@@ -711,26 +763,6 @@ export class RulesService {
    * current group.
    */
   async autoCategorizeRules(): Promise<{ moved: number; total: number }> {
-    // Trade keywords mapped to group names (case-insensitive matching against rule description)
-    // Order matters: more specific patterns are checked before broader ones to avoid
-    // misclassification (e.g., "shower surround" → Tile, not Plumbing).
-    // Exterior is checked before Tile so "drain tile" (exterior waterproofing) isn't
-    // caught by Tile's generic \btile\b pattern.
-    const tradeKeywords: Array<{ groupName: string; patterns: RegExp }> = [
-      { groupName: 'Exterior', patterns: /\b(exterior|drain tile|siding|gutter)\b/i },
-      { groupName: 'Tile', patterns: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
-      { groupName: 'Painting', patterns: /\b(paint|painting|primer)\b/i },
-      { groupName: 'Electrical', patterns: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
-      { groupName: 'Plumbing', patterns: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
-      { groupName: 'Carpentry', patterns: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
-      { groupName: 'Drywall', patterns: /\b(drywall|hole patch)\b/i },
-      { groupName: 'HVAC', patterns: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
-      { groupName: 'Demo', patterns: /\b(demo|demolition|tear out|rip out)\b/i },
-      { groupName: 'Insulation', patterns: /\b(insulation|insulate)\b/i },
-      { groupName: 'Appliances', patterns: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
-      { groupName: 'Countertops', patterns: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
-    ];
-
     // Fetch all groups to build a name→id map
     const groupsResult = await this.db.prepare(
       'SELECT id, name FROM rule_groups'
@@ -750,16 +782,8 @@ export class RulesService {
     const statements: D1PreparedStatement[] = [];
 
     for (const rule of rules) {
-      // Try to match rule description + name against trade keywords
       const textToMatch = `${rule.name} ${rule.description}`;
-      let matchedGroupName: string | null = null;
-
-      for (const { groupName, patterns } of tradeKeywords) {
-        if (patterns.test(textToMatch)) {
-          matchedGroupName = groupName;
-          break;
-        }
-      }
+      const matchedGroupName = this.matchTradeGroupName(textToMatch);
 
       if (matchedGroupName) {
         const targetGroupId = groupNameToId.get(matchedGroupName.toLowerCase());
@@ -787,17 +811,23 @@ export class RulesService {
    * Create a rule from revision feedback text.
    * Uses AI summarization for the title when an API key is provided.
    */
-  async createRuleFromFeedback(feedbackText: string, apiKey?: string, apiUrl?: string): Promise<Rule> {
+  async createRuleFromFeedback(
+    feedbackText: string,
+    apiKey?: string,
+    apiUrl?: string,
+    catalogNames?: string[],
+  ): Promise<Rule> {
     const name = apiKey
       ? await this.summarizeRuleTitle(feedbackText, apiKey, apiUrl)
       : this.deriveRuleName(feedbackText);
-    const groupId = await this.getDefaultGroupId();
 
     return this.createRule({
       name,
       description: feedbackText,
-      ruleGroupId: groupId,
       isActive: true,
+      catalogNames,
+      apiKey,
+      apiUrl,
     });
   }
 
@@ -854,6 +884,211 @@ export class RulesService {
   }
 
   // ── Private helpers ───────────────────────────────────────────
+
+  /** Trade keyword patterns for auto-categorization. Order matters: specific patterns first. */
+  private static readonly TRADE_KEYWORDS: Array<{ groupName: string; pattern: RegExp }> = [
+    { groupName: 'Exterior', pattern: /\b(exterior|drain tile|siding|gutter)\b/i },
+    { groupName: 'Tile', pattern: /\b((?<!drain )tile|tiling|durock|shower surround|shower pan|waterproof|grout)\b/i },
+    { groupName: 'Painting', pattern: /\b(paint|painting|primer)\b/i },
+    { groupName: 'Electrical', pattern: /\b(electric|electrical|outlet|switch|circuit|wiring|dimmer|can light|light fixture|vanity light)\b/i },
+    { groupName: 'Plumbing', pattern: /\b(plumb|plumbing|toilet|shower|faucet|disposal|drain|valve|pipe|sink)\b/i },
+    { groupName: 'Carpentry', pattern: /\b(carpentry|cabinet|baseboard|trim|door|window frame|medicine cabinet|wood)\b/i },
+    { groupName: 'Drywall', pattern: /\b(drywall|hole patch)\b/i },
+    { groupName: 'HVAC', pattern: /\b(hvac|furnace|vent|heating|cooling|air condition)\b/i },
+    { groupName: 'Demo', pattern: /\b(demo|demolition|tear out|rip out)\b/i },
+    { groupName: 'Insulation', pattern: /\b(insulation|insulate)\b/i },
+    { groupName: 'Appliances', pattern: /\b(appliance|range hood|dishwasher|refrigerator|microwave|stove)\b/i },
+    { groupName: 'Countertops', pattern: /\b(countertop|counter top|granite|quartz|laminate counter)\b/i },
+  ];
+
+  /**
+   * Match text against trade keywords and return the group name, or null if no match.
+   */
+  private matchTradeGroupName(text: string): string | null {
+    for (const { groupName, pattern } of RulesService.TRADE_KEYWORDS) {
+      if (pattern.test(text)) return groupName;
+    }
+    return null;
+  }
+
+  /**
+   * Update catalog sort orders when a rule with add_line_item + placeAfter is created.
+   * Sets the added product's sort_order to parent's sort_order + 1, and bumps
+   * any products at or above that sort_order within the same range.
+   */
+  private async updateCatalogSortOrders(actions: RuleAction[]): Promise<void> {
+    for (const action of actions) {
+      if (action.type !== 'add_line_item' || !action.placeAfter) continue;
+
+      const parentRow = await this.db.prepare(
+        'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+      ).bind(action.placeAfter).first() as { sort_order: number } | null;
+
+      if (!parentRow) continue;
+
+      const parentOrder = parentRow.sort_order;
+      const childOrder = parentOrder + 1;
+      const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
+
+      await this.db.batch([
+        this.db.prepare(
+          'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+        ).bind(childOrder, rangeMax, action.productName),
+        this.db.prepare(
+          'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+        ).bind(childOrder, action.productName),
+      ]);
+    }
+  }
+
+  /**
+   * Find the best trade group ID for the given text, falling back to the default group.
+   */
+  private async resolveGroupId(text: string, explicitGroupId?: string): Promise<string> {
+    // If an explicit group was provided, use it
+    if (explicitGroupId !== undefined && explicitGroupId !== '') {
+      return explicitGroupId;
+    }
+
+    // Try to auto-categorize by trade keywords
+    const matchedGroupName = this.matchTradeGroupName(text);
+    if (matchedGroupName) {
+      const row = await this.db.prepare(
+        'SELECT id FROM rule_groups WHERE name = ? COLLATE NOCASE'
+      ).bind(matchedGroupName).first() as { id: string } | null;
+      if (row) return row.id;
+    }
+
+    return this.getDefaultGroupId();
+  }
+
+  /**
+   * Use OpenAI to generate structured condition/action JSON from a natural language
+   * rule description and the product catalog. Uses JSON mode with validation and retry.
+   * Returns null if the rule cannot be expressed as a structured rule.
+   */
+  async generateStructuredRule(
+    description: string,
+    catalogNames: string[],
+    apiKey: string,
+    apiUrl?: string,
+  ): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> {
+    if (!apiKey) return null;
+
+    const url = apiUrl || 'https://api.openai.com/v1/chat/completions';
+
+    const systemContent = [
+      'You convert natural language business rules into structured JSON for a deterministic rules engine used in a home renovation quoting system.',
+      'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist.',
+      '',
+      'CONDITION TYPES:',
+      '  line_item_exists — { "type": "line_item_exists", "productNamePattern": "exact catalog name" }',
+      '  line_item_not_exists — { "type": "line_item_not_exists", "productNamePattern": "exact catalog name" }',
+      '  line_item_name_contains — { "type": "line_item_name_contains", "substring": "partial name" }',
+      '  line_item_quantity_gte — { "type": "line_item_quantity_gte", "productNamePattern": "exact catalog name", "threshold": 5 }',
+      '  line_item_quantity_lte — { "type": "line_item_quantity_lte", "productNamePattern": "exact catalog name", "threshold": 1 }',
+      '  always — { "type": "always" }',
+      '',
+      'ACTION TYPES:',
+      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "exact catalog name of item it should follow" }',
+      '  remove_line_item — { "type": "remove_line_item", "productNamePattern": "exact catalog name" }',
+      '  set_quantity — { "type": "set_quantity", "productNamePattern": "exact catalog name", "quantity": 5 }',
+      '  adjust_quantity — { "type": "adjust_quantity", "productNamePattern": "exact catalog name", "delta": 1 }',
+      '  set_unit_price — { "type": "set_unit_price", "productNamePattern": "exact catalog name", "unitPrice": 50 }',
+      '  set_description — { "type": "set_description", "productNamePattern": "exact catalog name", "description": "new description" }',
+      '  append_description — { "type": "append_description", "productNamePattern": "exact catalog name", "text": "additional text" }',
+      '  extract_request_context — AI extracts specifics from customer request and appends to description: { "type": "extract_request_context", "productNamePattern": "exact catalog name", "extractionPrompt": "Extract the TV size and mounting location" }',
+      '',
+      'PRODUCT CATALOG:',
+      ...catalogNames.map(n => `  - ${n}`),
+      '',
+      'INSTRUCTIONS:',
+      '- Find the CLOSEST matching catalog name for what the user describes. Example: "TV mounting" → "Carpentry: TV Mount".',
+      '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
+      '- Use extract_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The extractionPrompt is plain English.',
+      '- For add_line_item, always set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item).',
+      '- If the rule truly cannot be expressed, set "unsupported" to true.',
+      '',
+      'EXAMPLE INPUT: "When mounting a TV, the description should include the TV size from the request"',
+      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_name_contains","substring":"TV Mount"},"actions":[{"type":"extract_request_context","productNamePattern":"Carpentry: TV Mount","extractionPrompt":"Extract the TV size (e.g. 65 inch) and the mounting location (e.g. living room, bedroom) from the customer request"}]}',
+      '',
+      'EXAMPLE INPUT: "When interior painting is on the quote, add paint supplies"',
+      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100,"placeAfter":"Interior Painting"}]}',
+      '',
+      'Return ONLY a JSON object with "unsupported" (boolean), "condition" (object), and "actions" (array). No markdown, no explanation.',
+    ].join('\n');
+
+    const makeRequest = async (attempt: number): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + apiKey,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: systemContent },
+              { role: 'user', content: description },
+            ],
+            temperature: attempt === 0 ? 0.1 : 0.3,
+            max_tokens: 500,
+            response_format: { type: 'json_object' },
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          const errBody = await response.text().catch(() => '');
+          console.warn(`Structured rule generation failed (${response.status}) attempt ${attempt + 1}: ${errBody}`);
+          return null;
+        }
+
+        const data = (await response.json()) as {
+          choices: Array<{ message: { content: string } }>;
+        };
+        const raw = data.choices?.[0]?.message?.content?.trim();
+        if (!raw) return null;
+
+        const parsed = JSON.parse(raw);
+
+        if (parsed.unsupported) return null;
+
+        // Validate the generated condition and actions
+        const condResult = validateCondition(parsed.condition);
+        if (!condResult.valid) {
+          console.warn(`AI-generated condition invalid (attempt ${attempt + 1}): ${condResult.error}`);
+          return null;
+        }
+
+        const actResult = validateActions(parsed.actions);
+        if (!actResult.valid) {
+          console.warn(`AI-generated actions invalid (attempt ${attempt + 1}): ${actResult.errors?.join('; ')}`);
+          return null;
+        }
+
+        return { condition: parsed.condition as RuleCondition, actions: parsed.actions as RuleAction[] };
+      } catch (err) {
+        clearTimeout(timeout);
+        console.warn(`Structured rule generation error (attempt ${attempt + 1}): ${err instanceof Error ? err.message : err}`);
+        return null;
+      }
+    };
+
+    // First attempt
+    const result = await makeRequest(0);
+    if (result) return result;
+
+    // Retry once with slightly higher temperature
+    console.warn('Retrying structured rule generation...');
+    return makeRequest(1);
+  }
 
   private async fetchGroupedRules(activeOnly: boolean): Promise<RuleGroupWithRules[]> {
     const groupsResult = await this.db.prepare(

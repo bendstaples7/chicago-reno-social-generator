@@ -5,6 +5,7 @@ export interface ProductCatalogEntry {
   unitPrice: number;
   description: string;
   category?: string;
+  sortOrder?: number;
   source: 'jobber' | 'manual';
 }
 
@@ -137,6 +138,7 @@ export type TriggerMode = 'on_create' | 'chained';
 export type RuleConditionType =
   | 'line_item_exists'
   | 'line_item_not_exists'
+  | 'line_item_name_contains'
   | 'line_item_quantity_gte'
   | 'line_item_quantity_lte'
   | 'always';
@@ -145,6 +147,7 @@ export type RuleConditionType =
 export type RuleCondition =
   | { type: 'line_item_exists'; productNamePattern: string }
   | { type: 'line_item_not_exists'; productNamePattern: string }
+  | { type: 'line_item_name_contains'; substring: string }
   | { type: 'line_item_quantity_gte'; productNamePattern: string; threshold: number }
   | { type: 'line_item_quantity_lte'; productNamePattern: string; threshold: number }
   | { type: 'always' };
@@ -157,17 +160,19 @@ export type RuleActionType =
   | 'adjust_quantity'
   | 'set_unit_price'
   | 'set_description'
-  | 'append_description';
+  | 'append_description'
+  | 'extract_request_context';
 
 /** A typed action for a structured rule */
 export type RuleAction =
-  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string }
+  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string }
   | { type: 'remove_line_item'; productNamePattern: string }
   | { type: 'set_quantity'; productNamePattern: string; quantity: number }
   | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
   | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }
   | { type: 'set_description'; productNamePattern: string; description: string }
-  | { type: 'append_description'; productNamePattern: string; text: string; separator?: string };
+  | { type: 'append_description'; productNamePattern: string; text: string; separator?: string }
+  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string };
 
 /** A structured rule with typed condition and actions */
 export interface StructuredRule {
@@ -211,6 +216,17 @@ export interface RulesEngineResult {
   auditTrail: AuditEntry[];
   iterationCount: number;
   converged: boolean;
+  pendingEnrichments: PendingEnrichment[];
+}
+
+/** A pending AI enrichment for a line item description */
+export interface PendingEnrichment {
+  lineItemId: string;
+  productNamePattern: string;
+  extractionPrompt: string;
+  separator?: string;
+  ruleId: string;
+  ruleName: string;
 }
 
 /** A business rule that influences quote generation */

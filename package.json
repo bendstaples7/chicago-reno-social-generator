@@ -1,5 +1,5 @@
 {
-  "name": "social-media-cross-poster",
+  "name": "cotiza",
   "private": true,
   "workspaces": [
     "client",

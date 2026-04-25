@@ -26,7 +26,7 @@ max_retries = 2
 [vars]
 AI_TEXT_API_URL = "https://api.openai.com/v1/chat/completions"
 S3_PUBLIC_URL = "https://pub-afd5afa0999c424cac970f4b4e671bd6.r2.dev"
-FRONTEND_URL = "https://chicago-reno-social-generator.pages.dev"
+FRONTEND_URL = "https://cotiza-e4h.pages.dev"
 
 # Secrets (set via `wrangler secret put <NAME>`):
 # All secrets below are REQUIRED for the deployed worker to function correctly.

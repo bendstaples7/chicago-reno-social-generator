@@ -729,27 +729,30 @@ app.patch('/catalog/:id', async (c) => {
   }
 
   if (body.keywords !== undefined) {
-    if (typeof body.keywords !== 'string') {
+    if (body.keywords === null) {
+      // Explicit null — clear keywords (skip string validation)
+    } else if (typeof body.keywords !== 'string') {
       throw new PlatformError({
         severity: 'error',
         component: 'QuoteRoutes',
         operation: 'updateCatalogEntry',
-        description: 'Keywords must be a string.',
-        recommendedActions: ['Provide comma-separated keywords'],
+        description: 'Keywords must be a string or null.',
+        recommendedActions: ['Provide comma-separated keywords or null to clear'],
       });
+    } else {
+      body.keywords = body.keywords.trim();
+      if (body.keywords.length > 500) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateCatalogEntry',
+          description: 'Keywords must be 500 characters or fewer.',
+          recommendedActions: ['Shorten the keywords'],
+        });
+      }
+      // Coerce empty string to null so the DB column is cleared
+      if (!body.keywords) body.keywords = null;
     }
-    body.keywords = body.keywords.trim();
-    if (body.keywords.length > 500) {
-      throw new PlatformError({
-        severity: 'error',
-        component: 'QuoteRoutes',
-        operation: 'updateCatalogEntry',
-        description: 'Keywords must be 500 characters or fewer.',
-        recommendedActions: ['Shorten the keywords'],
-      });
-    }
-    // Coerce empty string to null so the DB column is cleared
-    if (!body.keywords) body.keywords = null;
   }
 
   // Verify ownership — only manual catalog entries can be updated

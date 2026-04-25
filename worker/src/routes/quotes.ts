@@ -265,7 +265,7 @@ app.post('/rules/auto-categorize', async (c) => {
 
 async function fetchManualCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {
   const result = await db.prepare(
-    'SELECT id, name, unit_price, description, category, sort_order FROM manual_catalog_entries WHERE user_id = ? ORDER BY sort_order ASC, created_at ASC'
+    'SELECT id, name, unit_price, description, category, sort_order, keywords FROM manual_catalog_entries WHERE user_id = ? ORDER BY sort_order ASC, created_at ASC'
   ).bind(userId).all();
 
   return (result.results as any[]).map((row) => ({
@@ -275,8 +275,35 @@ async function fetchManualCatalog(db: D1Database, userId: string): Promise<Produ
     description: (row.description as string) ?? '',
     category: (row.category as string) ?? undefined,
     sortOrder: Number(row.sort_order ?? 500),
+    keywords: (row.keywords as string) ?? undefined,
     source: 'manual' as const,
   }));
+}
+
+/**
+ * Merge keywords from the catalog_keywords table onto catalog entries.
+ * Works for both Jobber-sourced and manual catalog entries.
+ */
+async function mergeCatalogKeywords(db: D1Database, userId: string, catalog: ProductCatalogEntry[]): Promise<ProductCatalogEntry[]> {
+  if (catalog.length === 0) return catalog;
+
+  const result = await db.prepare(
+    'SELECT product_name, keywords FROM catalog_keywords WHERE user_id = ?'
+  ).bind(userId).all();
+
+  if (!result.results || result.results.length === 0) return catalog;
+
+  const keywordsByName = new Map<string, string>();
+  for (const row of result.results as any[]) {
+    keywordsByName.set((row.product_name as string).toLowerCase(), row.keywords as string);
+  }
+
+  return catalog.map((entry) => {
+    // Manual entries may already have keywords from their own column
+    if (entry.keywords) return entry;
+    const kw = keywordsByName.get(entry.name.toLowerCase());
+    return kw ? { ...entry, keywords: kw } : entry;
+  });
 }
 
 async function fetchManualTemplates(db: D1Database, userId: string): Promise<QuoteTemplate[]> {
@@ -346,6 +373,9 @@ app.post('/generate', async (c) => {
   } else {
     catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
   }
+
+  // Merge keywords from catalog_keywords table onto catalog entries
+  catalog = await mergeCatalogKeywords(db, userId, catalog);
 
   // Fetch structured rules for the deterministic rules engine (graceful degradation)
   const rulesService = new RulesService(db);
@@ -493,6 +523,9 @@ app.post('/drafts/:id/revise', async (c) => {
     catalog = await fetchManualCatalog(db, userId);
   }
 
+  // Merge keywords from catalog_keywords table onto catalog entries
+  catalog = await mergeCatalogKeywords(db, userId, catalog);
+
   // Fetch structured rules for the deterministic rules engine (graceful degradation)
   let structuredRules: StructuredRule[] = [];
   try {
@@ -581,7 +614,8 @@ app.get('/catalog', async (c) => {
   if (!jobberIntegration.isAvailable()) {
     catalog = await fetchManualCatalog(db, userId);
   }
-  return c.json({ catalog: catalog! });
+  catalog = await mergeCatalogKeywords(db, userId, catalog!);
+  return c.json({ catalog });
 });
 
 /**
@@ -592,7 +626,7 @@ app.post('/catalog', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
   const body = await c.req.json() as {
-    entries: Array<{ name: string; unitPrice: number; description?: string; category?: string }>;
+    entries: Array<{ name: string; unitPrice: number; description?: string; category?: string; keywords?: string }>;
   };
 
   if (!Array.isArray(body.entries) || body.entries.length === 0) {
@@ -612,7 +646,7 @@ app.post('/catalog', async (c) => {
   for (const entry of body.entries) {
     statements.push(
       db.prepare(
-        "INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category, keywords) VALUES (?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         crypto.randomUUID(),
         userId,
@@ -620,6 +654,7 @@ app.post('/catalog', async (c) => {
         entry.unitPrice,
         entry.description ?? null,
         entry.category ?? null,
+        entry.keywords ?? null,
       ),
     );
   }
@@ -638,7 +673,7 @@ app.patch('/catalog/:id', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
   const entryId = c.req.param('id');
-  const body = await c.req.json() as { name?: string; description?: string };
+  const body = await c.req.json() as { name?: string; description?: string; keywords?: string };
 
   // Validate inputs
   if (body.name !== undefined) {
@@ -709,6 +744,10 @@ app.patch('/catalog/:id', async (c) => {
   if (body.description !== undefined) {
     setClauses.push('description = ?');
     values.push(body.description);
+  }
+  if (body.keywords !== undefined) {
+    setClauses.push('keywords = ?');
+    values.push(body.keywords || null);
   }
 
   if (setClauses.length > 0) {

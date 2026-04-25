@@ -184,7 +184,10 @@ export class RevisionEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of input.catalog) {
-        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        let line = `- ${p.name} — $${p.unitPrice}`;
+        if (p.description) line += ' — ' + p.description;
+        if (p.keywords) line += ` [matches: ${p.keywords}]`;
+        parts.push(line);
       }
     }
 

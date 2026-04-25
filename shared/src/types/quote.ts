@@ -6,6 +6,7 @@ export interface ProductCatalogEntry {
   description: string;
   category?: string;
   sortOrder?: number;
+  keywords?: string;
   source: 'jobber' | 'manual';
 }
 

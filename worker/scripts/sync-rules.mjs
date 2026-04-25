@@ -23,10 +23,19 @@ function run(cmd) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
+function runWithFile(flag, sql, extraArgs = '') {
+  const tmpFile = join(tmpdir(), `sync-rules-${Date.now()}-${Math.random().toString(36).slice(2)}.sql`);
+  try {
+    writeFileSync(tmpFile, sql, 'utf8');
+    return run(`npx wrangler d1 execute DB ${flag}${extraArgs} --file "${tmpFile}"`);
+  } finally {
+    try { unlinkSync(tmpFile); } catch {}
+  }
+}
+
 function query(flag, sql) {
   try {
-    const escaped = sql.replace(/"/g, '\\"');
-    const output = run(`npx wrangler d1 execute DB ${flag} --json --command "${escaped}"`);
+    const output = runWithFile(flag, sql, ' --json');
     const parsed = JSON.parse(output);
     return parsed[0]?.results || [];
   } catch (err) {
@@ -36,25 +45,7 @@ function query(flag, sql) {
 }
 
 function execFile(flag, sql) {
-  // For remote, use individual commands to avoid the D1 import API which requires
-  // different permissions. For local, use file-based execution for speed.
-  if (flag === '--remote') {
-    const statements = sql.split(';\n').filter(s => s.trim());
-    for (const stmt of statements) {
-      const trimmed = stmt.trim();
-      if (!trimmed) continue;
-      const escaped = trimmed.replace(/"/g, '\\"');
-      run(`npx wrangler d1 execute DB --remote --command "${escaped}"`);
-    }
-  } else {
-    const tmpFile = join(tmpdir(), `sync-rules-${Date.now()}.sql`);
-    try {
-      writeFileSync(tmpFile, sql, 'utf8');
-      run(`npx wrangler d1 execute DB ${flag} --file "${tmpFile}"`);
-    } finally {
-      try { unlinkSync(tmpFile); } catch {}
-    }
-  }
+  runWithFile(flag, sql);
 }
 
 /** Escape a string for SQL single-quoted literal. Returns SQL NULL for null/undefined. */

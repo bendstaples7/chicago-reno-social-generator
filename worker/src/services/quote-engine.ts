@@ -265,7 +265,17 @@ export class QuoteEngine {
       for (const p of catalog) {
         let line = `- ${p.name} — $${p.unitPrice}`;
         if (p.description) line += ' — ' + p.description;
-        if (p.keywords) line += ` [matches: ${p.keywords}]`;
+        if (p.keywords) {
+          // Sanitize: strip control chars, brackets, clamp length
+          const sanitized = p.keywords
+            .replace(/[\r\n]/g, ' ')
+            .replace(/[\[\]{}()]/g, '')
+            .replace(/[\x00-\x1f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 100);
+          if (sanitized) line += ` [matches: ${sanitized}]`;
+        }
         parts.push(line);
       }
     }

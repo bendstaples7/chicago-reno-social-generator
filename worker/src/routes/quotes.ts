@@ -607,14 +607,14 @@ app.get('/catalog', async (c) => {
   const userId = c.get('user').id;
   const { jobberIntegration } = await createJobberIntegration(db, c.env);
 
+  const available = jobberIntegration.isAvailable();
   let catalog: ProductCatalogEntry[];
-  if (jobberIntegration.isAvailable()) {
+  if (available) {
     catalog = await jobberIntegration.fetchProductCatalog();
-  }
-  if (!jobberIntegration.isAvailable()) {
+  } else {
     catalog = await fetchManualCatalog(db, userId);
   }
-  catalog = await mergeCatalogKeywords(db, userId, catalog!);
+  catalog = await mergeCatalogKeywords(db, userId, catalog);
   return c.json({ catalog });
 });
 
@@ -644,6 +644,15 @@ app.post('/catalog', async (c) => {
   ];
 
   for (const entry of body.entries) {
+    // Sanitize keywords if provided
+    let keywords: string | null = null;
+    if (entry.keywords !== undefined && entry.keywords !== null) {
+      if (typeof entry.keywords === 'string') {
+        const trimmed = entry.keywords.trim();
+        keywords = trimmed && trimmed.length <= 500 ? trimmed : null;
+      }
+    }
+
     statements.push(
       db.prepare(
         "INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category, keywords) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -654,7 +663,7 @@ app.post('/catalog', async (c) => {
         entry.unitPrice,
         entry.description ?? null,
         entry.category ?? null,
-        entry.keywords ?? null,
+        keywords,
       ),
     );
   }
@@ -719,6 +728,30 @@ app.patch('/catalog/:id', async (c) => {
     }
   }
 
+  if (body.keywords !== undefined) {
+    if (typeof body.keywords !== 'string') {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Keywords must be a string.',
+        recommendedActions: ['Provide comma-separated keywords'],
+      });
+    }
+    body.keywords = body.keywords.trim();
+    if (body.keywords.length > 500) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateCatalogEntry',
+        description: 'Keywords must be 500 characters or fewer.',
+        recommendedActions: ['Shorten the keywords'],
+      });
+    }
+    // Coerce empty string to null
+    if (!body.keywords) body.keywords = undefined;
+  }
+
   // Verify ownership — only manual catalog entries can be updated
   const existing = await db.prepare(
     'SELECT id FROM manual_catalog_entries WHERE id = ? AND user_id = ?'
@@ -747,7 +780,7 @@ app.patch('/catalog/:id', async (c) => {
   }
   if (body.keywords !== undefined) {
     setClauses.push('keywords = ?');
-    values.push(body.keywords || null);
+    values.push(body.keywords ?? null);
   }
 
   if (setClauses.length > 0) {

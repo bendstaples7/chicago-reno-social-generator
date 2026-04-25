@@ -9,7 +9,7 @@
  *   node worker/scripts/generate-keywords.mjs --apply-remote     # apply to remote D1
  */
 import { readFileSync } from 'fs';
-import { writeFileSync, unlinkSync } from 'fs';
+import { writeFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -32,8 +32,25 @@ if (!apiKey) {
   process.exit(1);
 }
 
-// Parse CSV
-const csvPath = resolve(__dirname, '../../Products and Services Export (04_09_2026).csv');
+// Resolve CSV path: --csv flag or glob fallback
+const rootDir = resolve(__dirname, '../..');
+const csvFlagIdx = process.argv.indexOf('--csv');
+let csvPath;
+if (csvFlagIdx !== -1 && process.argv[csvFlagIdx + 1]) {
+  csvPath = resolve(process.argv[csvFlagIdx + 1]);
+} else {
+  // Find most recently modified "Products and Services Export*.csv"
+  const candidates = readdirSync(rootDir)
+    .filter(f => f.startsWith('Products and Services Export') && f.endsWith('.csv'))
+    .map(f => ({ name: f, mtime: statSync(resolve(rootDir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  if (candidates.length === 0) {
+    console.error('ERROR: No "Products and Services Export*.csv" found in project root. Use --csv <path> to specify.');
+    process.exit(1);
+  }
+  csvPath = resolve(rootDir, candidates[0].name);
+  console.log(`Using CSV: ${candidates[0].name}`);
+}
 const csv = readFileSync(csvPath, 'utf-8');
 
 function parseCSV(text) {
@@ -97,6 +114,9 @@ async function generateKeywordsBatch(batch) {
     ...batch.map((p, i) => `${i + 1}. ${p.name}${p.description ? ' — ' + p.description.slice(0, 100) : ''}`),
   ].join('\n');
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -113,7 +133,10 @@ async function generateKeywordsBatch(batch) {
       max_tokens: 3000,
       response_format: { type: 'json_object' },
     }),
+    signal: controller.signal,
   });
+
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const err = await response.text();
@@ -131,14 +154,30 @@ async function generateKeywordsBatch(batch) {
 // Get user ID
 const applyLocal = process.argv.includes('--apply-local');
 const applyRemote = process.argv.includes('--apply-remote');
-let userId = 'd52fce40-df6c-489c-9315-fbb22fee6527'; // default production user
 
-if (applyLocal) {
+// Parse --user-id flag
+let userId = '';
+const userIdIdx = process.argv.indexOf('--user-id');
+if (userIdIdx !== -1 && process.argv[userIdIdx + 1]) {
+  userId = process.argv[userIdIdx + 1];
+}
+
+if (applyRemote && !userId) {
+  console.error('ERROR: --apply-remote requires --user-id <id>');
+  console.error('Usage: node worker/scripts/generate-keywords.mjs --apply-remote --user-id <user-uuid>');
+  process.exit(1);
+}
+
+if (applyLocal && !userId) {
   try {
     const out = execSync('npx wrangler d1 execute DB --local --json --command "SELECT id FROM users LIMIT 1"', { cwd: workerDir, encoding: 'utf-8' });
     const parsed = JSON.parse(out);
     if (parsed[0]?.results?.[0]?.id) userId = parsed[0].results[0].id;
-  } catch { /* use default */ }
+  } catch { /* ignore */ }
+  if (!userId) {
+    console.error('ERROR: Could not determine user ID from local D1. Pass --user-id <id> explicitly.');
+    process.exit(1);
+  }
 }
 
 // Process all products

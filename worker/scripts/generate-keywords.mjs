@@ -162,6 +162,11 @@ if (userIdIdx !== -1 && process.argv[userIdIdx + 1]) {
   userId = process.argv[userIdIdx + 1];
 }
 
+if (applyLocal && applyRemote) {
+  console.error('ERROR: Cannot use --apply-local and --apply-remote together.');
+  process.exit(1);
+}
+
 if (applyRemote && !userId) {
   console.error('ERROR: --apply-remote requires --user-id <id>');
   console.error('Usage: node worker/scripts/generate-keywords.mjs --apply-remote --user-id <user-uuid>');
@@ -194,6 +199,8 @@ for (let i = 0; i < products.length; i += BATCH_SIZE) {
     console.log(`  → Got ${results.length} keyword entries`);
   } catch (err) {
     console.error(`  ✗ Batch ${batchNum} failed: ${err.message}`);
+    console.error('Aborting — will not apply partial keyword data.');
+    process.exit(1);
   }
 
   // Rate limit

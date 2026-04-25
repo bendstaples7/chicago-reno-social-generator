@@ -127,14 +127,14 @@ app.post('/trigger-cookie-refresh', async (c) => {
 
   try {
     const resp = await fetch(
-      'https://api.github.com/repos/bendstaples7/chicago-reno-social-generator/actions/workflows/refresh-jobber-cookies.yml/dispatches',
+      'https://api.github.com/repos/bendstaples7/Cotiza/actions/workflows/refresh-jobber-cookies.yml/dispatches',
       {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${githubPat}`,
           'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json',
-          'User-Agent': 'chicago-reno-worker',
+          'User-Agent': 'cotiza-worker',
         },
         body: JSON.stringify({ ref: 'main' }),
       },

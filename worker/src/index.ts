@@ -25,7 +25,7 @@ app.route('/api/webhooks', webhookRoutes);
 
 // CORS – allow the Pages frontend to call the Worker API
 app.use('*', cors({
-  origin: ['https://chicago-reno-social-generator.pages.dev'],
+  origin: ['https://cotiza-e4h.pages.dev'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
 }));

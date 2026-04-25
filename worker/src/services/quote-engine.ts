@@ -174,6 +174,7 @@ export class QuoteEngine {
           lineItems: engineLineItems,
           rules: structuredRules,
           catalog,
+          customerRequestText: input.customerText,
         });
 
         auditTrail = engineResult.auditTrail;

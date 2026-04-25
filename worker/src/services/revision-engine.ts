@@ -335,6 +335,7 @@ export class RevisionEngine {
         lineItems: engineLineItems,
         rules: structuredRules,
         catalog,
+        customerRequestText,
       });
 
       auditTrail = engineResult.auditTrail;

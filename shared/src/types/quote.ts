@@ -141,6 +141,7 @@ export type RuleConditionType =
   | 'line_item_name_contains'
   | 'line_item_quantity_gte'
   | 'line_item_quantity_lte'
+  | 'request_text_contains'
   | 'always';
 
 /** A typed condition for a structured rule */
@@ -150,6 +151,7 @@ export type RuleCondition =
   | { type: 'line_item_name_contains'; substring: string }
   | { type: 'line_item_quantity_gte'; productNamePattern: string; threshold: number }
   | { type: 'line_item_quantity_lte'; productNamePattern: string; threshold: number }
+  | { type: 'request_text_contains'; substring: string }
   | { type: 'always' };
 
 /** Action types supported by the rules engine */

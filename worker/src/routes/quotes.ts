@@ -740,6 +740,17 @@ app.put('/catalog/reorder', async (c) => {
     });
   }
 
+  const uniqueIds = new Set(orderedIds);
+  if (uniqueIds.size !== orderedIds.length) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: 'orderedIds contains duplicate entries.',
+      recommendedActions: ['Each catalog entry ID should appear exactly once'],
+    });
+  }
+
   // Fetch all current catalog entry IDs for this user
   const userEntriesResult = await db.prepare(
     'SELECT id FROM manual_catalog_entries WHERE user_id = ?'

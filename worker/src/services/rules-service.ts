@@ -947,32 +947,60 @@ export class RulesService {
   }
 
   /**
-   * Update catalog sort orders when a rule with add_line_item + placeAfter is created.
-   * Sets the added product's sort_order to parent's sort_order + 1, and bumps
+   * Update catalog sort orders when a rule with add_line_item + placeAfter or placeBefore is created.
+   * For placeAfter: sets the added product's sort_order to parent's sort_order + 1, and bumps
    * any products at or above that sort_order within the same range.
+   * For placeBefore: sets the added product's sort_order to the parent's sort_order,
+   * bumping the parent and following items up by 1.
    */
   private async updateCatalogSortOrders(actions: RuleAction[]): Promise<void> {
     for (const action of actions) {
-      if (action.type !== 'add_line_item' || !action.placeAfter) continue;
+      if (action.type !== 'add_line_item') continue;
 
-      const parentRow = await this.db.prepare(
-        'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
-      ).bind(action.placeAfter).first() as { sort_order: number } | null;
+      // Handle placeAfter: set the new product's sort_order to parent's sort_order + 1,
+      // bumping any products at or above that sort_order within the same range.
+      if (action.placeAfter) {
+        const parentRow = await this.db.prepare(
+          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeAfter).first() as { sort_order: number } | null;
 
-      if (!parentRow) continue;
+        if (!parentRow) continue;
 
-      const parentOrder = parentRow.sort_order;
-      const childOrder = parentOrder + 1;
-      const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
+        const parentOrder = parentRow.sort_order;
+        const childOrder = parentOrder + 1;
+        const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
 
-      await this.db.batch([
-        this.db.prepare(
-          'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
-        ).bind(childOrder, rangeMax, action.productName),
-        this.db.prepare(
-          'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
-        ).bind(childOrder, action.productName),
-      ]);
+        await this.db.batch([
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+          ).bind(childOrder, rangeMax, action.productName),
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+          ).bind(childOrder, action.productName),
+        ]);
+      }
+
+      // Handle placeBefore: set the new product's sort_order to the parent's sort_order,
+      // bumping the parent and following items up by 1.
+      if (action.placeBefore && !action.placeAfter) {
+        const parentRow = await this.db.prepare(
+          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeBefore).first() as { sort_order: number } | null;
+
+        if (!parentRow) continue;
+
+        const parentOrder = parentRow.sort_order;
+        const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
+
+        await this.db.batch([
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+          ).bind(parentOrder, rangeMax, action.productName),
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+          ).bind(parentOrder, action.productName),
+        ]);
+      }
     }
   }
 

@@ -76,8 +76,8 @@ export function deduplicateLineItems<
     }
 
     const merged = { ...base };
-    merged.quantity = existing.quantity + item.quantity;
-    merged.confidenceScore = Math.max(existing.confidenceScore, item.confidenceScore);
+    merged.quantity = base.quantity + other.quantity;
+    merged.confidenceScore = Math.max(base.confidenceScore, other.confidenceScore);
 
     // Merge original text
     if (other.originalText && other.originalText !== base.originalText) {
@@ -138,16 +138,15 @@ export function sortLineItemsByCatalog<
 
 /**
  * Check if the rules engine actually modified line items (not just enrichment-only entries).
- * Returns true only when rules added, removed, or changed line items.
- * Enrichment-only entries (extract_request_context) have identical before/after snapshots
- * and should not count as modifications.
+ * Returns true only when rules added, removed, or moved line items.
+ * Enrichment-only entries (extract_request_context, set_quantity, etc.) have identical
+ * before/after snapshots and should not count as modifications.
  */
 export function rulesModifiedLineItems(auditTrail?: AuditEntry[]): boolean {
   if (!auditTrail) return false;
+  const ORDERING_ACTIONS = new Set(['add_line_item', 'remove_line_item', 'move_line_item']);
   return auditTrail.some((e) => {
     if (e.ruleId === '__engine__') return false;
-    // extract_request_context entries have identical before/after snapshots — not a modification
-    if (e.action.type === 'extract_request_context') return false;
-    return e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0;
+    return ORDERING_ACTIONS.has(e.action.type) && (e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0);
   });
 }

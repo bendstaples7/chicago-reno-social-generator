@@ -179,6 +179,12 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
         if (normalizedPos !== 'start' && normalizedPos !== 'end' && !normalizedPos.startsWith('before:') && !normalizedPos.startsWith('after:')) {
           return { valid: false, error: `Action type "move_line_item" position must be "start", "end", "before:ProductName", or "after:ProductName" — got "${act.position}"` };
         }
+        if (normalizedPos.startsWith('before:') || normalizedPos.startsWith('after:')) {
+          const target = act.position.slice(act.position.indexOf(':') + 1).trim();
+          if (!target) {
+            return { valid: false, error: `Action type "move_line_item" position "${act.position}" has an empty target — provide a product name after the colon` };
+          }
+        }
       }
       break;
 

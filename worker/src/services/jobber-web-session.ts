@@ -285,6 +285,9 @@ export class JobberWebSession {
 
       const row = rows[0];
       const expiresAt = new Date(row.expires_at).getTime();
+      if (Number.isNaN(expiresAt) || !Number.isFinite(expiresAt)) {
+        return { synced: false, error: `Invalid expires_at value: "${row.expires_at}"` };
+      }
       if (Date.now() > expiresAt) {
         return { synced: false, error: 'Remote cookies are also expired' };
       }

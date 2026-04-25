@@ -65,6 +65,7 @@ export default function RulesPage() {
         <button
           style={activeTab === 'rules' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
           onClick={() => {
+            if (activeTab === 'rules') return;
             if (activeTab === 'ordering' && orderingDirty) {
               if (!confirm('You have unsaved ordering changes. Discard them?')) return;
             }
@@ -80,11 +81,8 @@ export default function RulesPage() {
         <button
           style={activeTab === 'ordering' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
           onClick={() => {
-            if (activeTab === 'ordering' && orderingDirty) {
-              if (!confirm('You have unsaved ordering changes. Discard them?')) return;
-            }
+            if (activeTab === 'ordering') return;
             setActiveTab('ordering');
-            setOrderingDirty(false);
           }}
           aria-selected={activeTab === 'ordering'}
           aria-controls="product-ordering-panel"
@@ -717,14 +715,17 @@ function BusinessRulesTab() {
 
 function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProductCatalogEntry[]>([]);
+  const [snapshotCatalog, setSnapshotCatalog] = useState<ProductCatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
+    return () => { onDirtyChange?.(false); };
   }, [dirty, onDirtyChange]);
 
   const load = useCallback(async () => {
@@ -733,6 +734,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     try {
       const data = await fetchCatalog();
       setCatalog(data);
+      setSnapshotCatalog(data);
       setDirty(false);
     } catch {
       setLoadError('Failed to load product catalog. Please try again.');
@@ -751,6 +753,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     setCatalog(updated);
     setDirty(true);
     setSaveMessage(null);
+    setSaveStatus(null);
   };
 
   const handleSave = async () => {
@@ -760,9 +763,12 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
       const orderedIds = catalog.map((c) => c.id);
       const updated = await reorderCatalog(orderedIds);
       setCatalog(updated);
+      setSnapshotCatalog(updated);
       setDirty(false);
+      setSaveStatus('success');
       setSaveMessage('Product ordering saved.');
     } catch {
+      setSaveStatus('error');
       setSaveMessage('Failed to save ordering. Please try again.');
     } finally {
       setSaving(false);
@@ -770,8 +776,10 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   };
 
   const handleReset = () => {
-    load();
+    setCatalog(snapshotCatalog);
+    setDirty(false);
     setSaveMessage(null);
+    setSaveStatus(null);
   };
 
   if (loading) return <p>Loading product catalog…</p>;
@@ -868,8 +876,8 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
         <div
           style={{
             padding: '0.5rem 0.75rem',
-            background: saveMessage.includes('Failed') ? '#fdecea' : '#e8f5e9',
-            color: saveMessage.includes('Failed') ? '#b71c1c' : '#2e7d32',
+            background: saveStatus === 'error' ? '#fdecea' : '#e8f5e9',
+            color: saveStatus === 'error' ? '#b71c1c' : '#2e7d32',
             borderRadius: 4,
             fontSize: '0.85rem',
             marginBottom: '1rem',

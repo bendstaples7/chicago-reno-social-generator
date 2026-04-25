@@ -682,7 +682,7 @@ app.patch('/catalog/:id', async (c) => {
   const db = c.env.DB;
   const userId = c.get('user').id;
   const entryId = c.req.param('id');
-  const body = await c.req.json() as { name?: string; description?: string; keywords?: string };
+  const body = await c.req.json() as { name?: string; description?: string; keywords?: string | null };
 
   // Validate inputs
   if (body.name !== undefined) {
@@ -748,8 +748,8 @@ app.patch('/catalog/:id', async (c) => {
         recommendedActions: ['Shorten the keywords'],
       });
     }
-    // Coerce empty string to null
-    if (!body.keywords) body.keywords = undefined;
+    // Coerce empty string to null so the DB column is cleared
+    if (!body.keywords) body.keywords = null;
   }
 
   // Verify ownership — only manual catalog entries can be updated

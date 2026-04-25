@@ -1042,7 +1042,7 @@ export class RulesService {
 
     const systemContent = [
       'You convert natural language business rules into structured JSON for a deterministic rules engine used in a home renovation quoting system.',
-      'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist.',
+      'The engine evaluates rules AFTER the AI generates initial line items. Rules fire based on conditions about which line items exist or what the customer request text contains.',
       '',
       'CONDITION TYPES:',
       '  line_item_exists — { "type": "line_item_exists", "productNamePattern": "exact catalog name" }',
@@ -1050,6 +1050,7 @@ export class RulesService {
       '  line_item_name_contains — { "type": "line_item_name_contains", "substring": "partial name" }',
       '  line_item_quantity_gte — { "type": "line_item_quantity_gte", "productNamePattern": "exact catalog name", "threshold": 5 }',
       '  line_item_quantity_lte — { "type": "line_item_quantity_lte", "productNamePattern": "exact catalog name", "threshold": 1 }',
+      '  request_text_contains — checks if the customer request text contains a substring: { "type": "request_text_contains", "substring": "wood floor" }',
       '  always — { "type": "always" }',
       '',
       'ACTION TYPES:',
@@ -1069,6 +1070,7 @@ export class RulesService {
       'INSTRUCTIONS:',
       '- Find the CLOSEST matching catalog name for what the user describes. Example: "TV mounting" → "Carpentry: TV Mount".',
       '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
+      '- Use request_text_contains when the rule depends on what the customer asked for (e.g., "if the customer mentions wood floors" → { "type": "request_text_contains", "substring": "wood floor" }).',
       '- Use extract_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The extractionPrompt is plain English.',
       '- For add_line_item, set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item). Use placeBefore when the new item should come before another item (e.g., demo work before the main scope). If the item should be first on the quote, use placeBefore with any likely first item — if the target is not found it defaults to the beginning.',
       '- IMPORTANT: add_line_item will NOT add a duplicate if the product already exists on the quote. To reposition an existing item, use move_line_item instead.',

@@ -17,6 +17,7 @@ export interface RulesEngineInput {
   lineItems: EngineLineItem[];
   rules: StructuredRule[];
   catalog: ProductCatalogEntry[];
+  customerRequestText?: string;
   maxIterations?: number;
 }
 
@@ -53,6 +54,7 @@ const CONDITION_TYPES = new Set([
   'line_item_name_contains',
   'line_item_quantity_gte',
   'line_item_quantity_lte',
+  'request_text_contains',
   'always',
 ]);
 
@@ -94,6 +96,12 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
     case 'line_item_name_contains':
       if (typeof cond.substring !== 'string') {
         return { valid: false, error: 'Condition type "line_item_name_contains" requires a string "substring" field' };
+      }
+      break;
+
+    case 'request_text_contains':
+      if (typeof cond.substring !== 'string') {
+        return { valid: false, error: 'Condition type "request_text_contains" requires a string "substring" field' };
       }
       break;
 
@@ -288,6 +296,7 @@ export function validateActions(actions: unknown): { valid: boolean; errors?: st
 function evaluateCondition(
   condition: RuleCondition,
   lineItems: EngineLineItem[],
+  customerRequestText?: string,
 ): ConditionResult {
   switch (condition.type) {
     case 'line_item_exists': {
@@ -345,6 +354,18 @@ function evaluateCondition(
       return {
         matched: matching.length > 0,
         matchingLineItemIds: matching.map((li) => li.id),
+      };
+    }
+
+    case 'request_text_contains': {
+      const sub = condition.substring.toLowerCase();
+      const text = (customerRequestText ?? '').toLowerCase();
+      const matched = text.includes(sub);
+      // This condition is about the request text, not specific line items.
+      // Return all line item IDs so actions can target any of them.
+      return {
+        matched,
+        matchingLineItemIds: matched ? lineItems.map((li) => li.id) : [],
       };
     }
 
@@ -769,7 +790,7 @@ function executeAction(
 const DEFAULT_MAX_ITERATIONS = 10;
 
 export function executeRules(input: RulesEngineInput): RulesEngineResult {
-  const { rules, catalog, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
+  const { rules, catalog, customerRequestText, maxIterations = DEFAULT_MAX_ITERATIONS } = input;
 
   // Clone input line items to avoid mutation
   let lineItems: EngineLineItem[] = input.lineItems.map((li) => ({
@@ -840,7 +861,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
       }
 
       // Evaluate condition
-      const condResult = evaluateCondition(rule.condition, lineItems);
+      const condResult = evaluateCondition(rule.condition, lineItems, customerRequestText);
       if (!condResult.matched) continue;
 
       // Check duplicate application: skip if this rule has already been

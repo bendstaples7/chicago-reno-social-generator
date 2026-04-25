@@ -23,3 +23,6 @@ FRONTEND_URL=
 # Create an API token with Browser Rendering - Edit permissions
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
+
+# Enable local-to-remote D1 sync (rules, cookies). Only set in .dev.vars, never in production.
+ENABLE_LOCAL_SYNC=true

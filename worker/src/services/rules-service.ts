@@ -947,32 +947,60 @@ export class RulesService {
   }
 
   /**
-   * Update catalog sort orders when a rule with add_line_item + placeAfter is created.
-   * Sets the added product's sort_order to parent's sort_order + 1, and bumps
+   * Update catalog sort orders when a rule with add_line_item + placeAfter or placeBefore is created.
+   * For placeAfter: sets the added product's sort_order to parent's sort_order + 1, and bumps
    * any products at or above that sort_order within the same range.
+   * For placeBefore: sets the added product's sort_order to the parent's sort_order,
+   * bumping the parent and following items up by 1.
    */
   private async updateCatalogSortOrders(actions: RuleAction[]): Promise<void> {
     for (const action of actions) {
-      if (action.type !== 'add_line_item' || !action.placeAfter) continue;
+      if (action.type !== 'add_line_item') continue;
 
-      const parentRow = await this.db.prepare(
-        'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
-      ).bind(action.placeAfter).first() as { sort_order: number } | null;
+      // Handle placeAfter: set the new product's sort_order to parent's sort_order + 1,
+      // bumping any products at or above that sort_order within the same range.
+      if (action.placeAfter) {
+        const parentRow = await this.db.prepare(
+          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeAfter).first() as { sort_order: number } | null;
 
-      if (!parentRow) continue;
+        if (!parentRow) continue;
 
-      const parentOrder = parentRow.sort_order;
-      const childOrder = parentOrder + 1;
-      const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
+        const parentOrder = parentRow.sort_order;
+        const childOrder = parentOrder + 1;
+        const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
 
-      await this.db.batch([
-        this.db.prepare(
-          'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
-        ).bind(childOrder, rangeMax, action.productName),
-        this.db.prepare(
-          'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
-        ).bind(childOrder, action.productName),
-      ]);
+        await this.db.batch([
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+          ).bind(childOrder, rangeMax, action.productName),
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+          ).bind(childOrder, action.productName),
+        ]);
+      }
+
+      // Handle placeBefore: set the new product's sort_order to the parent's sort_order,
+      // bumping the parent and following items up by 1.
+      if (action.placeBefore && !action.placeAfter) {
+        const parentRow = await this.db.prepare(
+          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeBefore).first() as { sort_order: number } | null;
+
+        if (!parentRow) continue;
+
+        const parentOrder = parentRow.sort_order;
+        const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
+
+        await this.db.batch([
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
+          ).bind(parentOrder, rangeMax, action.productName),
+          this.db.prepare(
+            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
+          ).bind(parentOrder, action.productName),
+        ]);
+      }
     }
   }
 
@@ -1025,8 +1053,9 @@ export class RulesService {
       '  always — { "type": "always" }',
       '',
       'ACTION TYPES:',
-      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "exact catalog name of item it should follow" }',
+      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "item it should follow" } — use either placeAfter OR placeBefore (not both). placeBefore defaults to prepending if target not found; placeAfter defaults to appending.',
       '  remove_line_item — { "type": "remove_line_item", "productNamePattern": "exact catalog name" }',
+      '  move_line_item — { "type": "move_line_item", "productNamePattern": "exact catalog name", "position": "start" or "end" or "before:Product Name" or "after:Product Name" }',
       '  set_quantity — { "type": "set_quantity", "productNamePattern": "exact catalog name", "quantity": 5 }',
       '  adjust_quantity — { "type": "adjust_quantity", "productNamePattern": "exact catalog name", "delta": 1 }',
       '  set_unit_price — { "type": "set_unit_price", "productNamePattern": "exact catalog name", "unitPrice": 50 }',
@@ -1041,7 +1070,9 @@ export class RulesService {
       '- Find the CLOSEST matching catalog name for what the user describes. Example: "TV mounting" → "Carpentry: TV Mount".',
       '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
       '- Use extract_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The extractionPrompt is plain English.',
-      '- For add_line_item, always set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item).',
+      '- For add_line_item, set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item). Use placeBefore when the new item should come before another item (e.g., demo work before the main scope). If the item should be first on the quote, use placeBefore with any likely first item — if the target is not found it defaults to the beginning.',
+      '- IMPORTANT: add_line_item will NOT add a duplicate if the product already exists on the quote. To reposition an existing item, use move_line_item instead.',
+      '- Use move_line_item to reposition an existing line item. Use "start" or "end" for absolute positioning, or "before:Product Name" / "after:Product Name" for relative positioning.',
       '- IMPORTANT: If the description requires MULTIPLE distinct behaviors (e.g., adding an item AND updating its description, or adding an item AND positioning it), create SEPARATE rules for each behavior.',
       '- Each rule in the "rules" array should have a "name" (short title), "condition", and "actions".',
       '- If the rule truly cannot be expressed, set "unsupported" to true.',

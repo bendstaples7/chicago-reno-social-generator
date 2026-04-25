@@ -17,6 +17,17 @@ import {
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { RulesSyncService } from '../services/rules-sync.js';
+
+function createRulesSync(env: Bindings): RulesSyncService {
+  const isLocal = env.ENABLE_LOCAL_SYNC === 'true';
+  return new RulesSyncService({
+    accountId: env.CLOUDFLARE_ACCOUNT_ID || '',
+    apiToken: env.CLOUDFLARE_API_TOKEN || '',
+    databaseId: env.D1_DATABASE_ID || '',
+    isLocal,
+  });
+}
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -92,6 +103,17 @@ app.post('/rules', async (c) => {
     apiKey: c.env.AI_TEXT_API_KEY,
     apiUrl: c.env.AI_TEXT_API_URL,
   });
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    const groupRow = await db.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
+  }
+
   return c.json(rule, 201);
 });
 
@@ -119,6 +141,17 @@ app.put('/rules/:id', async (c) => {
     actionJson,
     triggerMode,
   });
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    const groupRow = await c.env.DB.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
+  }
+
   return c.json(rule);
 });
 
@@ -129,6 +162,17 @@ app.put('/rules/:id', async (c) => {
 app.put('/rules/:id/deactivate', async (c) => {
   const rulesService = new RulesService(c.env.DB);
   const rule = await rulesService.deactivateRule(c.req.param('id'));
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    const groupRow = await c.env.DB.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
+  }
+
   return c.json(rule);
 });
 
@@ -675,6 +719,81 @@ app.patch('/catalog/:id', async (c) => {
   }
 
   return c.json({ success: true });
+});
+
+/**
+ * PUT /catalog/reorder
+ * Update the sort order of catalog entries based on the provided ordered list of IDs.
+ */
+app.put('/catalog/reorder', async (c) => {
+  const db = c.env.DB;
+  const userId = c.get('user').id;
+  const { orderedIds } = await c.req.json() as { orderedIds: string[] };
+
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: 'Please provide an ordered list of catalog entry IDs.',
+      recommendedActions: ['Provide orderedIds array'],
+    });
+  }
+
+  const uniqueIds = new Set(orderedIds);
+  if (uniqueIds.size !== orderedIds.length) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: 'orderedIds contains duplicate entries.',
+      recommendedActions: ['Each catalog entry ID should appear exactly once'],
+    });
+  }
+
+  // Fetch all current catalog entry IDs for this user
+  const userEntriesResult = await db.prepare(
+    'SELECT id FROM manual_catalog_entries WHERE user_id = ?'
+  ).bind(userId).all();
+  const userEntryIds = new Set((userEntriesResult.results as Array<{ id: string }>).map(r => r.id));
+
+  // Validate that every ID in orderedIds belongs to the user
+  const foreignIds = orderedIds.filter(id => !userEntryIds.has(id));
+  if (foreignIds.length > 0) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: `orderedIds contains IDs that do not belong to this user: ${foreignIds.join(', ')}`,
+      recommendedActions: ['Only include your own catalog entry IDs'],
+    });
+  }
+
+  // Validate that orderedIds contains all user entries (no missing)
+  if (orderedIds.length !== userEntryIds.size) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: `orderedIds has ${orderedIds.length} entries but user has ${userEntryIds.size}. All entries must be included.`,
+      recommendedActions: ['Include all catalog entry IDs in the ordered list'],
+    });
+  }
+
+  // Assign contiguous sort_order values (0, 1, 2, ...) in a single batch
+  const statements: D1PreparedStatement[] = [];
+  for (let i = 0; i < orderedIds.length; i++) {
+    statements.push(
+      db.prepare(
+        'UPDATE manual_catalog_entries SET sort_order = ? WHERE id = ? AND user_id = ?'
+      ).bind(i, orderedIds[i], userId),
+    );
+  }
+
+  await db.batch(statements);
+
+  const catalog = await fetchManualCatalog(db, userId);
+  return c.json({ catalog });
 });
 
 /**

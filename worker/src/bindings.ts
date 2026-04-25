@@ -22,4 +22,6 @@ export interface Bindings {
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
   GITHUB_PAT: string;
+  D1_DATABASE_ID: string;
+  ENABLE_LOCAL_SYNC?: string;
 }

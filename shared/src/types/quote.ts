@@ -156,6 +156,7 @@ export type RuleCondition =
 export type RuleActionType =
   | 'add_line_item'
   | 'remove_line_item'
+  | 'move_line_item'
   | 'set_quantity'
   | 'adjust_quantity'
   | 'set_unit_price'
@@ -165,8 +166,9 @@ export type RuleActionType =
 
 /** A typed action for a structured rule */
 export type RuleAction =
-  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string }
+  | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string; placeBefore?: string }
   | { type: 'remove_line_item'; productNamePattern: string }
+  | { type: 'move_line_item'; productNamePattern: string; position: 'start' | 'end' | `before:${string}` | `after:${string}` }
   | { type: 'set_quantity'; productNamePattern: string; quantity: number }
   | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
   | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }

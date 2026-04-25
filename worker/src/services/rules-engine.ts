@@ -59,6 +59,7 @@ const CONDITION_TYPES = new Set([
 const ACTION_TYPES = new Set([
   'add_line_item',
   'remove_line_item',
+  'move_line_item',
   'set_quantity',
   'adjust_quantity',
   'set_unit_price',
@@ -155,11 +156,35 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (act.placeAfter !== undefined && typeof act.placeAfter !== 'string') {
         return { valid: false, error: 'Action type "add_line_item" optional "placeAfter" must be a string' };
       }
+      if (act.placeBefore !== undefined && typeof act.placeBefore !== 'string') {
+        return { valid: false, error: 'Action type "add_line_item" optional "placeBefore" must be a string' };
+      }
       break;
 
     case 'remove_line_item':
       if (typeof act.productNamePattern !== 'string') {
         return { valid: false, error: 'Action type "remove_line_item" requires a string "productNamePattern" field' };
+      }
+      break;
+
+    case 'move_line_item':
+      if (typeof act.productNamePattern !== 'string') {
+        return { valid: false, error: 'Action type "move_line_item" requires a string "productNamePattern" field' };
+      }
+      if (typeof act.position !== 'string') {
+        return { valid: false, error: 'Action type "move_line_item" requires a string "position" field ("start", "end", "before:ProductName", or "after:ProductName")' };
+      }
+      {
+        const normalizedPos = act.position.toLowerCase();
+        if (normalizedPos !== 'start' && normalizedPos !== 'end' && !normalizedPos.startsWith('before:') && !normalizedPos.startsWith('after:')) {
+          return { valid: false, error: `Action type "move_line_item" position must be "start", "end", "before:ProductName", or "after:ProductName" — got "${act.position}"` };
+        }
+        if (normalizedPos.startsWith('before:') || normalizedPos.startsWith('after:')) {
+          const target = act.position.slice(act.position.indexOf(':') + 1).trim();
+          if (!target) {
+            return { valid: false, error: `Action type "move_line_item" position "${act.position}" has an empty target — provide a product name after the colon` };
+          }
+        }
       }
       break;
 
@@ -371,6 +396,19 @@ function executeAction(
         };
       }
 
+      // Duplicate guard: if an item with this product name already exists, skip the add.
+      // This prevents rules from creating duplicates that dedup would resolve incorrectly.
+      const alreadyExists = lineItems.some(
+        (li) => li.productName.toLowerCase() === catalogEntry.name.toLowerCase(),
+      );
+      if (alreadyExists) {
+        return {
+          modified: false,
+          lineItems,
+          warning: `Product "${catalogEntry.name}" already exists on the quote — skipping add_line_item`,
+        };
+      }
+
       const newItem: EngineLineItem = {
         id: generateId(),
         productCatalogEntryId: catalogEntry.id,
@@ -384,7 +422,23 @@ function executeAction(
       };
 
       let updated: EngineLineItem[];
-      if (action.placeAfter) {
+      if (action.placeBefore) {
+        // Insert the new item right before the specified product
+        const beforePattern = action.placeBefore.toLowerCase();
+        const beforeIndex = lineItems.findIndex(
+          (li) => li.productName.toLowerCase() === beforePattern,
+        );
+        if (beforeIndex >= 0) {
+          updated = [
+            ...lineItems.slice(0, beforeIndex),
+            newItem,
+            ...lineItems.slice(beforeIndex),
+          ];
+        } else {
+          // placeBefore target not found — prepend to beginning
+          updated = [newItem, ...lineItems];
+        }
+      } else if (action.placeAfter) {
         // Insert the new item right after the specified product
         const afterPattern = action.placeAfter.toLowerCase();
         const afterIndex = lineItems.findLastIndex(
@@ -431,6 +485,82 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: before,
         afterSnapshot: [],
+      };
+    }
+
+    case 'move_line_item': {
+      const pattern = action.productNamePattern.toLowerCase();
+      const toMove = lineItems.filter(
+        (li) => li.productName.toLowerCase() === pattern,
+      );
+
+      if (toMove.length === 0) {
+        return { modified: false, lineItems, warning: `Product "${action.productNamePattern}" not found on quote — skipping move_line_item` };
+      }
+
+      const before = snapshot(toMove);
+      // Remove the items from their current position
+      const remaining = lineItems.filter(
+        (li) => li.productName.toLowerCase() !== pattern,
+      );
+
+      // Mark items as rule-applied
+      const movedItems = toMove.map((li) => ({
+        ...li,
+        ruleIdsApplied: [...li.ruleIdsApplied, ruleId],
+      }));
+
+      let updated: EngineLineItem[];
+      const pos = action.position.toLowerCase();
+
+      if (pos === 'start') {
+        updated = [...movedItems, ...remaining];
+      } else if (pos === 'end') {
+        updated = [...remaining, ...movedItems];
+      } else if (pos.startsWith('before:')) {
+        const targetName = pos.slice('before:'.length).toLowerCase();
+        const targetIndex = remaining.findIndex(
+          (li) => li.productName.toLowerCase() === targetName,
+        );
+        if (targetIndex >= 0) {
+          updated = [
+            ...remaining.slice(0, targetIndex),
+            ...movedItems,
+            ...remaining.slice(targetIndex),
+          ];
+        } else {
+          // Target not found — prepend
+          updated = [...movedItems, ...remaining];
+        }
+      } else if (pos.startsWith('after:')) {
+        const targetName = pos.slice('after:'.length).toLowerCase();
+        const targetIndex = remaining.findLastIndex(
+          (li) => li.productName.toLowerCase() === targetName,
+        );
+        if (targetIndex >= 0) {
+          updated = [
+            ...remaining.slice(0, targetIndex + 1),
+            ...movedItems,
+            ...remaining.slice(targetIndex + 1),
+          ];
+        } else {
+          // Target not found — append
+          updated = [...remaining, ...movedItems];
+        }
+      } else {
+        // Unrecognized position — no-op
+        return {
+          modified: false,
+          lineItems,
+          warning: `Unrecognized position "${pos}" — expected "start", "end", "before:ProductName", or "after:ProductName"`,
+        };
+      }
+
+      return {
+        modified: true,
+        lineItems: updated,
+        beforeSnapshot: before,
+        afterSnapshot: snapshot(movedItems),
       };
     }
 

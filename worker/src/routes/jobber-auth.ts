@@ -114,12 +114,40 @@ app.get('/callback', async (c) => {
 
 /**
  * POST /trigger-cookie-refresh
- * Triggers the GitHub Actions workflow to refresh Jobber session cookies.
- * Called by the client's blocking overlay when cookies are expired.
+ * Refreshes Jobber session cookies.
+ *
+ * Local dev: syncs valid cookies from remote (production) D1 to local D1 via
+ * the Cloudflare API. This is instant and doesn't require a GitHub workflow.
+ *
+ * Production: triggers the GitHub Actions workflow to run Puppeteer on a VM,
+ * log into Jobber, and write fresh cookies to remote D1.
+ *
  * CRITICAL: This is the primary recovery mechanism for expired cookies.
- * The workflow runs real Puppeteer with real Chrome on a GitHub Actions VM.
  */
 app.post('/trigger-cookie-refresh', async (c) => {
+  const db = c.env.DB;
+  const isLocal = c.env.ENABLE_LOCAL_SYNC === 'true';
+
+  // ── Local dev: try syncing from remote D1 first ──
+  if (isLocal) {
+    const accountId = c.env.CLOUDFLARE_ACCOUNT_ID;
+    // CLOUDFLARE_API_TOKEN grants D1 read access to production — only set in .dev.vars, never in production secrets.
+    const apiToken = c.env.CLOUDFLARE_API_TOKEN;
+    if (accountId && apiToken) {
+      const webSession = new JobberWebSession(db);
+      const result = await webSession.syncFromRemote({
+        accountId,
+        apiToken,
+        databaseId: c.env.D1_DATABASE_ID,
+      });
+      if (result.synced) {
+        return c.json({ triggered: true, message: 'Cookies synced from production. Re-checking now…' });
+      }
+      console.warn(`[jobber-auth] Remote sync failed: ${result.error}. Falling back to GitHub workflow.`);
+    }
+  }
+
+  // ── Production (or remote sync failed): trigger GitHub Actions workflow ──
   const githubPat = c.env.GITHUB_PAT;
   if (!githubPat) {
     return c.json({ error: 'GITHUB_PAT not configured' }, 500);

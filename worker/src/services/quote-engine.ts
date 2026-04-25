@@ -6,6 +6,74 @@ import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, Sim
 const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
 
+/**
+ * Deterministic catalog filtering based on keyword matches against customer text.
+ *
+ * Groups products by category prefix (text before the first colon). Within each
+ * category group, if any product's keywords match the customer text, only the
+ * matched product(s) are kept — competing variants are removed from the catalog
+ * sent to the AI.
+ *
+ * Products without a colon prefix, without keywords, or in categories where no
+ * keyword matches the customer text are always kept unchanged.
+ */
+export function filterCatalogByKeywords(
+  catalog: ProductCatalogEntry[],
+  customerText: string,
+): ProductCatalogEntry[] {
+  if (!customerText.trim() || catalog.length === 0) return catalog;
+
+  const textLower = customerText.toLowerCase();
+
+  // Group products by category prefix (text before the first colon, trimmed).
+  // Products without a colon are placed in a special "__uncategorized__" group
+  // that is never filtered.
+  const groups = new Map<string, ProductCatalogEntry[]>();
+  for (const entry of catalog) {
+    const colonIdx = entry.name.indexOf(':');
+    const prefix = colonIdx > 0 ? entry.name.slice(0, colonIdx).trim().toLowerCase() : '__uncategorized__';
+    const group = groups.get(prefix) ?? [];
+    group.push(entry);
+    groups.set(prefix, group);
+  }
+
+  const filtered: ProductCatalogEntry[] = [];
+
+  for (const [prefix, entries] of groups) {
+    // Never filter uncategorized products or groups with only one product
+    if (prefix === '__uncategorized__' || entries.length <= 1) {
+      filtered.push(...entries);
+      continue;
+    }
+
+    // Check which products in this group have keyword matches
+    const matched: ProductCatalogEntry[] = [];
+
+    for (const entry of entries) {
+      if (!entry.keywords) continue;
+
+      const keywords = entry.keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+      const hasMatch = keywords.some(kw => textLower.includes(kw));
+
+      if (hasMatch) {
+        matched.push(entry);
+      }
+    }
+
+    if (matched.length > 0) {
+      // Keep keyword-matched products + products without keywords in this group
+      // (products without keywords might be materials, misc items, etc.)
+      filtered.push(...matched);
+      filtered.push(...entries.filter(e => !e.keywords));
+    } else {
+      // No keyword matches in this group — keep everything
+      filtered.push(...entries);
+    }
+  }
+
+  return filtered;
+}
+
 export interface QuoteEngineInput {
   customerText: string;
   mediaItemIds: string[];
@@ -111,7 +179,7 @@ export class QuoteEngine {
       });
     }
 
-    const userPrompt = this.buildPrompt(input, catalog, templates);
+    const userPrompt = this.buildPrompt(input, filterCatalogByKeywords(catalog, input.customerText), templates);
     const systemPrompt = SYSTEM_PROMPT;
 
     const controller = new AbortController();

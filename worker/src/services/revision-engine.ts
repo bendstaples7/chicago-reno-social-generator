@@ -1,6 +1,7 @@
 import { PlatformError } from '../errors/index.js';
 import { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
+import { filterCatalogByKeywords } from './quote-engine.js';
 import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
 const REVISION_TIMEOUT_MS = 300_000;
@@ -184,7 +185,8 @@ export class RevisionEngine {
     if (input.catalog.length === 0) {
       parts.push('(empty catalog)');
     } else {
-      for (const p of input.catalog) {
+      const filteredCatalog = filterCatalogByKeywords(input.catalog, input.customerRequestText);
+      for (const p of filteredCatalog) {
         let line = `- ${p.name} — $${p.unitPrice}`;
         if (p.description) line += ' — ' + p.description;
         if (p.keywords) {

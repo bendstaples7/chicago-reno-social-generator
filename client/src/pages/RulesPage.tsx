@@ -56,31 +56,46 @@ const TAB_STYLE_ACTIVE: React.CSSProperties = {
 
 export default function RulesPage() {
   const [activeTab, setActiveTab] = useState<TabId>('rules');
+  const [orderingDirty, setOrderingDirty] = useState(false);
 
   return (
     <div style={{ maxWidth: 800 }}>
       {/* Tab bar */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #e0e0e0', marginBottom: '1.25rem' }}>
+      <div role="tablist" style={{ display: 'flex', borderBottom: '1px solid #e0e0e0', marginBottom: '1.25rem' }}>
         <button
           style={activeTab === 'rules' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
-          onClick={() => setActiveTab('rules')}
+          onClick={() => {
+            if (activeTab === 'ordering' && orderingDirty) {
+              if (!confirm('You have unsaved ordering changes. Discard them?')) return;
+            }
+            setActiveTab('rules');
+            setOrderingDirty(false);
+          }}
           aria-selected={activeTab === 'rules'}
+          aria-controls="business-rules-panel"
           role="tab"
         >
           Business Rules
         </button>
         <button
           style={activeTab === 'ordering' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
-          onClick={() => setActiveTab('ordering')}
+          onClick={() => {
+            if (activeTab === 'ordering' && orderingDirty) {
+              if (!confirm('You have unsaved ordering changes. Discard them?')) return;
+            }
+            setActiveTab('ordering');
+            setOrderingDirty(false);
+          }}
           aria-selected={activeTab === 'ordering'}
+          aria-controls="product-ordering-panel"
           role="tab"
         >
           Product Ordering
         </button>
       </div>
 
-      {activeTab === 'rules' && <BusinessRulesTab />}
-      {activeTab === 'ordering' && <ProductOrderingTab />}
+      {activeTab === 'rules' && <div role="tabpanel" id="business-rules-panel"><BusinessRulesTab /></div>}
+      {activeTab === 'ordering' && <div role="tabpanel" id="product-ordering-panel"><ProductOrderingTab onDirtyChange={setOrderingDirty} /></div>}
     </div>
   );
 }
@@ -700,13 +715,17 @@ function BusinessRulesTab() {
 // Product Ordering Tab
 // ---------------------------------------------------------------------------
 
-function ProductOrderingTab() {
+function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProductCatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const load = useCallback(async () => {
     setLoading(true);

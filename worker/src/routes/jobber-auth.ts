@@ -126,18 +126,19 @@ app.get('/callback', async (c) => {
  */
 app.post('/trigger-cookie-refresh', async (c) => {
   const db = c.env.DB;
-  const isLocal = !c.env.FRONTEND_URL || c.env.FRONTEND_URL === '' || c.env.FRONTEND_URL.includes('localhost');
+  const isLocal = c.env.ENABLE_LOCAL_SYNC === 'true';
 
   // ── Local dev: try syncing from remote D1 first ──
   if (isLocal) {
     const accountId = c.env.CLOUDFLARE_ACCOUNT_ID;
+    // CLOUDFLARE_API_TOKEN grants D1 read access to production — only set in .dev.vars, never in production secrets.
     const apiToken = c.env.CLOUDFLARE_API_TOKEN;
     if (accountId && apiToken) {
       const webSession = new JobberWebSession(db);
       const result = await webSession.syncFromRemote({
         accountId,
         apiToken,
-        databaseId: '300f9629-60b2-4e2d-a574-e77bf50235ff',
+        databaseId: c.env.D1_DATABASE_ID,
       });
       if (result.synced) {
         return c.json({ triggered: true, message: 'Cookies synced from production. Re-checking now…' });

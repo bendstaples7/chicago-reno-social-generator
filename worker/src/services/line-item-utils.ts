@@ -2,7 +2,7 @@
  * Utility functions for post-processing AI-generated line items.
  */
 
-import type { ProductCatalogEntry } from 'shared';
+import type { ProductCatalogEntry, AuditEntry } from 'shared';
 
 /**
  * Merge duplicate line items that share the same product name (case-insensitive).
@@ -66,6 +66,15 @@ export function deduplicateLineItems<
     const base = (!existingHasRules && newHasRules) ? item : existing;
     const other = (base === item) ? existing : item;
 
+    // Log price divergence for traceability
+    if (base.unitPrice !== other.unitPrice) {
+      console.warn(
+        `[deduplicateLineItems] Price divergence on "${nameTrimmed}": ` +
+        `keeping ${base.unitPrice} (${(base.ruleIdsApplied ?? []).length > 0 ? 'rule' : 'AI'}), ` +
+        `dropping ${other.unitPrice} (${(other.ruleIdsApplied ?? []).length > 0 ? 'rule' : 'AI'})`
+      );
+    }
+
     const merged = { ...base };
     merged.quantity = existing.quantity + item.quantity;
     merged.confidenceScore = Math.max(existing.confidenceScore, item.confidenceScore);
@@ -124,4 +133,21 @@ export function sortLineItemsByCatalog<
   });
 
   return indexed.map(({ item }) => item);
+}
+
+
+/**
+ * Check if the rules engine actually modified line items (not just enrichment-only entries).
+ * Returns true only when rules added, removed, or changed line items.
+ * Enrichment-only entries (extract_request_context) have identical before/after snapshots
+ * and should not count as modifications.
+ */
+export function rulesModifiedLineItems(auditTrail?: AuditEntry[]): boolean {
+  if (!auditTrail) return false;
+  return auditTrail.some((e) => {
+    if (e.ruleId === '__engine__') return false;
+    // extract_request_context entries have identical before/after snapshots — not a modification
+    if (e.action.type === 'extract_request_context') return false;
+    return e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0;
+  });
 }

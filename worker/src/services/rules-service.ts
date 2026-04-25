@@ -1025,7 +1025,7 @@ export class RulesService {
       '  always — { "type": "always" }',
       '',
       'ACTION TYPES:',
-      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "exact catalog name of item it should follow", "placeBefore": "exact catalog name of item it should precede" }',
+      '  add_line_item — { "type": "add_line_item", "productName": "exact catalog name", "quantity": 1, "unitPrice": 100, "placeAfter": "item it should follow" } — use either placeAfter OR placeBefore (not both). placeBefore defaults to prepending if target not found; placeAfter defaults to appending.',
       '  remove_line_item — { "type": "remove_line_item", "productNamePattern": "exact catalog name" }',
       '  move_line_item — { "type": "move_line_item", "productNamePattern": "exact catalog name", "position": "start" or "end" or "before:Product Name" or "after:Product Name" }',
       '  set_quantity — { "type": "set_quantity", "productNamePattern": "exact catalog name", "quantity": 5 }',

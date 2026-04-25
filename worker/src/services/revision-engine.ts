@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
 import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
@@ -385,10 +385,7 @@ export class RevisionEngine {
     // Sort by catalog sort order ONLY when the rules engine did not modify
     // the item list. When rules fire they position items intentionally
     // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
-    const rulesModifiedItems = auditTrail && auditTrail.some(
-      (e) => e.ruleId !== '__engine__' && (e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0),
-    );
-    const finalItems = rulesModifiedItems ? dedupedItems : sortLineItemsByCatalog(dedupedItems, catalog);
+    const finalItems = rulesModifiedLineItems(auditTrail) ? dedupedItems : sortLineItemsByCatalog(dedupedItems, catalog);
     const lineItems = finalItems.filter((i) => i.resolved);
     const unresolvedItems = finalItems.filter((i) => !i.resolved);
 

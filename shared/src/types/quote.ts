@@ -168,7 +168,7 @@ export type RuleActionType =
 export type RuleAction =
   | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string; placeBefore?: string }
   | { type: 'remove_line_item'; productNamePattern: string }
-  | { type: 'move_line_item'; productNamePattern: string; position: 'start' | 'end' | string }
+  | { type: 'move_line_item'; productNamePattern: string; position: 'start' | 'end' | `before:${string}` | `after:${string}` }
   | { type: 'set_quantity'; productNamePattern: string; quantity: number }
   | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
   | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }

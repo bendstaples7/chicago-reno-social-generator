@@ -20,10 +20,11 @@ import { JobberTokenStore } from '../services/jobber-token-store.js';
 import { RulesSyncService } from '../services/rules-sync.js';
 
 function createRulesSync(env: Bindings): RulesSyncService {
-  const isLocal = !env.FRONTEND_URL || env.FRONTEND_URL === '' || env.FRONTEND_URL.includes('localhost');
+  const isLocal = env.ENABLE_LOCAL_SYNC === 'true';
   return new RulesSyncService({
     accountId: env.CLOUDFLARE_ACCOUNT_ID || '',
     apiToken: env.CLOUDFLARE_API_TOKEN || '',
+    databaseId: env.D1_DATABASE_ID || '',
     isLocal,
   });
 }
@@ -106,7 +107,11 @@ app.post('/rules', async (c) => {
   // Fire-and-forget: sync to remote D1
   const sync = createRulesSync(c.env);
   if (sync.canSync()) {
-    sync.pushRule(rule).catch(() => {});
+    const groupRow = await db.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
   }
 
   return c.json(rule, 201);
@@ -140,7 +145,11 @@ app.put('/rules/:id', async (c) => {
   // Fire-and-forget: sync to remote D1
   const sync = createRulesSync(c.env);
   if (sync.canSync()) {
-    sync.pushRule(rule).catch(() => {});
+    const groupRow = await c.env.DB.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
   }
 
   return c.json(rule);
@@ -157,7 +166,11 @@ app.put('/rules/:id/deactivate', async (c) => {
   // Fire-and-forget: sync to remote D1
   const sync = createRulesSync(c.env);
   if (sync.canSync()) {
-    sync.pushRule(rule).catch(() => {});
+    const groupRow = await c.env.DB.prepare(
+      'SELECT id, name, description, display_order, created_at FROM rule_groups WHERE id = ?'
+    ).bind(rule.ruleGroupId).first() as { id: string; name: string; description: string | null; display_order: number; created_at: string } | null;
+    const group = groupRow ? { id: groupRow.id, name: groupRow.name, description: groupRow.description, displayOrder: groupRow.display_order, createdAt: new Date(groupRow.created_at) } : undefined;
+    sync.pushRule(rule, group).catch(() => {});
   }
 
   return c.json(rule);
@@ -727,6 +740,36 @@ app.put('/catalog/reorder', async (c) => {
     });
   }
 
+  // Fetch all current catalog entry IDs for this user
+  const userEntriesResult = await db.prepare(
+    'SELECT id FROM manual_catalog_entries WHERE user_id = ?'
+  ).bind(userId).all();
+  const userEntryIds = new Set((userEntriesResult.results as Array<{ id: string }>).map(r => r.id));
+
+  // Validate that every ID in orderedIds belongs to the user
+  const foreignIds = orderedIds.filter(id => !userEntryIds.has(id));
+  if (foreignIds.length > 0) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: `orderedIds contains IDs that do not belong to this user: ${foreignIds.join(', ')}`,
+      recommendedActions: ['Only include your own catalog entry IDs'],
+    });
+  }
+
+  // Validate that orderedIds contains all user entries (no missing)
+  if (orderedIds.length !== userEntryIds.size) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: `orderedIds has ${orderedIds.length} entries but user has ${userEntryIds.size}. All entries must be included.`,
+      recommendedActions: ['Include all catalog entry IDs in the ordered list'],
+    });
+  }
+
+  // Assign contiguous sort_order values (0, 1, 2, ...) in a single batch
   const statements: D1PreparedStatement[] = [];
   for (let i = 0; i < orderedIds.length; i++) {
     statements.push(

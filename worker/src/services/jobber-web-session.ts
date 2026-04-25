@@ -234,6 +234,9 @@ export class JobberWebSession {
     apiToken: string;
     databaseId: string;
   }): Promise<{ synced: boolean; error?: string }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
     try {
       const url = `https://api.cloudflare.com/client/v4/accounts/${opts.accountId}/d1/database/${opts.databaseId}/query`;
       const resp = await fetch(url, {
@@ -245,6 +248,7 @@ export class JobberWebSession {
         body: JSON.stringify({
           sql: "SELECT cookies, expires_at FROM jobber_web_session WHERE id = 'default'",
         }),
+        signal: controller.signal,
       });
 
       if (!resp.ok) {
@@ -253,10 +257,28 @@ export class JobberWebSession {
       }
 
       const data = await resp.json() as {
-        result: Array<{ results: Array<{ cookies: string; expires_at: string }> }>;
+        success: boolean;
+        errors?: Array<{ message: string }>;
+        result: Array<{
+          success: boolean;
+          errors?: Array<{ message: string }>;
+          results: Array<{ cookies: string; expires_at: string }>;
+        }>;
       };
 
-      const rows = data.result?.[0]?.results ?? [];
+      // Validate top-level D1 API success
+      if (!data.success) {
+        const msgs = (data.errors ?? []).map((e) => e.message).join(', ');
+        return { synced: false, error: `D1 API error: ${msgs || 'unknown error'}` };
+      }
+
+      // Validate query-level success
+      if (!data.result?.[0]?.success) {
+        const msgs = (data.result?.[0]?.errors ?? []).map((e) => e.message).join(', ');
+        return { synced: false, error: `D1 query error: ${msgs || 'unknown error'}` };
+      }
+
+      const rows = data.result[0].results ?? [];
       if (rows.length === 0) {
         return { synced: false, error: 'No cookies found in remote D1' };
       }
@@ -282,6 +304,8 @@ export class JobberWebSession {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       return { synced: false, error: msg };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

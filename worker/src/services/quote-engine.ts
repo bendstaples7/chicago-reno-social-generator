@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
 import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
@@ -217,10 +217,7 @@ export class QuoteEngine {
       // Sort by catalog sort order ONLY when the rules engine did not modify
       // the item list. When rules fire they position items intentionally
       // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
-      const rulesModifiedItems = auditTrail && auditTrail.some(
-        (e) => e.ruleId !== '__engine__' && (e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0),
-      );
-      if (!rulesModifiedItems) {
+      if (!rulesModifiedLineItems(auditTrail)) {
         aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
       }
 

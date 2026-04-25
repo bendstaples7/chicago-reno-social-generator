@@ -174,6 +174,12 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (typeof act.position !== 'string') {
         return { valid: false, error: 'Action type "move_line_item" requires a string "position" field ("start", "end", "before:ProductName", or "after:ProductName")' };
       }
+      {
+        const normalizedPos = act.position.toLowerCase();
+        if (normalizedPos !== 'start' && normalizedPos !== 'end' && !normalizedPos.startsWith('before:') && !normalizedPos.startsWith('after:')) {
+          return { valid: false, error: `Action type "move_line_item" position must be "start", "end", "before:ProductName", or "after:ProductName" — got "${act.position}"` };
+        }
+      }
       break;
 
     case 'set_quantity':
@@ -483,7 +489,7 @@ function executeAction(
       );
 
       if (toMove.length === 0) {
-        return { modified: false, lineItems };
+        return { modified: false, lineItems, warning: `Product "${action.productNamePattern}" not found on quote — skipping move_line_item` };
       }
 
       const before = snapshot(toMove);
@@ -499,7 +505,7 @@ function executeAction(
       }));
 
       let updated: EngineLineItem[];
-      const pos = action.position;
+      const pos = action.position.toLowerCase();
 
       if (pos === 'start') {
         updated = [...movedItems, ...remaining];

@@ -53,6 +53,7 @@ const SYSTEM_PROMPT = [
   '- CRITICAL: Do NOT add line items that the feedback does not explicitly ask for. Only add items when the user clearly requests a specific addition.',
   '- When the feedback references the customer request (e.g., "if the request mentions X, add Y"), check the ORIGINAL CUSTOMER REQUEST section to evaluate the condition.',
   '- When adding new items, match against the provided catalog by name. Use catalog pricing for matched items.',
+  '- When a catalog product has [matches: ...] keywords, use those to determine the best match. If the customer request or feedback text contains one of the keywords, prefer that product over similar alternatives.',
   '- Set productName to the EXACT catalog product name for matched items.',
   '- If a new item cannot be matched to the catalog, include it with a descriptive unmatchedReason.',
   '- Assign confidence scores (0-100) for each item.',
@@ -184,7 +185,19 @@ export class RevisionEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of input.catalog) {
-        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        let line = `- ${p.name} — $${p.unitPrice}`;
+        if (p.description) line += ' — ' + p.description;
+        if (p.keywords) {
+          const sanitized = p.keywords
+            .replace(/[\r\n]/g, ' ')
+            .replace(/[\[\]{}()]/g, '')
+            .replace(/[\x00-\x1f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 100);
+          if (sanitized) line += ` [matches: ${sanitized}]`;
+        }
+        parts.push(line);
       }
     }
 

@@ -49,6 +49,7 @@ const SYSTEM_PROMPT = [
   '- CRITICAL: Do NOT include line items for work the customer did not ask about. Every line item must be directly traceable to something in the customer request text.',
   '- Only match to products that exist in the provided catalog — never invent new products.',
   '- If the catalog contains items unrelated to the customer request, ignore them.',
+  '- When a catalog product has [matches: ...] keywords, use those to determine the best match. If the customer request text contains one of the keywords, prefer that product over similar alternatives.',
   '- Assign a confidence score (0-100) for each match.',
   '- If a requested item cannot be confidently matched (score < 70), include it with the best guess and a reason.',
   '- Estimate quantities from the customer text when possible; default to 1.',
@@ -262,7 +263,20 @@ export class QuoteEngine {
       parts.push('(empty catalog)');
     } else {
       for (const p of catalog) {
-        parts.push(`- ${p.name} — $${p.unitPrice}${p.description ? ' — ' + p.description : ''}`);
+        let line = `- ${p.name} — $${p.unitPrice}`;
+        if (p.description) line += ' — ' + p.description;
+        if (p.keywords) {
+          // Sanitize: strip control chars, brackets, clamp length
+          const sanitized = p.keywords
+            .replace(/[\r\n]/g, ' ')
+            .replace(/[\[\]{}()]/g, '')
+            .replace(/[\x00-\x1f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 100);
+          if (sanitized) line += ` [matches: ${sanitized}]`;
+        }
+        parts.push(line);
       }
     }
 

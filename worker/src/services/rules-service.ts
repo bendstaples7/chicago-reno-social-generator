@@ -161,6 +161,8 @@ export class RulesService {
     // Auto-generate structured condition/action if not provided and API key is available
     let conditionJson = data.conditionJson;
     let actionJson = data.actionJson;
+    let additionalRules: Array<{ name: string; condition: RuleCondition; actions: RuleAction[] }> = [];
+
     if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
       const generated = await this.generateStructuredRule(
         data.description,
@@ -168,14 +170,20 @@ export class RulesService {
         data.apiKey,
         data.apiUrl,
       );
-      if (generated) {
-        conditionJson = generated.condition;
-        actionJson = generated.actions;
+      if (generated && generated.length > 0) {
+        // First rule becomes the primary rule being created
+        conditionJson = generated[0].condition;
+        actionJson = generated[0].actions;
+        // Use AI-generated name if the user didn't provide one or it matches the description
+        if (generated[0].name && data.name === data.description.slice(0, 60)) {
+          data.name = generated[0].name;
+        }
+        // Additional rules will be created after the primary
+        additionalRules = generated.slice(1);
       }
     }
 
     if (!conditionJson && !actionJson && data.apiKey && data.catalogNames && data.catalogNames.length > 0) {
-      // Generation was attempted but failed — don't save an inert rule
       throw new PlatformError({
         severity: 'warning',
         component: 'RulesService',
@@ -186,7 +194,6 @@ export class RulesService {
       });
     }
 
-    // Never persist rules without structured data — they would be invisible to the engine
     if (!conditionJson || !actionJson) {
       throw new PlatformError({
         severity: 'warning',
@@ -235,6 +242,34 @@ export class RulesService {
       // Update catalog sort orders for any add_line_item actions with placeAfter
       if (actionJson) {
         await this.updateCatalogSortOrders(actionJson);
+      }
+
+      // Create additional rules if the AI decomposed the description into multiple rules
+      for (const extra of additionalRules) {
+        try {
+          const extraGroupId = await this.resolveGroupId(
+            `${extra.name} ${data.description}`,
+          );
+          const extraId = crypto.randomUUID();
+          await this.db.prepare(
+            `INSERT INTO rules (id, name, description, rule_group_id, priority_order, is_active, condition_json, action_json, trigger_mode)
+             SELECT ?, ?, ?, ?, COALESCE(MAX(priority_order), -1) + 1, ?, ?, ?, ?
+             FROM rules WHERE rule_group_id = ?`
+          ).bind(
+            extraId,
+            extra.name,
+            data.description.trim(),
+            extraGroupId,
+            (data.isActive ?? true) ? 1 : 0,
+            JSON.stringify(extra.condition),
+            JSON.stringify(extra.actions),
+            triggerMode,
+            extraGroupId,
+          ).run();
+          await this.updateCatalogSortOrders(extra.actions);
+        } catch (extraErr) {
+          console.warn(`Failed to create additional rule "${extra.name}": ${extraErr instanceof Error ? extraErr.message : extraErr}`);
+        }
       }
 
       return rule;
@@ -972,7 +1007,7 @@ export class RulesService {
     catalogNames: string[],
     apiKey: string,
     apiUrl?: string,
-  ): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> {
+  ): Promise<Array<{ name: string; condition: RuleCondition; actions: RuleAction[] }> | null> {
     if (!apiKey) return null;
 
     const url = apiUrl || 'https://api.openai.com/v1/chat/completions';
@@ -1007,18 +1042,20 @@ export class RulesService {
       '- For exact product matches, use line_item_exists. For partial/fuzzy matches, use line_item_name_contains.',
       '- Use extract_request_context when the rule says to include specifics from the customer request (sizes, locations, quantities). The extractionPrompt is plain English.',
       '- For add_line_item, always set placeAfter to the catalog name of the item the new item should follow (e.g., materials after their parent labor item).',
+      '- IMPORTANT: If the description requires MULTIPLE distinct behaviors (e.g., adding an item AND updating its description, or adding an item AND positioning it), create SEPARATE rules for each behavior.',
+      '- Each rule in the "rules" array should have a "name" (short title), "condition", and "actions".',
       '- If the rule truly cannot be expressed, set "unsupported" to true.',
       '',
-      'EXAMPLE INPUT: "When mounting a TV, the description should include the TV size from the request"',
-      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_name_contains","substring":"TV Mount"},"actions":[{"type":"extract_request_context","productNamePattern":"Carpentry: TV Mount","extractionPrompt":"Extract the TV size (e.g. 65 inch) and the mounting location (e.g. living room, bedroom) from the customer request"}]}',
+      'EXAMPLE INPUT: "When kitchen cabinets are being replaced, add a demo line item that references removing the existing cabinets"',
+      'EXAMPLE OUTPUT: {"unsupported":false,"rules":[{"name":"Add Demo for Cabinet Replacement","condition":{"type":"line_item_exists","productNamePattern":"Materials: Cabinets"},"actions":[{"type":"add_line_item","productName":"Demo","quantity":1,"unitPrice":100,"placeAfter":"Materials: Cabinets"}]},{"name":"Describe Demo for Cabinet Removal","condition":{"type":"line_item_name_contains","substring":"Demo"},"actions":[{"type":"extract_request_context","productNamePattern":"Demo","extractionPrompt":"Extract what is being demoed or removed (e.g. existing kitchen cabinets, old flooring)"}]}]}',
       '',
       'EXAMPLE INPUT: "When interior painting is on the quote, add paint supplies"',
-      'EXAMPLE OUTPUT: {"unsupported":false,"condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100,"placeAfter":"Interior Painting"}]}',
+      'EXAMPLE OUTPUT: {"unsupported":false,"rules":[{"name":"Add Paint Supplies with Painting","condition":{"type":"line_item_exists","productNamePattern":"Interior Painting"},"actions":[{"type":"add_line_item","productName":"Materials: Paint Supplies","quantity":1,"unitPrice":100,"placeAfter":"Interior Painting"}]}]}',
       '',
-      'Return ONLY a JSON object with "unsupported" (boolean), "condition" (object), and "actions" (array). No markdown, no explanation.',
+      'Return ONLY a JSON object with "unsupported" (boolean) and "rules" (array of {name, condition, actions}). No markdown, no explanation.',
     ].join('\n');
 
-    const makeRequest = async (attempt: number): Promise<{ condition: RuleCondition; actions: RuleAction[] } | null> => {
+    const makeRequest = async (attempt: number): Promise<Array<{ name: string; condition: RuleCondition; actions: RuleAction[] }> | null> => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20_000);
 
@@ -1036,7 +1073,7 @@ export class RulesService {
               { role: 'user', content: description },
             ],
             temperature: attempt === 0 ? 0.1 : 0.3,
-            max_tokens: 500,
+            max_tokens: 1000,
             response_format: { type: 'json_object' },
           }),
           signal: controller.signal,
@@ -1060,20 +1097,35 @@ export class RulesService {
 
         if (parsed.unsupported) return null;
 
-        // Validate the generated condition and actions
-        const condResult = validateCondition(parsed.condition);
-        if (!condResult.valid) {
-          console.warn(`AI-generated condition invalid (attempt ${attempt + 1}): ${condResult.error}`);
-          return null;
+        // Handle both single-rule (legacy) and multi-rule response formats
+        const ruleEntries: Array<{ name?: string; condition: unknown; actions: unknown }> = parsed.rules
+          ? parsed.rules
+          : [{ condition: parsed.condition, actions: parsed.actions }];
+
+        const validRules: Array<{ name: string; condition: RuleCondition; actions: RuleAction[] }> = [];
+
+        for (let i = 0; i < ruleEntries.length; i++) {
+          const entry = ruleEntries[i];
+          const condResult = validateCondition(entry.condition);
+          if (!condResult.valid) {
+            console.warn(`AI-generated rule[${i}] condition invalid (attempt ${attempt + 1}): ${condResult.error}`);
+            continue;
+          }
+
+          const actResult = validateActions(entry.actions);
+          if (!actResult.valid) {
+            console.warn(`AI-generated rule[${i}] actions invalid (attempt ${attempt + 1}): ${actResult.errors?.join('; ')}`);
+            continue;
+          }
+
+          validRules.push({
+            name: entry.name ?? `Rule ${i + 1}`,
+            condition: entry.condition as RuleCondition,
+            actions: entry.actions as RuleAction[],
+          });
         }
 
-        const actResult = validateActions(parsed.actions);
-        if (!actResult.valid) {
-          console.warn(`AI-generated actions invalid (attempt ${attempt + 1}): ${actResult.errors?.join('; ')}`);
-          return null;
-        }
-
-        return { condition: parsed.condition as RuleCondition, actions: parsed.actions as RuleAction[] };
+        return validRules.length > 0 ? validRules : null;
       } catch (err) {
         clearTimeout(timeout);
         console.warn(`Structured rule generation error (attempt ${attempt + 1}): ${err instanceof Error ? err.message : err}`);
@@ -1081,11 +1133,9 @@ export class RulesService {
       }
     };
 
-    // First attempt
     const result = await makeRequest(0);
     if (result) return result;
 
-    // Retry once with slightly higher temperature
     console.warn('Retrying structured rule generation...');
     return makeRequest(1);
   }

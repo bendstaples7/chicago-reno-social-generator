@@ -43,8 +43,8 @@ export default function LoginPage() {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#0a1e24' }}>
       <form onSubmit={handleSubmit} style={{ background: '#fff', padding: '2rem', borderRadius: 8, width: 380 }}>
-        <h1 style={{ margin: '0 0 0.25rem', fontSize: '1.4rem' }}>Chicago Reno</h1>
-        <p style={{ margin: '0 0 1.5rem', color: '#666', fontSize: '0.9rem' }}>Sign in to the Social Media Platform</p>
+        <h1 style={{ margin: '0 0 0.25rem', fontSize: '1.4rem' }}>Cotiza</h1>
+        <p style={{ margin: '0 0 1.5rem', color: '#666', fontSize: '0.9rem' }}>Sign in to Cotiza</p>
 
         {expired && !displayError && (
           <div role="alert" style={{ background: '#fff3e0', color: '#e65100', padding: '0.6rem 0.75rem', borderRadius: 4, marginBottom: '1rem', fontSize: '0.85rem' }}>

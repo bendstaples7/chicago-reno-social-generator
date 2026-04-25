@@ -391,7 +391,7 @@ export default function Layout() {
       {/* Sidebar + content area */}
       <div style={{ display: 'flex', flex: 1 }}>
         <nav style={{ width: 220, background: '#0a1e24', color: '#fff', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '2rem' }}>Chicago Reno</div>
+          <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '2rem' }}>Cotiza</div>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, flex: 1 }}>
             {navItems.map((item) => (
               <li key={item.to} style={{ marginBottom: '0.5rem' }}>

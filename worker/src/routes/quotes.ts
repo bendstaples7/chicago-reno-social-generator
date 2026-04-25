@@ -17,6 +17,16 @@ import {
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
+import { RulesSyncService } from '../services/rules-sync.js';
+
+function createRulesSync(env: Bindings): RulesSyncService {
+  const isLocal = !env.FRONTEND_URL || env.FRONTEND_URL === '' || env.FRONTEND_URL.includes('localhost');
+  return new RulesSyncService({
+    accountId: env.CLOUDFLARE_ACCOUNT_ID || '',
+    apiToken: env.CLOUDFLARE_API_TOKEN || '',
+    isLocal,
+  });
+}
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
@@ -92,6 +102,13 @@ app.post('/rules', async (c) => {
     apiKey: c.env.AI_TEXT_API_KEY,
     apiUrl: c.env.AI_TEXT_API_URL,
   });
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    sync.pushRule(rule).catch(() => {});
+  }
+
   return c.json(rule, 201);
 });
 
@@ -119,6 +136,13 @@ app.put('/rules/:id', async (c) => {
     actionJson,
     triggerMode,
   });
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    sync.pushRule(rule).catch(() => {});
+  }
+
   return c.json(rule);
 });
 
@@ -129,6 +153,13 @@ app.put('/rules/:id', async (c) => {
 app.put('/rules/:id/deactivate', async (c) => {
   const rulesService = new RulesService(c.env.DB);
   const rule = await rulesService.deactivateRule(c.req.param('id'));
+
+  // Fire-and-forget: sync to remote D1
+  const sync = createRulesSync(c.env);
+  if (sync.canSync()) {
+    sync.pushRule(rule).catch(() => {});
+  }
+
   return c.json(rule);
 });
 
@@ -675,6 +706,40 @@ app.patch('/catalog/:id', async (c) => {
   }
 
   return c.json({ success: true });
+});
+
+/**
+ * PUT /catalog/reorder
+ * Update the sort order of catalog entries based on the provided ordered list of IDs.
+ */
+app.put('/catalog/reorder', async (c) => {
+  const db = c.env.DB;
+  const userId = c.get('user').id;
+  const { orderedIds } = await c.req.json() as { orderedIds: string[] };
+
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'reorderCatalog',
+      description: 'Please provide an ordered list of catalog entry IDs.',
+      recommendedActions: ['Provide orderedIds array'],
+    });
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  for (let i = 0; i < orderedIds.length; i++) {
+    statements.push(
+      db.prepare(
+        'UPDATE manual_catalog_entries SET sort_order = ? WHERE id = ? AND user_id = ?'
+      ).bind(i, orderedIds[i], userId),
+    );
+  }
+
+  await db.batch(statements);
+
+  const catalog = await fetchManualCatalog(db, userId);
+  return c.json({ catalog });
 });
 
 /**

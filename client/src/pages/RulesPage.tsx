@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Rule, RuleGroupWithRules } from 'shared';
+import type { Rule, RuleGroupWithRules, ProductCatalogEntry } from 'shared';
 import {
   fetchRules,
   createRule,
@@ -10,7 +10,15 @@ import {
   summarizeRuleTitle,
   regenerateRuleTitles,
   autoCategorizeRules,
+  fetchCatalog,
+  reorderCatalog,
 } from '../api';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type TabId = 'rules' | 'ordering';
 
 interface RuleFormData {
   name: string;
@@ -21,33 +29,86 @@ interface RuleFormData {
 
 const emptyForm: RuleFormData = { name: '', description: '', ruleGroupId: '', isActive: true };
 
+// ---------------------------------------------------------------------------
+// Shared styles
+// ---------------------------------------------------------------------------
+
+const TAB_STYLE_BASE: React.CSSProperties = {
+  padding: '0.6rem 1.25rem',
+  border: 'none',
+  borderBottom: '2px solid transparent',
+  background: 'none',
+  cursor: 'pointer',
+  fontWeight: 600,
+  fontSize: '0.95rem',
+  color: '#666',
+};
+
+const TAB_STYLE_ACTIVE: React.CSSProperties = {
+  ...TAB_STYLE_BASE,
+  color: '#00a89d',
+  borderBottomColor: '#00a89d',
+};
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export default function RulesPage() {
+  const [activeTab, setActiveTab] = useState<TabId>('rules');
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      {/* Tab bar */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #e0e0e0', marginBottom: '1.25rem' }}>
+        <button
+          style={activeTab === 'rules' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
+          onClick={() => setActiveTab('rules')}
+          aria-selected={activeTab === 'rules'}
+          role="tab"
+        >
+          Business Rules
+        </button>
+        <button
+          style={activeTab === 'ordering' ? TAB_STYLE_ACTIVE : TAB_STYLE_BASE}
+          onClick={() => setActiveTab('ordering')}
+          aria-selected={activeTab === 'ordering'}
+          role="tab"
+        >
+          Product Ordering
+        </button>
+      </div>
+
+      {activeTab === 'rules' && <BusinessRulesTab />}
+      {activeTab === 'ordering' && <ProductOrderingTab />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Business Rules Tab (existing functionality, extracted)
+// ---------------------------------------------------------------------------
+
+function BusinessRulesTab() {
   const [groups, setGroups] = useState<RuleGroupWithRules[]>([]);
   const [loading, setLoading] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Search
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Which rule is being edited (null = none, 'new' = creating)
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [formData, setFormData] = useState<RuleFormData>(emptyForm);
   const [summarizingTitle, setSummarizingTitle] = useState(false);
 
-  // Group creation
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [groupDescription, setGroupDescription] = useState('');
   const [groupError, setGroupError] = useState<string | null>(null);
   const [savingGroup, setSavingGroup] = useState(false);
 
-  // Regenerate titles
   const [regenerating, setRegenerating] = useState(false);
   const [regenerateResult, setRegenerateResult] = useState<string | null>(null);
-
-  // Auto-categorize
   const [categorizing, setCategorizing] = useState(false);
   const [categorizeResult, setCategorizeResult] = useState<string | null>(null);
 
@@ -68,7 +129,6 @@ export default function RulesPage() {
 
   const defaultGroupId = groups.find((g) => g.name === 'General')?.id || groups[0]?.id || '';
 
-  // Filtered groups based on search query
   const filteredGroups = useMemo(() => {
     if (!searchQuery.trim()) return groups;
     const q = searchQuery.toLowerCase();
@@ -124,7 +184,7 @@ export default function RulesPage() {
       const title = await summarizeRuleTitle(formData.description);
       setFormData((prev) => ({ ...prev, name: title }));
     } catch {
-      // Silently fail — user can still type manually
+      // Silently fail
     } finally {
       setSummarizingTitle(false);
     }
@@ -134,13 +194,11 @@ export default function RulesPage() {
     setSaving(true);
     setFormError(null);
     try {
-      // Auto-summarize title if name is empty but description exists
       let nameToUse = formData.name;
       if (!nameToUse.trim() && formData.description.trim()) {
         try {
           nameToUse = await summarizeRuleTitle(formData.description);
         } catch {
-          // Fall back to first part of description
           nameToUse = formData.description.slice(0, 60);
         }
       }
@@ -339,7 +397,7 @@ export default function RulesPage() {
   );
 
   return (
-    <div style={{ maxWidth: 800 }}>
+    <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1 style={{ margin: 0 }}>Business Rules</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -633,6 +691,264 @@ export default function RulesPage() {
           </button>
         </div>
       )}
-    </div>
+    </>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Product Ordering Tab
+// ---------------------------------------------------------------------------
+
+function ProductOrderingTab() {
+  const [catalog, setCatalog] = useState<ProductCatalogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await fetchCatalog();
+      setCatalog(data);
+      setDirty(false);
+    } catch {
+      setLoadError('Failed to load product catalog. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const moveItem = (index: number, direction: 'up' | 'down') => {
+    const target = direction === 'up' ? index - 1 : index + 1;
+    if (target < 0 || target >= catalog.length) return;
+    const updated = [...catalog];
+    [updated[index], updated[target]] = [updated[target], updated[index]];
+    setCatalog(updated);
+    setDirty(true);
+    setSaveMessage(null);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveMessage(null);
+    try {
+      const orderedIds = catalog.map((c) => c.id);
+      const updated = await reorderCatalog(orderedIds);
+      setCatalog(updated);
+      setDirty(false);
+      setSaveMessage('Product ordering saved.');
+    } catch {
+      setSaveMessage('Failed to save ordering. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = () => {
+    load();
+    setSaveMessage(null);
+  };
+
+  if (loading) return <p>Loading product catalog…</p>;
+
+  if (loadError) {
+    return (
+      <div
+        role="alert"
+        style={{
+          background: '#fff3e0',
+          border: '1px solid #ffb74d',
+          borderRadius: 8,
+          padding: '1.25rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+        }}
+      >
+        <span style={{ color: '#e65100', fontWeight: 500 }}>{loadError}</span>
+        <button
+          onClick={load}
+          style={{
+            background: '#e65100',
+            color: '#fff',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontWeight: 600,
+            flexShrink: 0,
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (catalog.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', marginTop: '2rem', color: '#999' }}>
+        <p>No products in the catalog yet.</p>
+        <p style={{ fontSize: '0.85rem' }}>Add products via the Catalog & Templates page first.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+        <div>
+          <h1 style={{ margin: '0 0 0.25rem' }}>Product Ordering</h1>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: '#666' }}>
+            Set the default order products appear in new quotes. Items at the top of this list appear first on generated quotes.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+          {dirty && (
+            <button
+              onClick={handleReset}
+              disabled={saving}
+              style={{
+                background: '#fff',
+                color: '#666',
+                border: '1px solid #ccc',
+                padding: '0.5rem 1rem',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >
+              Reset
+            </button>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            style={{
+              background: dirty ? '#00a89d' : '#ccc',
+              color: '#fff',
+              border: 'none',
+              padding: '0.5rem 1rem',
+              borderRadius: 6,
+              cursor: dirty && !saving ? 'pointer' : 'not-allowed',
+              fontWeight: 600,
+            }}
+          >
+            {saving ? 'Saving…' : 'Save Order'}
+          </button>
+        </div>
+      </div>
+
+      {saveMessage && (
+        <div
+          style={{
+            padding: '0.5rem 0.75rem',
+            background: saveMessage.includes('Failed') ? '#fdecea' : '#e8f5e9',
+            color: saveMessage.includes('Failed') ? '#b71c1c' : '#2e7d32',
+            borderRadius: 4,
+            fontSize: '0.85rem',
+            marginBottom: '1rem',
+          }}
+        >
+          {saveMessage}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+        {catalog.map((entry, index) => (
+          <div
+            key={entry.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              padding: '0.65rem 0.75rem',
+              background: '#fff',
+              border: '1px solid #e0e0e0',
+              borderRadius: 6,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+            }}
+          >
+            {/* Position number */}
+            <span
+              style={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: '#f0f0f0',
+                borderRadius: '50%',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                color: '#666',
+                flexShrink: 0,
+              }}
+            >
+              {index + 1}
+            </span>
+
+            {/* Product info */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{entry.name}</div>
+              {entry.description && (
+                <div style={{ fontSize: '0.8rem', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {entry.description}
+                </div>
+              )}
+            </div>
+
+            {/* Price */}
+            <span style={{ fontSize: '0.85rem', color: '#555', flexShrink: 0 }}>
+              ${entry.unitPrice.toFixed(2)}
+            </span>
+
+            {/* Move buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+              <button
+                onClick={() => moveItem(index, 'up')}
+                disabled={index === 0}
+                aria-label={`Move ${entry.name} up`}
+                style={{
+                  background: 'none',
+                  border: '1px solid #ccc',
+                  borderRadius: 3,
+                  padding: '1px 6px',
+                  cursor: index === 0 ? 'not-allowed' : 'pointer',
+                  opacity: index === 0 ? 0.3 : 1,
+                  fontSize: '0.75rem',
+                  lineHeight: 1,
+                }}
+              >
+                ▲
+              </button>
+              <button
+                onClick={() => moveItem(index, 'down')}
+                disabled={index === catalog.length - 1}
+                aria-label={`Move ${entry.name} down`}
+                style={{
+                  background: 'none',
+                  border: '1px solid #ccc',
+                  borderRadius: 3,
+                  padding: '1px 6px',
+                  cursor: index === catalog.length - 1 ? 'not-allowed' : 'pointer',
+                  opacity: index === catalog.length - 1 ? 0.3 : 1,
+                  fontSize: '0.75rem',
+                  lineHeight: 1,
+                }}
+              >
+                ▼
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

@@ -528,6 +528,18 @@ export async function updateCatalogEntry(
   await handleResponseWithToast(res);
 }
 
+export async function reorderCatalog(
+  orderedIds: string[],
+): Promise<ProductCatalogEntry[]> {
+  const res = await fetch(API_BASE + '/api/quotes/catalog/reorder', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ orderedIds }),
+  });
+  const data = await handleResponseWithToast<{ catalog: ProductCatalogEntry[] }>(res);
+  return data.catalog;
+}
+
 export async function fetchTemplates(): Promise<QuoteTemplate[]> {
   const res = await fetch(API_BASE + '/api/quotes/templates', {
     headers: { ...authHeaders() },

@@ -5,24 +5,19 @@
 import type { ProductCatalogEntry } from 'shared';
 
 /**
- * Merge duplicate line items that share the same product name (case-insensitive)
- * AND the same unit price.
+ * Merge duplicate line items that share the same product name (case-insensitive).
  *
- * When duplicates are found:
- * - Quantities are summed
- * - The higher confidence score is kept
- * - Rule IDs are merged (union, deduplicated)
- * - Original text is concatenated with "; "
- * - All other fields come from the first occurrence
+ * When duplicates are found the rule-engine version is preferred (the item
+ * with a non-empty `ruleIdsApplied` array wins). If neither or both have
+ * rule IDs the first occurrence wins. Quantities are summed, the higher
+ * confidence score is kept, and rule IDs are merged.
  *
  * Items with blank/empty productName are always treated as distinct and never
  * merged, since they represent unmatched or incomplete entries.
  *
- * Items with the same product name but different unitPrice are kept as separate
- * entries to avoid corrupting totals (e.g., rule-overridden pricing).
- *
  * This runs as a post-validation step to catch cases where the AI
- * returns the same product multiple times despite prompt instructions.
+ * returns the same product multiple times despite prompt instructions,
+ * or where both the AI and the rules engine add the same product.
  */
 export function deduplicateLineItems<
   T extends {
@@ -50,8 +45,9 @@ export function deduplicateLineItems<
       continue;
     }
 
-    // Include unitPrice in the merge key so items with different prices stay separate
-    const key = `${nameTrimmed}::${item.unitPrice}`;
+    // Key by product name only — items with different prices for the same
+    // product are duplicates (the rules engine price is authoritative).
+    const key = nameTrimmed;
     const existing = seen.get(key);
 
     if (!existing) {
@@ -60,23 +56,32 @@ export function deduplicateLineItems<
       continue;
     }
 
-    // Merge into the first occurrence
-    const merged = { ...existing };
+    // Determine which item is authoritative: prefer the one with rule IDs
+    const existingHasRules = (existing.ruleIdsApplied ?? []).length > 0;
+    const newHasRules = (item.ruleIdsApplied ?? []).length > 0;
+
+    // If the new item has rules and the existing doesn't, the new item is
+    // authoritative — swap it in as the base, keeping the existing's
+    // additive fields (quantity, original text).
+    const base = (!existingHasRules && newHasRules) ? item : existing;
+    const other = (base === item) ? existing : item;
+
+    const merged = { ...base };
     merged.quantity = existing.quantity + item.quantity;
     merged.confidenceScore = Math.max(existing.confidenceScore, item.confidenceScore);
 
     // Merge original text
-    if (item.originalText && item.originalText !== existing.originalText) {
-      merged.originalText = existing.originalText
-        ? `${existing.originalText}; ${item.originalText}`
-        : item.originalText;
+    if (other.originalText && other.originalText !== base.originalText) {
+      merged.originalText = base.originalText
+        ? `${base.originalText}; ${other.originalText}`
+        : other.originalText;
     }
 
     // Merge rule IDs (union, no duplicates)
-    const existingRules = existing.ruleIdsApplied ?? [];
-    const newRules = item.ruleIdsApplied ?? [];
-    if (newRules.length > 0) {
-      const ruleSet = new Set([...existingRules, ...newRules]);
+    const baseRules = base.ruleIdsApplied ?? [];
+    const otherRules = other.ruleIdsApplied ?? [];
+    if (baseRules.length > 0 || otherRules.length > 0) {
+      const ruleSet = new Set([...baseRules, ...otherRules]);
       merged.ruleIdsApplied = [...ruleSet];
     }
 

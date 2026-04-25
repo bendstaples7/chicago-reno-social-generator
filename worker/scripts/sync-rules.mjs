@@ -35,7 +35,10 @@ function runWithFile(flag, sql, extraArgs = '') {
 
 function query(flag, sql) {
   try {
-    const output = runWithFile(flag, sql, ' --json');
+    // Use --command (not --file) for read queries. With --remote --json,
+    // --file leaks progress indicators into stdout and returns upload
+    // metadata instead of row data. --command returns clean JSON.
+    const output = run(`npx wrangler d1 execute DB ${flag} --json --command "${sql.replace(/"/g, '\\"')}"`);
     const parsed = JSON.parse(output);
     return parsed[0]?.results || [];
   } catch (err) {

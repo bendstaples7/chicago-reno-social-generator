@@ -381,9 +381,16 @@ export class RevisionEngine {
     // Deduplicate BEFORE partitioning so duplicates split across the
     // confidence threshold (one resolved, one unresolved) are caught.
     const dedupedItems = deduplicateLineItems(allItems);
-    const sortedItems = sortLineItemsByCatalog(dedupedItems, catalog);
-    const lineItems = sortedItems.filter((i) => i.resolved);
-    const unresolvedItems = sortedItems.filter((i) => !i.resolved);
+
+    // Sort by catalog sort order ONLY when the rules engine did not modify
+    // the item list. When rules fire they position items intentionally
+    // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
+    const rulesModifiedItems = auditTrail && auditTrail.some(
+      (e) => e.ruleId !== '__engine__' && (e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0),
+    );
+    const finalItems = rulesModifiedItems ? dedupedItems : sortLineItemsByCatalog(dedupedItems, catalog);
+    const lineItems = finalItems.filter((i) => i.resolved);
+    const unresolvedItems = finalItems.filter((i) => !i.resolved);
 
     return {
       lineItems,

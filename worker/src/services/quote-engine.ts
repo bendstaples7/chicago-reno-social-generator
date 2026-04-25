@@ -214,8 +214,15 @@ export class QuoteEngine {
       // Deduplicate after rules engine has had a chance to add/modify items
       aiResult.lineItems = deduplicateLineItems(aiResult.lineItems);
 
-      // Sort by catalog sort order (renovation workflow sequence)
-      aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
+      // Sort by catalog sort order ONLY when the rules engine did not modify
+      // the item list. When rules fire they position items intentionally
+      // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
+      const rulesModifiedItems = auditTrail && auditTrail.some(
+        (e) => e.ruleId !== '__engine__' && (e.afterSnapshot.length > 0 || e.beforeSnapshot.length > 0),
+      );
+      if (!rulesModifiedItems) {
+        aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
+      }
 
       return this.buildDraft(input, aiResult, auditTrail);
     } catch (err) {

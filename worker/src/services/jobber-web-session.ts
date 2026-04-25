@@ -223,4 +223,65 @@ export class JobberWebSession {
       await this.db.prepare("DELETE FROM jobber_web_session WHERE id = 'default'").run();
     } catch { /* ignore */ }
   }
+
+  /**
+   * Sync cookies from remote (production) D1 to local D1 via the Cloudflare D1 HTTP API.
+   * Used during local development when the "Refresh Cookies" button is pressed.
+   * Returns true if valid cookies were found remotely and written locally.
+   */
+  async syncFromRemote(opts: {
+    accountId: string;
+    apiToken: string;
+    databaseId: string;
+  }): Promise<{ synced: boolean; error?: string }> {
+    try {
+      const url = `https://api.cloudflare.com/client/v4/accounts/${opts.accountId}/d1/database/${opts.databaseId}/query`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${opts.apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sql: "SELECT cookies, expires_at FROM jobber_web_session WHERE id = 'default'",
+        }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        return { synced: false, error: `Cloudflare API error (${resp.status}): ${text.slice(0, 200)}` };
+      }
+
+      const data = await resp.json() as {
+        result: Array<{ results: Array<{ cookies: string; expires_at: string }> }>;
+      };
+
+      const rows = data.result?.[0]?.results ?? [];
+      if (rows.length === 0) {
+        return { synced: false, error: 'No cookies found in remote D1' };
+      }
+
+      const row = rows[0];
+      const expiresAt = new Date(row.expires_at).getTime();
+      if (Date.now() > expiresAt) {
+        return { synced: false, error: 'Remote cookies are also expired' };
+      }
+
+      // Write the remote cookies to local D1
+      await this.db.prepare(
+        `INSERT INTO jobber_web_session (id, cookies, expires_at, updated_at)
+         VALUES ('default', ?, ?, datetime('now'))
+         ON CONFLICT (id) DO UPDATE SET
+           cookies = excluded.cookies,
+           expires_at = excluded.expires_at,
+           updated_at = excluded.updated_at`
+      ).bind(row.cookies, row.expires_at).run();
+
+      console.log('[JobberWebSession] Synced cookies from remote D1 to local');
+      return { synced: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      return { synced: false, error: msg };
+    }
+  }
 }

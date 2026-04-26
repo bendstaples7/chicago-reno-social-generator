@@ -722,6 +722,8 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const [dirty, setDirty] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -780,6 +782,44 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     setDirty(false);
     setSaveMessage(null);
     setSaveStatus(null);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null || index === dragIndex) return;
+    setDragOverIndex(index);
+  };
+
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    const updated = [...catalog];
+    const [moved] = updated.splice(dragIndex, 1);
+    updated.splice(index, 0, moved);
+    setCatalog(updated);
+    setDirty(true);
+    setSaveMessage(null);
+    setSaveStatus(null);
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
   };
 
   if (loading) return <p>Loading product catalog…</p>;
@@ -891,6 +931,12 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
         {catalog.map((entry, index) => (
           <div
             key={entry.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, index)}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDrop={(e) => handleDrop(e, index)}
+            onDragEnd={handleDragEnd}
+            onDragLeave={handleDragLeave}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -900,8 +946,31 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
               border: '1px solid #e0e0e0',
               borderRadius: 6,
               boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+              opacity: dragIndex === index ? 0.4 : 1,
+              borderTop: dragOverIndex === index ? '2px solid #00a89d' : '1px solid #e0e0e0',
+              transition: 'opacity 0.15s ease',
             }}
           >
+            {/* Drag handle */}
+            <span
+              aria-label={`Drag to reorder ${entry.name}`}
+              style={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'grab',
+                fontSize: '1rem',
+                color: '#999',
+                flexShrink: 0,
+                userSelect: 'none',
+                touchAction: 'none',
+              }}
+            >
+              ☰
+            </span>
+
             {/* Position number */}
             <span
               style={{

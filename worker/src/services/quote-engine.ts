@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
 import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
@@ -216,12 +216,10 @@ export class QuoteEngine {
       // Deduplicate after rules engine has had a chance to add/modify items
       aiResult.lineItems = deduplicateLineItems(aiResult.lineItems);
 
-      // Sort by catalog sort order ONLY when the rules engine did not modify
-      // the item list. When rules fire they position items intentionally
-      // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
-      if (!rulesModifiedLineItems(auditTrail)) {
-        aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
-      }
+      // Always sort by catalog sort order. Rule positioning intent (placeAfter/
+      // placeBefore) is already reflected in the catalog sort_order values —
+      // they are updated when rules are created via RulesService.
+      aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
 
       return this.buildDraft(input, aiResult, auditTrail);
     } catch (err) {

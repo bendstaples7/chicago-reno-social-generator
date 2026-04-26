@@ -722,6 +722,9 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const [dirty, setDirty] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -780,6 +783,70 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     setDirty(false);
     setSaveMessage(null);
     setSaveStatus(null);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null || index === dragIndex) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const position = e.clientY < midY ? 'before' : 'after';
+    setDragOverIndex(index);
+    setDropPosition(position);
+  };
+
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      setDropPosition(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const after = e.clientY >= midY;
+
+    const updated = [...catalog];
+    const [moved] = updated.splice(dragIndex, 1);
+    // Calculate insert position: after removing source, indices above dragIndex stay,
+    // indices at/below dragIndex shift down by 1
+    let insertAt: number;
+    if (after) {
+      insertAt = dragIndex < index ? index : index + 1;
+    } else {
+      insertAt = dragIndex < index ? index - 1 : index;
+    }
+    // Clamp to valid range
+    insertAt = Math.max(0, Math.min(updated.length, insertAt));
+    updated.splice(insertAt, 0, moved);
+    setCatalog(updated);
+    setDirty(true);
+    setSaveMessage(null);
+    setSaveStatus(null);
+    setDragIndex(null);
+    setDragOverIndex(null);
+    setDropPosition(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+    setDropPosition(null);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only clear if leaving the row entirely (not entering a child element)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOverIndex(null);
+      setDropPosition(null);
+    }
   };
 
   if (loading) return <p>Loading product catalog…</p>;
@@ -891,6 +958,10 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
         {catalog.map((entry, index) => (
           <div
             key={entry.id}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDrop={(e) => handleDrop(e, index)}
+            onDragEnd={handleDragEnd}
+            onDragLeave={handleDragLeave}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -899,9 +970,37 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
               background: '#fff',
               border: '1px solid #e0e0e0',
               borderRadius: 6,
-              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+              opacity: dragIndex === index ? 0.4 : 1,
+              boxShadow: dragOverIndex === index
+                ? (dropPosition === 'after'
+                  ? 'inset 0 -2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)'
+                  : 'inset 0 2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)')
+                : '0 1px 2px rgba(0,0,0,0.04)',
+              transition: 'opacity 0.15s ease',
             }}
           >
+            {/* Drag handle */}
+            <span
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
+              aria-label={`Drag to reorder ${entry.name}`}
+              style={{
+                width: 28,
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'grab',
+                fontSize: '1rem',
+                color: '#999',
+                flexShrink: 0,
+                userSelect: 'none',
+                touchAction: 'none',
+              }}
+            >
+              ☰
+            </span>
+
             {/* Position number */}
             <span
               style={{

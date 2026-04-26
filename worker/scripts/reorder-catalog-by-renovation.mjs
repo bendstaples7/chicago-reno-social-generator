@@ -523,7 +523,9 @@ for (const phase of PHASES) {
   const available = rangeEnd - rangeStart + 1;
 
   if (items.length > available) {
-    console.log(`⚠️  Phase "${phase.name}" has ${items.length} items but only ${available} slots (${rangeStart}-${rangeEnd}). Items will overflow.`);
+    console.error(`❌ Phase "${phase.name}" has ${items.length} items but only ${available} slots (${rangeStart}-${rangeEnd}). Aborting to prevent duplicate sort_order values across phases.`);
+    console.error('   Fix: increase the range for this phase or recategorize some products.');
+    process.exit(1);
   }
 
   for (let i = 0; i < items.length; i++) {

@@ -948,7 +948,6 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
               background: '#fff',
               border: '1px solid #e0e0e0',
               borderRadius: 6,
-              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
               opacity: dragIndex === index ? 0.4 : 1,
               boxShadow: dragOverIndex === index
                 ? 'inset 0 2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)'

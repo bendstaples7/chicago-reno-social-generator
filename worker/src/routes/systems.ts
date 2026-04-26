@@ -37,6 +37,16 @@ app.get('/status', async (c) => {
       });
       await jobber.graphqlRequest('{ account { name } }', {});
       jobberAvailable = jobber.isAvailable();
+
+      if (jobberAvailable) {
+        // Background sync: register with waitUntil so the CF Workers runtime
+        // keeps the isolate alive until the sync completes (or fails).
+        c.executionCtx.waitUntil(
+          jobber.syncProductCatalog(db, userId).catch(() => {
+            // Sync failure is non-blocking — syncProductCatalog already logs errors internally
+          })
+        );
+      }
     }
   } catch {
     jobberAvailable = false;

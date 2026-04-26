@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } from './line-item-utils.js';
+import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
 import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
@@ -396,10 +396,9 @@ export class RevisionEngine {
     // confidence threshold (one resolved, one unresolved) are caught.
     const dedupedItems = deduplicateLineItems(allItems);
 
-    // Sort by catalog sort order ONLY when the rules engine did not modify
-    // the item list. When rules fire they position items intentionally
-    // (e.g. via placeAfter) and a catalog-order re-sort would undo that.
-    const finalItems = rulesModifiedLineItems(auditTrail) ? dedupedItems : sortLineItemsByCatalog(dedupedItems, catalog);
+    // Always sort by catalog sort order. Rule positioning intent (placeAfter/
+    // placeBefore) is already reflected in the catalog sort_order values.
+    const finalItems = sortLineItemsByCatalog(dedupedItems, catalog);
     const lineItems = finalItems.filter((i) => i.resolved);
     const unresolvedItems = finalItems.filter((i) => !i.resolved);
 

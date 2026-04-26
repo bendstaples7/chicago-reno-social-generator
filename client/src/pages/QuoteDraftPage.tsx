@@ -210,7 +210,7 @@ export default function QuoteDraftPage() {
           : item,
       );
     }
-    const shouldUpdateCatalog = updateCatalogChecked && editingItem?.productCatalogEntryId && draft.catalogSource === 'manual' && (field === 'productName' || field === 'description');
+    const shouldUpdateCatalog = updateCatalogChecked && editingItem?.productCatalogEntryId && (field === 'productName' || field === 'description');
     setEditingCell(null);
     setUpdateCatalogChecked(false);
     setSaving(true);
@@ -510,7 +510,7 @@ export default function QuoteDraftPage() {
                                 autoFocus
                                 aria-label={`Edit product name for ${item.productName}`}
                               />
-                              {item.productCatalogEntryId && draft.catalogSource === 'manual' && (
+                              {item.productCatalogEntryId && (
                                 <label style={updateCatalogLabelStyle}>
                                   <input
                                     type="checkbox"
@@ -549,7 +549,7 @@ export default function QuoteDraftPage() {
                                 autoFocus
                                 aria-label={`Edit description for ${item.productName}`}
                               />
-                              {item.productCatalogEntryId && draft.catalogSource === 'manual' && (
+                              {item.productCatalogEntryId && (
                                 <label style={updateCatalogLabelStyle}>
                                   <input
                                     type="checkbox"
@@ -955,8 +955,6 @@ export default function QuoteDraftPage() {
       {/* Draft metadata */}
       <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '1.5rem' }}>
         Created: {new Date(draft.createdAt).toLocaleString()}
-        {' · '}
-        Source: {draft.catalogSource === 'jobber' ? 'Jobber' : 'Manual'}
       </div>
       </div>{/* end main content column */}
 

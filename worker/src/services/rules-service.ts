@@ -961,22 +961,23 @@ export class RulesService {
       // bumping any products at or above that sort_order within the same range.
       if (action.placeAfter) {
         const parentRow = await this.db.prepare(
-          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
-        ).bind(action.placeAfter).first() as { sort_order: number } | null;
+          'SELECT sort_order, user_id FROM product_catalog WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeAfter).first() as { sort_order: number; user_id: string } | null;
 
         if (!parentRow) continue;
 
         const parentOrder = parentRow.sort_order;
+        const parentUserId = parentRow.user_id;
         const childOrder = parentOrder + 1;
         const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
 
         await this.db.batch([
           this.db.prepare(
-            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
-          ).bind(childOrder, rangeMax, action.productName),
+            "UPDATE product_catalog SET sort_order = sort_order + 1, updated_at = datetime('now') WHERE user_id = ? AND sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE"
+          ).bind(parentUserId, childOrder, rangeMax, action.productName),
           this.db.prepare(
-            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
-          ).bind(childOrder, action.productName),
+            "UPDATE product_catalog SET sort_order = ?, updated_at = datetime('now') WHERE user_id = ? AND name = ? COLLATE NOCASE"
+          ).bind(childOrder, parentUserId, action.productName),
         ]);
       }
 
@@ -984,21 +985,22 @@ export class RulesService {
       // bumping the parent and following items up by 1.
       if (action.placeBefore && !action.placeAfter) {
         const parentRow = await this.db.prepare(
-          'SELECT sort_order FROM manual_catalog_entries WHERE name = ? COLLATE NOCASE LIMIT 1'
-        ).bind(action.placeBefore).first() as { sort_order: number } | null;
+          'SELECT sort_order, user_id FROM product_catalog WHERE name = ? COLLATE NOCASE LIMIT 1'
+        ).bind(action.placeBefore).first() as { sort_order: number; user_id: string } | null;
 
         if (!parentRow) continue;
 
         const parentOrder = parentRow.sort_order;
+        const parentUserId = parentRow.user_id;
         const rangeMax = Math.floor(parentOrder / 100) * 100 + 100;
 
         await this.db.batch([
           this.db.prepare(
-            'UPDATE manual_catalog_entries SET sort_order = sort_order + 1 WHERE sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE'
-          ).bind(parentOrder, rangeMax, action.productName),
+            "UPDATE product_catalog SET sort_order = sort_order + 1, updated_at = datetime('now') WHERE user_id = ? AND sort_order >= ? AND sort_order < ? AND name != ? COLLATE NOCASE"
+          ).bind(parentUserId, parentOrder, rangeMax, action.productName),
           this.db.prepare(
-            'UPDATE manual_catalog_entries SET sort_order = ? WHERE name = ? COLLATE NOCASE'
-          ).bind(parentOrder, action.productName),
+            "UPDATE product_catalog SET sort_order = ?, updated_at = datetime('now') WHERE user_id = ? AND name = ? COLLATE NOCASE"
+          ).bind(parentOrder, parentUserId, action.productName),
         ]);
       }
     }

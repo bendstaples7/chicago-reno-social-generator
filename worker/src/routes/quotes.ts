@@ -31,6 +31,12 @@ function createRulesSync(env: Bindings): RulesSyncService {
 
 const app = new Hono<{ Bindings: Bindings; Variables: { user: User } }>();
 
+// ── Catalog sync TTL cache ──────────────────────────────────────
+// Track last sync time per user to avoid syncing on every GET /catalog request.
+// Resets on worker cold start, which is acceptable — first request triggers a sync.
+const catalogSyncTimestamps = new Map<string, number>();
+const CATALOG_SYNC_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 // ── Helper: create a JobberIntegration with D1-persisted tokens ──
 
 async function createJobberIntegration(db: D1Database, env: Bindings): Promise<{ jobberIntegration: JobberIntegration; tokenStore: JobberTokenStore; activityLog: ActivityLogService }> {
@@ -85,7 +91,7 @@ app.post('/rules', async (c) => {
     try {
       const userId = c.get('user').id;
       const catalogResult = await db.prepare(
-        'SELECT name FROM manual_catalog_entries WHERE user_id = ? ORDER BY name ASC'
+        'SELECT name FROM product_catalog WHERE user_id = ? ORDER BY name ASC'
       ).bind(userId).all();
       catalogNames = (catalogResult.results as Array<{ name: string }>).map(r => r.name);
     } catch { /* graceful degradation */ }
@@ -263,9 +269,12 @@ app.post('/rules/auto-categorize', async (c) => {
 
 // ── Helper functions ──────────────────────────────────────────
 
-async function fetchManualCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {
+/**
+ * Fetch the unified product catalog from the product_catalog table.
+ */
+async function fetchCatalog(db: D1Database, userId: string): Promise<ProductCatalogEntry[]> {
   const result = await db.prepare(
-    'SELECT id, name, unit_price, description, category, sort_order, keywords FROM manual_catalog_entries WHERE user_id = ? ORDER BY sort_order ASC, created_at ASC'
+    'SELECT id, name, unit_price, description, category, sort_order, keywords, source FROM product_catalog WHERE user_id = ? ORDER BY sort_order ASC, name ASC'
   ).bind(userId).all();
 
   return (result.results as any[]).map((row) => ({
@@ -276,34 +285,8 @@ async function fetchManualCatalog(db: D1Database, userId: string): Promise<Produ
     category: (row.category as string) ?? undefined,
     sortOrder: Number(row.sort_order ?? 500),
     keywords: (row.keywords as string) ?? undefined,
-    source: 'manual' as const,
+    source: (row.source as 'jobber' | 'manual') ?? 'manual',
   }));
-}
-
-/**
- * Merge keywords from the catalog_keywords table onto catalog entries.
- * Works for both Jobber-sourced and manual catalog entries.
- */
-async function mergeCatalogKeywords(db: D1Database, userId: string, catalog: ProductCatalogEntry[]): Promise<ProductCatalogEntry[]> {
-  if (catalog.length === 0) return catalog;
-
-  const result = await db.prepare(
-    'SELECT product_name, keywords FROM catalog_keywords WHERE user_id = ?'
-  ).bind(userId).all();
-
-  if (!result.results || result.results.length === 0) return catalog;
-
-  const keywordsByName = new Map<string, string>();
-  for (const row of result.results as any[]) {
-    keywordsByName.set((row.product_name as string).toLowerCase(), row.keywords as string);
-  }
-
-  return catalog.map((entry) => {
-    // Manual entries may already have keywords from their own column
-    if (entry.keywords) return entry;
-    const kw = keywordsByName.get(entry.name.toLowerCase());
-    return kw ? { ...entry, keywords: kw } : entry;
-  });
 }
 
 async function fetchManualTemplates(db: D1Database, userId: string): Promise<QuoteTemplate[]> {
@@ -339,7 +322,6 @@ app.post('/generate', async (c) => {
   const body = await c.req.json() as {
     customerText?: string;
     mediaItemIds?: string[];
-    catalogSource?: 'jobber' | 'manual';
     manualCatalog?: ProductCatalogEntry[];
     manualTemplates?: QuoteTemplate[];
     jobberRequestId?: string;
@@ -355,27 +337,13 @@ app.post('/generate', async (c) => {
     });
   }
 
-  const { jobberIntegration } = await createJobberIntegration(db, c.env);
   const quoteEngine = new QuoteEngine(c.env.AI_TEXT_API_KEY, c.env.AI_TEXT_API_URL);
   const quoteDraftService = new QuoteDraftService(db);
 
-  const source = body.catalogSource ?? (jobberIntegration.isAvailable() ? 'jobber' : 'manual');
-
-  let catalog: ProductCatalogEntry[];
+  // Unified catalog: always read from product_catalog (manualCatalog override still supported)
+  const catalog: ProductCatalogEntry[] = body.manualCatalog ?? await fetchCatalog(db, userId);
   // Templates always come from D1 — Jobber's public API does not expose quote templates
   const templates: QuoteTemplate[] = body.manualTemplates ?? await fetchManualTemplates(db, userId);
-
-  if (source === 'jobber') {
-    catalog = await jobberIntegration.fetchProductCatalog();
-    if (!jobberIntegration.isAvailable()) {
-      catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
-    }
-  } else {
-    catalog = body.manualCatalog ?? await fetchManualCatalog(db, userId);
-  }
-
-  // Merge keywords from catalog_keywords table onto catalog entries
-  catalog = await mergeCatalogKeywords(db, userId, catalog);
 
   // Fetch structured rules for the deterministic rules engine (graceful degradation)
   const rulesService = new RulesService(db);
@@ -411,9 +379,8 @@ app.post('/generate', async (c) => {
       customerText: body.customerText ?? '',
       mediaItemIds: body.mediaItemIds ?? [],
       userId,
-      catalogSource: source,
-      manualCatalog: source === 'manual' ? catalog : undefined,
-      manualTemplates: source === 'manual' ? templates : undefined,
+      manualCatalog: catalog,
+      manualTemplates: templates,
       similarQuotes,
     },
     catalog,
@@ -511,20 +478,8 @@ app.post('/drafts/:id/revise', async (c) => {
   // Load the current draft (verifies ownership)
   const draft = await quoteDraftService.getById(draftId, userId);
 
-  // Fetch the product catalog
-  const { jobberIntegration } = await createJobberIntegration(db, c.env);
-  let catalog: ProductCatalogEntry[];
-  if (draft.catalogSource === 'jobber' && jobberIntegration.isAvailable()) {
-    catalog = await jobberIntegration.fetchProductCatalog();
-    if (!jobberIntegration.isAvailable()) {
-      catalog = await fetchManualCatalog(db, userId);
-    }
-  } else {
-    catalog = await fetchManualCatalog(db, userId);
-  }
-
-  // Merge keywords from catalog_keywords table onto catalog entries
-  catalog = await mergeCatalogKeywords(db, userId, catalog);
+  // Unified catalog: always read from product_catalog
+  const catalog: ProductCatalogEntry[] = await fetchCatalog(db, userId);
 
   // Fetch structured rules for the deterministic rules engine (graceful degradation)
   let structuredRules: StructuredRule[] = [];
@@ -607,20 +562,27 @@ app.get('/catalog', async (c) => {
   const userId = c.get('user').id;
   const { jobberIntegration } = await createJobberIntegration(db, c.env);
 
-  const available = jobberIntegration.isAvailable();
-  let catalog: ProductCatalogEntry[];
-  if (available) {
-    catalog = await jobberIntegration.fetchProductCatalog();
-  } else {
-    catalog = await fetchManualCatalog(db, userId);
+  // Sync Jobber products into product_catalog if stale (TTL-gated)
+  if (jobberIntegration.isAvailable()) {
+    const lastSync = catalogSyncTimestamps.get(userId) ?? 0;
+    if (Date.now() - lastSync > CATALOG_SYNC_TTL_MS) {
+      try {
+        await jobberIntegration.syncProductCatalog(db, userId);
+        catalogSyncTimestamps.set(userId, Date.now());
+      } catch {
+        // Sync failure is non-blocking — continue with existing catalog data
+      }
+    }
   }
-  catalog = await mergeCatalogKeywords(db, userId, catalog);
+
+  // Unified catalog: always read from product_catalog after sync
+  const catalog = await fetchCatalog(db, userId);
   return c.json({ catalog });
 });
 
 /**
  * POST /catalog
- * Save manual catalog entries (for fallback mode).
+ * Bulk import catalog entries into the unified product_catalog.
  */
 app.post('/catalog', async (c) => {
   const db = c.env.DB;
@@ -640,7 +602,9 @@ app.post('/catalog', async (c) => {
   }
 
   const statements: D1PreparedStatement[] = [
-    db.prepare('DELETE FROM manual_catalog_entries WHERE user_id = ?').bind(userId),
+    // Only delete manual-source entries so Jobber-synced products (with their
+    // customised sort_order, keywords, and locally_modified_at) are preserved.
+    db.prepare("DELETE FROM product_catalog WHERE user_id = ? AND source = 'manual'").bind(userId),
   ];
 
   for (const entry of body.entries) {
@@ -655,7 +619,7 @@ app.post('/catalog', async (c) => {
 
     statements.push(
       db.prepare(
-        "INSERT INTO manual_catalog_entries (id, user_id, name, unit_price, description, category, keywords) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO product_catalog (id, user_id, name, unit_price, description, category, keywords, source, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 500)"
       ).bind(
         crypto.randomUUID(),
         userId,
@@ -670,7 +634,7 @@ app.post('/catalog', async (c) => {
 
   await db.batch(statements);
 
-  const catalog = await fetchManualCatalog(db, userId);
+  const catalog = await fetchCatalog(db, userId);
   return c.json({ catalog });
 });
 
@@ -755,10 +719,10 @@ app.patch('/catalog/:id', async (c) => {
     }
   }
 
-  // Verify ownership — only manual catalog entries can be updated
+  // Verify ownership — all product_catalog entries can be updated
   const existing = await db.prepare(
-    'SELECT id FROM manual_catalog_entries WHERE id = ? AND user_id = ?'
-  ).bind(entryId, userId).first();
+    'SELECT id, source FROM product_catalog WHERE id = ? AND user_id = ?'
+  ).bind(entryId, userId).first() as { id: string; source: string } | null;
 
   if (!existing) {
     throw new PlatformError({
@@ -773,6 +737,9 @@ app.patch('/catalog/:id', async (c) => {
   const setClauses: string[] = [];
   const values: unknown[] = [];
 
+  // Track whether a Jobber-owned field is being edited
+  let editingJobberField = false;
+
   if (body.name !== undefined) {
     setClauses.push('name = ?');
     values.push(body.name);
@@ -780,6 +747,7 @@ app.patch('/catalog/:id', async (c) => {
   if (body.description !== undefined) {
     setClauses.push('description = ?');
     values.push(body.description);
+    editingJobberField = true;
   }
   if (body.keywords !== undefined) {
     setClauses.push('keywords = ?');
@@ -787,9 +755,17 @@ app.patch('/catalog/:id', async (c) => {
   }
 
   if (setClauses.length > 0) {
+    // Always update updated_at
+    setClauses.push("updated_at = datetime('now')");
+
+    // Set locally_modified_at when editing Jobber-owned fields (description)
+    if (editingJobberField) {
+      setClauses.push("locally_modified_at = datetime('now')");
+    }
+
     values.push(entryId, userId);
     await db.prepare(
-      'UPDATE manual_catalog_entries SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?'
+      'UPDATE product_catalog SET ' + setClauses.join(', ') + ' WHERE id = ? AND user_id = ?'
     ).bind(...values).run();
   }
 
@@ -828,7 +804,7 @@ app.put('/catalog/reorder', async (c) => {
 
   // Fetch all current catalog entry IDs for this user
   const userEntriesResult = await db.prepare(
-    'SELECT id FROM manual_catalog_entries WHERE user_id = ?'
+    'SELECT id FROM product_catalog WHERE user_id = ?'
   ).bind(userId).all();
   const userEntryIds = new Set((userEntriesResult.results as Array<{ id: string }>).map(r => r.id));
 
@@ -860,14 +836,14 @@ app.put('/catalog/reorder', async (c) => {
   for (let i = 0; i < orderedIds.length; i++) {
     statements.push(
       db.prepare(
-        'UPDATE manual_catalog_entries SET sort_order = ? WHERE id = ? AND user_id = ?'
+        "UPDATE product_catalog SET sort_order = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
       ).bind(i, orderedIds[i], userId),
     );
   }
 
   await db.batch(statements);
 
-  const catalog = await fetchManualCatalog(db, userId);
+  const catalog = await fetchCatalog(db, userId);
   return c.json({ catalog });
 });
 

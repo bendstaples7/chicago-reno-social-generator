@@ -229,6 +229,122 @@ export class JobberIntegration {
     }
   }
 
+  // ── Product Catalog Sync ──────────────────────────────────────────
+
+  /**
+   * Sync Jobber products into the unified product_catalog table.
+   *
+   * - Inserts new products with ON CONFLICT(user_id, name) DO NOTHING — never overwrites existing rows.
+   * - Updates jobber_active: 1 for products in the Jobber response, 0 for Jobber-sourced products no longer in Jobber.
+   *
+   * @returns counts of inserted and deactivated products, plus total Jobber products fetched.
+   */
+  async syncProductCatalog(
+    db: D1Database,
+    userId: string,
+  ): Promise<{ inserted: number; deactivated: number; total: number }> {
+    try {
+      const jobberProducts = await this.fetchProductCatalog();
+
+      if (jobberProducts.length === 0) {
+        return { inserted: 0, deactivated: 0, total: 0 };
+      }
+
+      const total = jobberProducts.length;
+      let inserted = 0;
+
+      // Batch inserts in groups of 50 to stay within D1 limits
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < jobberProducts.length; i += BATCH_SIZE) {
+        const batch = jobberProducts.slice(i, i + BATCH_SIZE);
+        const stmts = batch.map((product) => {
+          return db
+            .prepare(
+              `INSERT INTO product_catalog (id, user_id, name, unit_price, description, category, sort_order, keywords, source, jobber_active)
+               VALUES (?, ?, ?, ?, ?, ?, 500, NULL, 'jobber', 1)
+               ON CONFLICT(user_id, name) DO NOTHING`,
+            )
+            .bind(
+              crypto.randomUUID(),
+              userId,
+              product.name,
+              product.unitPrice,
+              product.description,
+              product.category ?? null,
+            );
+        });
+
+        const results = await db.batch(stmts);
+
+        for (const result of results) {
+          if (result.meta?.changes && result.meta.changes > 0) {
+            inserted++;
+          }
+        }
+      }
+
+      // Update jobber_active flags:
+      // 1. Set jobber_active=1 for all products whose names match the Jobber response
+      // 2. Set jobber_active=0 for Jobber-sourced products NOT in the response
+      const jobberNames = jobberProducts.map((p) => p.name);
+      const placeholders = jobberNames.map(() => '?').join(', ');
+
+      const activateStmt = db
+        .prepare(
+          `UPDATE product_catalog SET jobber_active = 1, updated_at = datetime('now')
+           WHERE user_id = ? AND name IN (${placeholders})`,
+        )
+        .bind(userId, ...jobberNames);
+
+      const deactivateStmt = db
+        .prepare(
+          `UPDATE product_catalog SET jobber_active = 0, updated_at = datetime('now')
+           WHERE user_id = ? AND source = 'jobber' AND name NOT IN (${placeholders})`,
+        )
+        .bind(userId, ...jobberNames);
+
+      const [, deactivateResult] = await db.batch([activateStmt, deactivateStmt]);
+      const deactivated = deactivateResult.meta?.changes ?? 0;
+
+      // Log the sync result
+      try {
+        await this.activityLog.log({
+          userId,
+          component: 'JobberIntegration',
+          operation: 'syncProductCatalog',
+          severity: 'info',
+          description: `Synced ${total} Jobber products: ${inserted} new, ${deactivated} deactivated.`,
+        });
+      } catch {
+        // Activity log failure should not break sync
+      }
+
+      return { inserted, deactivated, total };
+    } catch (err) {
+      const description =
+        err instanceof Error
+          ? `Product catalog sync failed: ${err.message}`
+          : 'Product catalog sync failed: Unknown error';
+
+      console.error(`[JobberIntegration] syncProductCatalog failed: ${description}`);
+
+      try {
+        await this.activityLog.log({
+          userId,
+          component: 'JobberIntegration',
+          operation: 'syncProductCatalog',
+          severity: 'error',
+          description,
+          recommendedAction: 'Check Jobber API connectivity and D1 database availability.',
+        });
+      } catch {
+        // Activity log failure should not break error handling
+      }
+
+      return { inserted: 0, deactivated: 0, total: 0 };
+    }
+  }
+
   // ── Customer Requests ────────────────────────────────────────────
 
   /**

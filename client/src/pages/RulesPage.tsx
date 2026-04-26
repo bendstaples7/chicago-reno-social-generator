@@ -724,6 +724,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -793,7 +794,11 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
     if (dragIndex === null || index === dragIndex) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const position = e.clientY < midY ? 'before' : 'after';
     setDragOverIndex(index);
+    setDropPosition(position);
   };
 
   const handleDrop = (e: React.DragEvent, index: number) => {
@@ -801,13 +806,25 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     if (dragIndex === null || dragIndex === index) {
       setDragIndex(null);
       setDragOverIndex(null);
+      setDropPosition(null);
       return;
     }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const after = e.clientY >= midY;
+
     const updated = [...catalog];
     const [moved] = updated.splice(dragIndex, 1);
-    // After removing the source item, indices shift down for items below it.
-    // Adjust the insert position when dragging downward.
-    const insertAt = dragIndex < index ? index - 1 : index;
+    // Calculate insert position: after removing source, indices above dragIndex stay,
+    // indices at/below dragIndex shift down by 1
+    let insertAt: number;
+    if (after) {
+      insertAt = dragIndex < index ? index : index + 1;
+    } else {
+      insertAt = dragIndex < index ? index - 1 : index;
+    }
+    // Clamp to valid range
+    insertAt = Math.max(0, Math.min(updated.length, insertAt));
     updated.splice(insertAt, 0, moved);
     setCatalog(updated);
     setDirty(true);
@@ -815,17 +832,20 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     setSaveStatus(null);
     setDragIndex(null);
     setDragOverIndex(null);
+    setDropPosition(null);
   };
 
   const handleDragEnd = () => {
     setDragIndex(null);
     setDragOverIndex(null);
+    setDropPosition(null);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     // Only clear if leaving the row entirely (not entering a child element)
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setDragOverIndex(null);
+      setDropPosition(null);
     }
   };
 
@@ -938,8 +958,6 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
         {catalog.map((entry, index) => (
           <div
             key={entry.id}
-            draggable
-            onDragStart={(e) => handleDragStart(e, index)}
             onDragOver={(e) => handleDragOver(e, index)}
             onDrop={(e) => handleDrop(e, index)}
             onDragEnd={handleDragEnd}
@@ -954,13 +972,17 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
               borderRadius: 6,
               opacity: dragIndex === index ? 0.4 : 1,
               boxShadow: dragOverIndex === index
-                ? 'inset 0 2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)'
+                ? (dropPosition === 'after'
+                  ? 'inset 0 -2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)'
+                  : 'inset 0 2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)')
                 : '0 1px 2px rgba(0,0,0,0.04)',
               transition: 'opacity 0.15s ease',
             }}
           >
             {/* Drag handle */}
             <span
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
               aria-label={`Drag to reorder ${entry.name}`}
               style={{
                 width: 28,

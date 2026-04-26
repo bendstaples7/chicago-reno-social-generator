@@ -8,8 +8,12 @@
  *   node worker/scripts/seed-unified-catalog.mjs --apply-local            # apply to local D1
  *   node worker/scripts/seed-unified-catalog.mjs --apply-remote           # apply to remote D1
  *   node worker/scripts/seed-unified-catalog.mjs --apply-local --user-id <id>
+ *   node worker/scripts/seed-unified-catalog.mjs --csv path/to/export.csv # specify CSV path
+ *
+ * If --csv is not provided, auto-detects the most recent
+ * "Products and Services Export*.csv" in the repo root.
  */
-import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -43,7 +47,25 @@ if (applyRemote && !userId) {
 
 // ── Parse CSV ────────────────────────────────────────────────────────
 
-const csvPath = resolve(__dirname, '../../Products and Services Export (04_09_2026).csv');
+// Accept --csv <path> flag, or glob for the most recent Jobber export CSV
+const csvIdx = process.argv.indexOf('--csv');
+let csvPath;
+if (csvIdx !== -1 && process.argv[csvIdx + 1]) {
+  csvPath = resolve(process.argv[csvIdx + 1]);
+} else {
+  // Glob for "Products and Services Export*.csv" in the repo root
+  const repoRoot = resolve(__dirname, '../..');
+  const candidates = readdirSync(repoRoot)
+    .filter(f => f.startsWith('Products and Services Export') && f.endsWith('.csv'))
+    .sort(); // lexicographic sort — date-stamped filenames sort chronologically
+  if (candidates.length === 0) {
+    console.error('ERROR: No "Products and Services Export*.csv" found in repo root.');
+    console.error('Usage: node worker/scripts/seed-unified-catalog.mjs --csv <path-to-csv>');
+    process.exit(1);
+  }
+  csvPath = resolve(repoRoot, candidates[candidates.length - 1]);
+  console.log(`Auto-detected CSV: ${candidates[candidates.length - 1]}`);
+}
 const csv = readFileSync(csvPath, 'utf-8');
 
 function parseCSV(text) {
@@ -172,10 +194,11 @@ if (applyLocal || applyRemote) {
 }
 
 // ── Build SQL ────────────────────────────────────────────────────────
+// Use INSERT ... ON CONFLICT to upsert: update price/description/category from
+// the CSV but preserve existing sort_order and keywords for rows already in the table.
 
 const sqlLines = [
   'BEGIN TRANSACTION;',
-  `DELETE FROM product_catalog WHERE user_id = '${esc(userId)}';`,
 ];
 
 for (const p of products) {
@@ -185,7 +208,15 @@ for (const p of products) {
   const keywordsVal = keywords ? `'${esc(keywords)}'` : 'NULL';
 
   sqlLines.push(
-    `INSERT INTO product_catalog (id, user_id, name, unit_price, description, category, sort_order, keywords, source, jobber_active) VALUES ('${id}', '${esc(userId)}', '${esc(p.name)}', ${p.unitPrice}, '${esc(p.description)}', '${esc(p.category)}', ${sortOrder}, ${keywordsVal}, 'jobber', 1);`
+    `INSERT INTO product_catalog (id, user_id, name, unit_price, description, category, sort_order, keywords, source, jobber_active)`
+    + ` VALUES ('${id}', '${esc(userId)}', '${esc(p.name)}', ${p.unitPrice}, '${esc(p.description)}', '${esc(p.category)}', ${sortOrder}, ${keywordsVal}, 'jobber', 1)`
+    + ` ON CONFLICT(user_id, name) DO UPDATE SET`
+    + ` unit_price = excluded.unit_price,`
+    + ` description = excluded.description,`
+    + ` category = excluded.category,`
+    + ` source = excluded.source,`
+    + ` jobber_active = excluded.jobber_active,`
+    + ` updated_at = datetime('now');`
   );
 }
 
@@ -204,7 +235,7 @@ if (!applyLocal && !applyRemote) {
   const flag = applyRemote ? '--remote' : '--local';
   const tmpFile = resolve(__dirname, '_tmp_unified_seed.sql');
   writeFileSync(tmpFile, sql, 'utf-8');
-  console.log(`Generated ${products.length} INSERT statements (transactional)`);
+  console.log(`Generated ${products.length} UPSERT statements (transactional)`);
 
   try {
     const cmd = `npx wrangler d1 execute DB ${flag} --yes --file "${tmpFile}"`;

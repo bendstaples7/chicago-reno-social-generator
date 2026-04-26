@@ -602,7 +602,9 @@ app.post('/catalog', async (c) => {
   }
 
   const statements: D1PreparedStatement[] = [
-    db.prepare('DELETE FROM product_catalog WHERE user_id = ?').bind(userId),
+    // Only delete manual-source entries so Jobber-synced products (with their
+    // customised sort_order, keywords, and locally_modified_at) are preserved.
+    db.prepare("DELETE FROM product_catalog WHERE user_id = ? AND source = 'manual'").bind(userId),
   ];
 
   for (const entry of body.entries) {

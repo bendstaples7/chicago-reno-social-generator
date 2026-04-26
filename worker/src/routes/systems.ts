@@ -39,10 +39,13 @@ app.get('/status', async (c) => {
       jobberAvailable = jobber.isAvailable();
 
       if (jobberAvailable) {
-        // Fire-and-forget: sync products in background, don't block status response
-        jobber.syncProductCatalog(db, userId).catch(() => {
-          // Sync failure is non-blocking — syncProductCatalog already logs errors internally
-        });
+        // Background sync: register with waitUntil so the CF Workers runtime
+        // keeps the isolate alive until the sync completes (or fails).
+        c.executionCtx.waitUntil(
+          jobber.syncProductCatalog(db, userId).catch(() => {
+            // Sync failure is non-blocking — syncProductCatalog already logs errors internally
+          })
+        );
       }
     }
   } catch {

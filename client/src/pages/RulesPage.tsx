@@ -787,6 +787,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDragIndex(index);
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
@@ -804,7 +805,10 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     }
     const updated = [...catalog];
     const [moved] = updated.splice(dragIndex, 1);
-    updated.splice(index, 0, moved);
+    // After removing the source item, indices shift down for items below it.
+    // Adjust the insert position when dragging downward.
+    const insertAt = dragIndex < index ? index - 1 : index;
+    updated.splice(insertAt, 0, moved);
     setCatalog(updated);
     setDirty(true);
     setSaveMessage(null);

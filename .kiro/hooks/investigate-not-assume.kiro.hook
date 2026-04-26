@@ -4,10 +4,10 @@
   "description": "Prompts the agent to dig deeper and verify facts when using vague assumption words or presenting multiple possible causes without investigating which one is actually happening.",
   "version": "2",
   "when": {
-    "type": "promptSubmit"
+    "type": "agentStop"
   },
   "then": {
     "type": "askAgent",
-    "prompt": "If you used uncertain language (likely/most likely/probably/might/seems/appears), please investigate and verify what actually happened. Use available tools to check files, run commands, or gather concrete evidence before drawing conclusions. Additionally, if you presented multiple possible causes using 'either/or' phrasing (e.g., 'either X or Y', 'this could be A, B, or C'), do NOT present them as options — instead, investigate each one using logs, API calls, code inspection, or other tools to determine which cause is actually occurring, and report only the verified root cause."
+    "prompt": "If you used uncertain language (likely/most likely/probably/might/seems/appears), please investigate and verify what actually happened. Use available tools to check files, run commands, or gather concrete evidence before drawing conclusions. Additionally, if you presented multiple possible causes using 'either/or' phrasing (e.g., 'either X or Y', 'this could be A, B, or C'), do NOT present them as options — instead, investigate each one using logs, API calls, code inspection, or other tools to determine which cause is actually occurring, and report only the verified root cause.\n\nWhen discussing what is or isn't deployed to production, always run `git fetch origin main` and check `git log origin/main` before claiming code has or hasn't been merged/deployed. Do not rely on memory of branch state — verify it."
   }
 }

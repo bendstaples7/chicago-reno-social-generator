@@ -31,6 +31,7 @@ step('Applying D1 migrations', 'node scripts/apply-migrations.mjs');
 step('Syncing Jobber tokens', 'node scripts/sync-tokens.mjs');
 step('Syncing Jobber cookies', 'node scripts/sync-cookies.mjs --target local');
 step('Syncing rules from production', 'node scripts/sync-rules.mjs');
+step('Syncing product catalog from production', 'node scripts/sync-catalog.mjs');
 
 // ── Start dev servers (parallel) ─────────────────────────────
 

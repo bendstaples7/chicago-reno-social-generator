@@ -37,6 +37,13 @@ app.get('/status', async (c) => {
       });
       await jobber.graphqlRequest('{ account { name } }', {});
       jobberAvailable = jobber.isAvailable();
+
+      if (jobberAvailable) {
+        // Fire-and-forget: sync products in background, don't block status response
+        jobber.syncProductCatalog(db, userId).catch(() => {
+          // Sync failure is non-blocking — syncProductCatalog already logs errors internally
+        });
+      }
     }
   } catch {
     jobberAvailable = false;

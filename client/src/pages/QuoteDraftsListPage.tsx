@@ -107,9 +107,6 @@ export default function QuoteDraftsListPage() {
                         ⚠️ {draft.unresolvedItems.length} unresolved
                       </span>
                     )}
-                    <span style={sourceBadgeStyle(draft.catalogSource)}>
-                      {draft.catalogSource === 'jobber' ? 'Jobber' : 'Manual'}
-                    </span>
                   </div>
                 </div>
               </div>
@@ -224,16 +221,6 @@ const unresolvedBadgeStyle: React.CSSProperties = {
   padding: '0.1rem 0.4rem',
   borderRadius: 10,
 };
-
-function sourceBadgeStyle(source: string): React.CSSProperties {
-  return {
-    fontSize: '0.75rem',
-    color: source === 'jobber' ? '#00a89d' : '#555',
-    background: source === 'jobber' ? '#e0f7f5' : '#f0f0f0',
-    padding: '0.1rem 0.4rem',
-    borderRadius: 10,
-  };
-}
 
 const deleteBtnStyle: React.CSSProperties = {
   background: 'none',

@@ -1,15 +1,15 @@
 /**
- * Generate keywords for all products in the catalog using AI.
- * Reads the CSV, calls OpenAI to generate matching keywords for each product,
- * and outputs SQL INSERT statements for the catalog_keywords table.
+ * Generate keywords for all products in the unified product_catalog using AI.
+ * Reads products from product_catalog in D1, calls OpenAI to generate matching
+ * keywords for each product, and writes them back to product_catalog.keywords.
  *
  * Usage:
  *   node worker/scripts/generate-keywords.mjs                    # dry run (prints SQL)
  *   node worker/scripts/generate-keywords.mjs --apply-local      # apply to local D1
  *   node worker/scripts/generate-keywords.mjs --apply-remote     # apply to remote D1
+ *   node worker/scripts/generate-keywords.mjs --apply-local --user-id <id>
  */
-import { readFileSync } from 'fs';
-import { writeFileSync, unlinkSync, readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync, statSync, writeFileSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -18,7 +18,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const workerDir = resolve(__dirname, '..');
 
-// Read API key from .dev.vars
+// ── Read API key from .dev.vars ──────────────────────────────────────
+
 const devVarsPath = resolve(workerDir, '.dev.vars');
 let apiKey = '';
 try {
@@ -32,73 +33,133 @@ if (!apiKey) {
   process.exit(1);
 }
 
-// Resolve CSV path: --csv flag or glob fallback
-const rootDir = resolve(__dirname, '../..');
-const csvFlagIdx = process.argv.indexOf('--csv');
-let csvPath;
-if (csvFlagIdx !== -1 && process.argv[csvFlagIdx + 1]) {
-  csvPath = resolve(process.argv[csvFlagIdx + 1]);
-} else {
-  // Find most recently modified "Products and Services Export*.csv"
-  const candidates = readdirSync(rootDir)
-    .filter(f => f.startsWith('Products and Services Export') && f.endsWith('.csv'))
-    .map(f => ({ name: f, mtime: statSync(resolve(rootDir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  if (candidates.length === 0) {
-    console.error('ERROR: No "Products and Services Export*.csv" found in project root. Use --csv <path> to specify.');
+// ── Parse flags ──────────────────────────────────────────────────────
+
+const applyLocal = process.argv.includes('--apply-local');
+const applyRemote = process.argv.includes('--apply-remote');
+
+if (applyLocal && applyRemote) {
+  console.error('ERROR: Cannot use --apply-local and --apply-remote together.');
+  process.exit(1);
+}
+
+let userId = '';
+const userIdIdx = process.argv.indexOf('--user-id');
+if (userIdIdx !== -1 && process.argv[userIdIdx + 1]) {
+  userId = process.argv[userIdIdx + 1];
+}
+
+if (applyRemote && !userId) {
+  console.error('ERROR: --apply-remote requires --user-id <id>');
+  console.error('Usage: node worker/scripts/generate-keywords.mjs --apply-remote --user-id <user-uuid>');
+  process.exit(1);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+const esc = (s) => s.replace(/'/g, "''");
+
+function d1query(flag, sql) {
+  try {
+    const output = execSync(
+      `npx wrangler d1 execute DB ${flag} --json --command "${sql.replace(/"/g, '\\"')}"`,
+      { cwd: workerDir, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    const parsed = JSON.parse(output);
+    return parsed[0]?.results || [];
+  } catch (err) {
+    console.debug(`[generate-keywords] query failed: ${err.message}`);
+    return null;
+  }
+}
+
+function d1execFile(flag, sql) {
+  const tmpFile = resolve(__dirname, `_tmp_kw_${Date.now()}.sql`);
+  writeFileSync(tmpFile, sql, 'utf-8');
+  try {
+    execSync(`npx wrangler d1 execute DB ${flag} --yes --file "${tmpFile}"`, {
+      cwd: workerDir,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } finally {
+    try { unlinkSync(tmpFile); } catch {}
+  }
+}
+
+// ── Resolve user ID ──────────────────────────────────────────────────
+
+if (!userId && applyLocal) {
+  try {
+    const rows = d1query('--local', "SELECT id FROM users WHERE id != 'system' ORDER BY rowid LIMIT 1");
+    if (rows?.[0]?.id) userId = rows[0].id;
+  } catch { /* ignore */ }
+  if (!userId) {
+    console.error('ERROR: Could not determine user ID from local D1. Pass --user-id <id> explicitly.');
     process.exit(1);
   }
-  csvPath = resolve(rootDir, candidates[0].name);
-  console.log(`Using CSV: ${candidates[0].name}`);
+} else if (!userId) {
+  userId = '<user-id>';
 }
-const csv = readFileSync(csvPath, 'utf-8');
 
-function parseCSV(text) {
-  const rows = [];
-  let i = 0;
-  while (i < text.length) {
-    const row = [];
-    while (i < text.length && text[i] !== '\n' && text[i] !== '\r') {
-      if (text[i] === '"') {
-        i++; let field = '';
-        while (i < text.length) {
-          if (text[i] === '"' && text[i + 1] === '"') { field += '"'; i += 2; }
-          else if (text[i] === '"') { i++; break; }
-          else { field += text[i]; i++; }
-        }
-        row.push(field);
-        if (i < text.length && text[i] === ',') i++;
-      } else {
-        let field = '';
-        while (i < text.length && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') { field += text[i]; i++; }
-        row.push(field);
-        if (i < text.length && text[i] === ',') i++;
-      }
-    }
-    if (text[i] === '\r') i++;
-    if (text[i] === '\n') i++;
-    if (row.length > 0) rows.push(row);
+console.log(`Target user: ${userId}`);
+
+// ── Read products from product_catalog ───────────────────────────────
+
+const d1Flag = applyRemote ? '--remote' : '--local';
+
+let products = [];
+if (applyLocal || applyRemote) {
+  const rows = d1query(d1Flag, `SELECT id, name, description FROM product_catalog WHERE user_id = '${esc(userId)}' ORDER BY sort_order ASC, name ASC`);
+  if (!rows) {
+    console.error('ERROR: Could not read product_catalog from D1.');
+    process.exit(1);
   }
-  return rows;
+  products = rows.map(r => ({ id: r.id, name: r.name, description: r.description || '' }));
+  console.log(`Found ${products.length} products in product_catalog`);
+} else {
+  console.log('Dry run mode — reading products from CSV fallback for preview.');
+  const rootDir = resolve(__dirname, '../..');
+  const csvFlagIdx = process.argv.indexOf('--csv');
+  let csvPath;
+  if (csvFlagIdx !== -1 && process.argv[csvFlagIdx + 1]) {
+    csvPath = resolve(process.argv[csvFlagIdx + 1]);
+  } else {
+    const candidates = readdirSync(rootDir)
+      .filter(f => f.startsWith('Products and Services Export') && f.endsWith('.csv'))
+      .map(f => ({ name: f, mtime: statSync(resolve(rootDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (candidates.length === 0) {
+      console.error('ERROR: No "Products and Services Export*.csv" found. Use --apply-local to read from D1, or --csv <path>.');
+      process.exit(1);
+    }
+    csvPath = resolve(rootDir, candidates[0].name);
+    console.log(`Using CSV: ${candidates[0].name}`);
+  }
+  const csv = readFileSync(csvPath, 'utf-8');
+  const lines = csv.split('\n');
+  const header = lines[0].split(',');
+  const nameIdx = header.indexOf('Name');
+  const descIdx = header.indexOf('Description');
+  const activeIdx = header.indexOf('Active');
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const name = (cols[nameIdx] || '').trim();
+    const active = (cols[activeIdx] || '').trim().toLowerCase();
+    if (!name || active !== 'true') continue;
+    products.push({ id: `dry-run-${i}`, name, description: (cols[descIdx] || '').trim() });
+  }
+  console.log(`Found ${products.length} active products from CSV`);
 }
 
-const rows = parseCSV(csv);
-const header = rows[0];
-const idx = (name) => header.indexOf(name);
-
-const products = [];
-for (let r = 1; r < rows.length; r++) {
-  const row = rows[r];
-  const name = (row[idx('Name')] || '').trim();
-  const description = (row[idx('Description')] || '').trim();
-  const active = (row[idx('Active')] || '').trim().toLowerCase();
-  if (!name || active !== 'true') continue;
-  products.push({ name, description });
+if (products.length === 0) {
+  console.log('No products found. Nothing to do.');
+  process.exit(0);
 }
 
-console.log(`Found ${products.length} active products`);
 
-// Generate keywords in batches using AI
+// ── Generate keywords in batches using AI ────────────────────────────
+
 const BATCH_SIZE = 30;
 
 async function generateKeywordsBatch(batch) {
@@ -151,41 +212,8 @@ async function generateKeywordsBatch(batch) {
   return parsed.results || parsed.products || parsed.keywords || [];
 }
 
-// Get user ID
-const applyLocal = process.argv.includes('--apply-local');
-const applyRemote = process.argv.includes('--apply-remote');
+// ── Process all products ─────────────────────────────────────────────
 
-// Parse --user-id flag
-let userId = '';
-const userIdIdx = process.argv.indexOf('--user-id');
-if (userIdIdx !== -1 && process.argv[userIdIdx + 1]) {
-  userId = process.argv[userIdIdx + 1];
-}
-
-if (applyLocal && applyRemote) {
-  console.error('ERROR: Cannot use --apply-local and --apply-remote together.');
-  process.exit(1);
-}
-
-if (applyRemote && !userId) {
-  console.error('ERROR: --apply-remote requires --user-id <id>');
-  console.error('Usage: node worker/scripts/generate-keywords.mjs --apply-remote --user-id <user-uuid>');
-  process.exit(1);
-}
-
-if (applyLocal && !userId) {
-  try {
-    const out = execSync('npx wrangler d1 execute DB --local --json --command "SELECT id FROM users LIMIT 1"', { cwd: workerDir, encoding: 'utf-8' });
-    const parsed = JSON.parse(out);
-    if (parsed[0]?.results?.[0]?.id) userId = parsed[0].results[0].id;
-  } catch { /* ignore */ }
-  if (!userId) {
-    console.error('ERROR: Could not determine user ID from local D1. Pass --user-id <id> explicitly.');
-    process.exit(1);
-  }
-}
-
-// Process all products
 const allKeywords = [];
 for (let i = 0; i < products.length; i += BATCH_SIZE) {
   const batch = products.slice(i, i + BATCH_SIZE);
@@ -211,60 +239,66 @@ for (let i = 0; i < products.length; i += BATCH_SIZE) {
 
 console.log(`\nGenerated keywords for ${allKeywords.length} products`);
 
-// Build SQL
-const esc = (s) => s.replace(/'/g, "''");
-const sqlLines = [
-  '-- Auto-generated catalog keywords',
-  `DELETE FROM catalog_keywords WHERE user_id = '${esc(userId)}';`,
-];
+// ── Build name→id map for matching AI results back to product rows ───
 
-for (const item of allKeywords) {
-  if (!item.name || !item.keywords) continue;
-  sqlLines.push(
-    `INSERT OR REPLACE INTO catalog_keywords (id, user_id, product_name, keywords) VALUES (hex(randomblob(16)), '${esc(userId)}', '${esc(item.name)}', '${esc(item.keywords)}');`
-  );
+const nameToId = new Map();
+for (const p of products) {
+  nameToId.set(p.name, p.id);
 }
 
+// ── Build SQL: UPDATE product_catalog SET keywords WHERE id ──────────
+
+const sqlLines = [
+  '-- Auto-generated catalog keywords (writes to product_catalog.keywords)',
+];
+
+let matched = 0;
+for (const item of allKeywords) {
+  if (!item.name || !item.keywords) continue;
+  const productId = nameToId.get(item.name);
+  if (!productId) {
+    console.warn(`  ⚠ No product_catalog match for "${item.name}" — skipping`);
+    continue;
+  }
+  sqlLines.push(
+    `UPDATE product_catalog SET keywords = '${esc(item.keywords)}', updated_at = datetime('now') WHERE id = '${esc(productId)}';`
+  );
+  matched++;
+}
+
+console.log(`Matched ${matched}/${allKeywords.length} keyword entries to product_catalog rows`);
+
 const sql = sqlLines.join('\n');
+
+// ── Execute or print ─────────────────────────────────────────────────
 
 if (!applyLocal && !applyRemote) {
   console.log('\n--- SQL OUTPUT (dry run) ---\n');
   console.log(sql);
-  console.log(`\n--- ${allKeywords.length} products ---`);
+  console.log(`\n--- ${matched} UPDATE statements ---`);
   console.log('Run with --apply-local or --apply-remote to execute');
 } else {
-  const flag = applyRemote ? '--remote' : '--local';
   const SQL_BATCH_SIZE = 50;
+  const updateLines = sqlLines.slice(1); // skip comment line
 
-  // First, delete existing keywords
-  const deleteFile = resolve(__dirname, '_tmp_kw_delete.sql');
-  writeFileSync(deleteFile, `DELETE FROM catalog_keywords WHERE user_id = '${esc(userId)}';`, 'utf-8');
-  try {
-    execSync(`npx wrangler d1 execute DB ${flag} --yes --file "${deleteFile}"`, { cwd: workerDir, stdio: 'inherit' });
-    console.log('Cleared existing keywords');
-  } finally {
-    try { unlinkSync(deleteFile); } catch {}
+  if (updateLines.length === 0) {
+    console.log('No keyword updates to apply.');
+    process.exit(0);
   }
 
-  // Insert in batches to avoid wrangler file size limits
-  const insertLines = sqlLines.slice(2); // skip comment and DELETE
-  const totalBatches = Math.ceil(insertLines.length / SQL_BATCH_SIZE);
+  const totalBatches = Math.ceil(updateLines.length / SQL_BATCH_SIZE);
 
-  for (let b = 0; b < insertLines.length; b += SQL_BATCH_SIZE) {
-    const chunk = insertLines.slice(b, b + SQL_BATCH_SIZE);
+  for (let b = 0; b < updateLines.length; b += SQL_BATCH_SIZE) {
+    const chunk = updateLines.slice(b, b + SQL_BATCH_SIZE);
     const batchNum = Math.floor(b / SQL_BATCH_SIZE) + 1;
-    const tmpFile = resolve(__dirname, `_tmp_kw_batch_${batchNum}.sql`);
-    writeFileSync(tmpFile, chunk.join('\n'), 'utf-8');
 
     try {
-      execSync(`npx wrangler d1 execute DB ${flag} --yes --file "${tmpFile}"`, { cwd: workerDir, stdio: 'inherit' });
+      d1execFile(d1Flag, chunk.join('\n'));
       console.log(`  SQL batch ${batchNum}/${totalBatches} applied (${chunk.length} rows)`);
     } catch (err) {
       console.error(`  SQL batch ${batchNum} failed: ${err.message}`);
-    } finally {
-      try { unlinkSync(tmpFile); } catch {}
     }
   }
 
-  console.log(`\n✅ Applied ${insertLines.length} keyword entries to ${flag.replace('--', '')} D1`);
+  console.log(`\n✅ Updated keywords for ${matched} products in product_catalog (${d1Flag.replace('--', '')})`);
 }

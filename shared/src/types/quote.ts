@@ -53,7 +53,6 @@ export interface QuoteDraft {
   selectedTemplateName: string | null;
   lineItems: QuoteLineItem[];
   unresolvedItems: QuoteLineItem[];
-  catalogSource: 'jobber' | 'manual';
   jobberRequestId: string | null;
   clientName?: string | null;
   status: 'draft' | 'finalized';

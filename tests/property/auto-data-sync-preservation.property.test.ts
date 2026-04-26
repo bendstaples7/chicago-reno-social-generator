@@ -399,13 +399,13 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
     expect(methodBody).toMatch(/return\s*\[\]/);
   });
 
-  it('route handler falls back to manual catalog when Jobber is unavailable', () => {
+  it('route handler uses unified product_catalog via fetchCatalog', () => {
     const quotesSource = readFileSync(
       resolve(__dirname, '../../worker/src/routes/quotes.ts'),
       'utf-8',
     );
 
-    // Scope to the POST /generate handler where the catalog fallback lives
+    // Scope to the POST /generate handler where the catalog fetching lives
     const generateHandlerMatch = quotesSource.match(/app\.post\('\/generate'\s*,/);
     expect(generateHandlerMatch).not.toBeNull();
     const handlerStart = generateHandlerMatch!.index!;
@@ -415,10 +415,11 @@ describe('Property 4 — Jobber Fallback Preservation', () => {
       ? quotesSource.slice(handlerStart, handlerStart + 1 + nextRouteOffset)
       : quotesSource.slice(handlerStart);
 
-    // The route handler checks isAvailable() after fetchProductCatalog
-    // and falls back to fetchManualCatalog when Jobber is unavailable
-    expect(handlerBody).toMatch(/jobberIntegration\.isAvailable\(\)/);
-    expect(handlerBody).toMatch(/fetchManualCatalog/);
+    // The route handler uses fetchCatalog to read from the unified product_catalog table
+    expect(handlerBody).toMatch(/fetchCatalog\(db,\s*userId\)/);
+    // It no longer branches on Jobber availability for catalog fetching
+    expect(handlerBody).not.toMatch(/jobberIntegration\.isAvailable\(\)/);
+    expect(handlerBody).not.toMatch(/fetchManualCatalog/);
   });
 
   it('route handler always uses D1 for templates (Jobber has no templates API)', () => {

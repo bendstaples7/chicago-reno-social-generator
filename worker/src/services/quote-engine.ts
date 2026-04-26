@@ -10,7 +10,6 @@ export interface QuoteEngineInput {
   customerText: string;
   mediaItemIds: string[];
   userId: string;
-  catalogSource: 'jobber' | 'manual';
   manualCatalog?: ProductCatalogEntry[];
   manualTemplates?: QuoteTemplate[];
   similarQuotes?: SimilarQuote[];
@@ -450,7 +449,6 @@ export class QuoteEngine {
       selectedTemplateName: aiResult.selectedTemplateName,
       lineItems,
       unresolvedItems,
-      catalogSource: input.catalogSource,
       jobberRequestId: null,
       status: 'draft',
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,

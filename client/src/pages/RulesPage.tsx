@@ -818,8 +818,11 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
     setDragOverIndex(null);
   };
 
-  const handleDragLeave = () => {
-    setDragOverIndex(null);
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only clear if leaving the row entirely (not entering a child element)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOverIndex(null);
+    }
   };
 
   if (loading) return <p>Loading product catalog…</p>;
@@ -947,7 +950,9 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
               borderRadius: 6,
               boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
               opacity: dragIndex === index ? 0.4 : 1,
-              borderTop: dragOverIndex === index ? '2px solid #00a89d' : '1px solid #e0e0e0',
+              boxShadow: dragOverIndex === index
+                ? 'inset 0 2px 0 0 #00a89d, 0 1px 2px rgba(0,0,0,0.04)'
+                : '0 1px 2px rgba(0,0,0,0.04)',
               transition: 'opacity 0.15s ease',
             }}
           >

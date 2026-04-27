@@ -13,6 +13,11 @@ const FETCH_REQUEST_CLIENT_QUERY = `
       id
       client {
         id
+        clientProperties(first: 1) {
+          nodes {
+            id
+          }
+        }
       }
     }
   }
@@ -60,11 +65,11 @@ export class JobberQuotePushService {
       });
     }
 
-    // Step 1: Resolve the customer ID from the linked request
-    const clientId = await this.resolveCustomerId(draft.jobberRequestId);
+    // Step 1: Resolve the customer ID and property ID from the linked request
+    const { clientId, propertyId } = await this.resolveCustomerAndProperty(draft.jobberRequestId);
 
     // Step 2: Build the quoteCreate mutation input
-    const { query, variables } = this.buildQuoteCreateInput(draft, clientId);
+    const { query, variables } = this.buildQuoteCreateInput(draft, clientId, propertyId);
 
     // Step 3: Execute the mutation
     const response = await this.jobberIntegration.graphqlRequest<{
@@ -110,43 +115,46 @@ export class JobberQuotePushService {
   }
 
   /**
-   * Resolve the Jobber client ID from a request ID.
-   * First checks D1 webhook cache, then falls back to a live GraphQL query.
+   * Resolve the Jobber client ID and property ID from a request ID.
+   * Property ID is required by the Jobber quoteCreate mutation.
    */
-  private async resolveCustomerId(jobberRequestId: string): Promise<string> {
-    // Try cached webhook data first
-    const cached = await this.db.prepare(
-      'SELECT request_body FROM jobber_webhook_requests WHERE jobber_request_id = ? AND request_body IS NOT NULL LIMIT 1'
-    ).bind(jobberRequestId).first<{ request_body: string }>();
-
-    if (cached?.request_body) {
-      try {
-        const detail = JSON.parse(cached.request_body);
-        if (detail.client?.id) {
-          return detail.client.id;
-        }
-      } catch {
-        // Fall through to live query
-      }
-    }
-
-    // Fall back to live GraphQL query
+  private async resolveCustomerAndProperty(jobberRequestId: string): Promise<{ clientId: string; propertyId: string }> {
     const response = await this.jobberIntegration.graphqlRequest<{
-      request: { id: string; client: { id: string } | null } | null;
+      request: {
+        id: string;
+        client: {
+          id: string;
+          clientProperties: { nodes: Array<{ id: string }> };
+        } | null;
+      } | null;
     }>(FETCH_REQUEST_CLIENT_QUERY, { id: jobberRequestId });
 
     if (!response.request?.client?.id) {
       throw new PlatformError({
         severity: 'error',
         component: 'JobberQuotePushService',
-        operation: 'resolveCustomerId',
+        operation: 'resolveCustomerAndProperty',
         description: 'The customer request does not have a linked client in Jobber. Cannot create a quote without a customer.',
         recommendedActions: ['Link a client to the request in Jobber, then retry'],
         statusCode: 422,
       });
     }
 
-    return response.request.client.id;
+    const clientId = response.request.client.id;
+    const propertyId = response.request.client.clientProperties?.nodes?.[0]?.id;
+
+    if (!propertyId) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'JobberQuotePushService',
+        operation: 'resolveCustomerAndProperty',
+        description: 'The client does not have a property in Jobber. A property is required to create a quote.',
+        recommendedActions: ['Add a property to the client in Jobber, then retry'],
+        statusCode: 422,
+      });
+    }
+
+    return { clientId, propertyId };
   }
 
   /**
@@ -155,12 +163,14 @@ export class JobberQuotePushService {
   private buildQuoteCreateInput(
     draft: QuoteDraft,
     clientId: string,
+    propertyId: string,
   ): { query: string; variables: Record<string, unknown> } {
     const lineItems = draft.lineItems.map((item) => {
       const mapped: Record<string, unknown> = {
         name: item.productName,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        saveToProductsAndServices: false,
       };
       if (item.description) {
         mapped.description = item.description;
@@ -184,9 +194,15 @@ export class JobberQuotePushService {
 
     const input: Record<string, unknown> = {
       clientId,
+      propertyId,
       title,
       lineItems,
     };
+
+    // Link to the originating Jobber request
+    if (draft.jobberRequestId) {
+      input.requestId = draft.jobberRequestId;
+    }
 
     if (message) {
       input.message = message;

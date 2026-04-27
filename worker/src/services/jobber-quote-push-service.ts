@@ -175,9 +175,6 @@ export class JobberQuotePushService {
       if (item.description) {
         mapped.description = item.description;
       }
-      if (item.productCatalogEntryId) {
-        mapped.productOrServiceId = item.productCatalogEntryId;
-      }
       return mapped;
     });
 

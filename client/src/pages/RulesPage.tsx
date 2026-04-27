@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Rule, RuleGroupWithRules, ProductCatalogEntry } from 'shared';
 import {
   fetchRules,
@@ -725,6 +725,53 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const scrollSpeedRef = useRef(0);
+
+  // Auto-scroll during drag: when cursor is within SCROLL_ZONE px of viewport
+  // top/bottom, scroll the page at a speed proportional to how close to the edge.
+  const SCROLL_ZONE = 80; // px from edge to start scrolling
+  const MAX_SCROLL_SPEED = 12; // px per frame
+
+  const startAutoScroll = useCallback(() => {
+    const tick = () => {
+      if (scrollSpeedRef.current !== 0) {
+        window.scrollBy(0, scrollSpeedRef.current);
+      }
+      scrollRafRef.current = requestAnimationFrame(tick);
+    };
+    if (scrollRafRef.current === null) {
+      scrollRafRef.current = requestAnimationFrame(tick);
+    }
+  }, []);
+
+  const stopAutoScroll = useCallback(() => {
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = null;
+    }
+    scrollSpeedRef.current = 0;
+  }, []);
+
+  const updateAutoScroll = useCallback((clientY: number) => {
+    const vh = window.innerHeight;
+    if (clientY < SCROLL_ZONE) {
+      // Near top — scroll up (negative). Faster the closer to edge.
+      const ratio = 1 - clientY / SCROLL_ZONE;
+      scrollSpeedRef.current = -Math.round(MAX_SCROLL_SPEED * ratio);
+      startAutoScroll();
+    } else if (clientY > vh - SCROLL_ZONE) {
+      // Near bottom — scroll down (positive). Faster the closer to edge.
+      const ratio = 1 - (vh - clientY) / SCROLL_ZONE;
+      scrollSpeedRef.current = Math.round(MAX_SCROLL_SPEED * ratio);
+      startAutoScroll();
+    } else {
+      scrollSpeedRef.current = 0;
+    }
+  }, [startAutoScroll]);
+
+  // Clean up auto-scroll on unmount
+  useEffect(() => () => stopAutoScroll(), [stopAutoScroll]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -793,6 +840,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
+    updateAutoScroll(e.clientY);
     if (dragIndex === null || index === dragIndex) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
@@ -803,6 +851,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
 
   const handleDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
+    stopAutoScroll();
     if (dragIndex === null || dragIndex === index) {
       setDragIndex(null);
       setDragOverIndex(null);
@@ -836,6 +885,7 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   };
 
   const handleDragEnd = () => {
+    stopAutoScroll();
     setDragIndex(null);
     setDragOverIndex(null);
     setDropPosition(null);

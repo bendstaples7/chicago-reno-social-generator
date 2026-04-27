@@ -766,9 +766,10 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
       scrollSpeedRef.current = Math.round(MAX_SCROLL_SPEED * ratio);
       startAutoScroll();
     } else {
-      scrollSpeedRef.current = 0;
+      // Outside scroll zones — stop the loop entirely to avoid idle RAF ticks
+      stopAutoScroll();
     }
-  }, [startAutoScroll]);
+  }, [startAutoScroll, stopAutoScroll]);
 
   // Clean up auto-scroll on unmount
   useEffect(() => () => stopAutoScroll(), [stopAutoScroll]);

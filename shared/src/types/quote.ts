@@ -28,6 +28,15 @@ export interface QuoteTemplate {
   source: 'manual';
 }
 
+/** An action item requiring user input before a line item can be finalized */
+export interface ActionItem {
+  id: string;
+  quoteDraftId: string;
+  lineItemId: string;
+  description: string;
+  completed: boolean;
+}
+
 /** A matched line item in a quote draft */
 export interface QuoteLineItem {
   id: string;
@@ -58,6 +67,7 @@ export interface QuoteDraft {
   jobberQuoteId?: string | null;
   jobberQuoteNumber?: string | null;
   status: 'draft' | 'finalized';
+  actionItems?: ActionItem[];
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];
   createdAt: Date;
@@ -125,6 +135,7 @@ export interface RevisionHistoryEntry {
 export interface QuoteDraftUpdate {
   lineItems?: Partial<QuoteLineItem>[];
   unresolvedItems?: Partial<QuoteLineItem>[];
+  actionItems?: Partial<ActionItem>[];
   selectedTemplateId?: string | null;
   status?: 'draft' | 'finalized';
 }

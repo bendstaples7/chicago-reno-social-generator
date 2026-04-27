@@ -3,6 +3,11 @@ import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.
 import { executeRules } from './rules-engine.js';
 import type { ProductCatalogEntry, QuoteLineItem, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
 
+export interface AIActionItem {
+  lineItemProductName: string;
+  description: string;
+}
+
 const REVISION_TIMEOUT_MS = 300_000;
 const CONFIDENCE_THRESHOLD = 70;
 
@@ -18,6 +23,8 @@ export interface RevisionInput {
 export interface RevisionOutput {
   lineItems: QuoteLineItem[];
   unresolvedItems: QuoteLineItem[];
+  /** Action items detected by the AI for line items needing additional user input. */
+  actionItems?: AIActionItem[];
   /** True when the AI response could not be parsed and the original items were returned unchanged. */
   revisionFailed?: boolean;
   /** Audit trail from the deterministic rules engine, if structured rules were applied. */
@@ -61,6 +68,13 @@ const SYSTEM_PROMPT = [
   '- When BUSINESS RULES are provided, follow them when revising line items. Rules can change description, quantity, and unitPrice on a line item. productName must always match the exact catalog product name. For each line item, include a "ruleIdsApplied" array listing the IDs of any business rules that influenced that line item. If no rules apply, use an empty array.',
   '- CRITICAL: Do NOT include duplicate line items. Each product should appear at most once. If the same product applies to multiple areas, use a single line item with an appropriate quantity instead of separate entries.',
   '',
+  'ACTION ITEMS:',
+  '- For each line item, determine if the customer provided enough information to accurately price it.',
+  '- If a line item requires measurements (e.g., square footage, linear feet) not mentioned in the request, add an action item.',
+  '- If a line item requires a specific quantity (e.g., number of cabinets, fixtures, outlets) that the customer did not specify, add an action item.',
+  '- Do NOT add action items for line items where the customer provided sufficient detail.',
+  '- Action item descriptions should be concise and actionable (e.g., "Square footage needed for accurate pricing", "Number of cabinets to install needed").',
+  '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
   '  "lineItems": [',
@@ -73,6 +87,12 @@ const SYSTEM_PROMPT = [
   '      "originalText": "original text for this item",',
   '      "unmatchedReason": "reason or omit if matched",',
   '      "ruleIdsApplied": ["rule-id-1", "rule-id-2"]',
+  '    }',
+  '  ],',
+  '  "actionItems": [',
+  '    {',
+  '      "lineItemProductName": "exact product name from lineItems",',
+  '      "description": "What information is needed"',
   '    }',
   '  ]',
   '}',
@@ -210,7 +230,7 @@ export class RevisionEngine {
   private async parseAndValidate(raw: string, input: RevisionInput): Promise<RevisionOutput> {
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-    let parsed: { lineItems?: AILineItem[] };
+    let parsed: { lineItems?: AILineItem[]; actionItems?: unknown };
     try {
       parsed = JSON.parse(cleaned);
     } catch {
@@ -231,10 +251,11 @@ export class RevisionEngine {
       };
     }
 
-    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText);
+    const actionItems = this.validateAIActionItems(parsed.actionItems);
+    return this.validateAndPartition(parsed.lineItems, input.catalog, input.structuredRules, input.customerRequestText, actionItems);
   }
 
-  private async validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string): Promise<RevisionOutput> {
+  private async validateAndPartition(aiItems: AILineItem[], catalog: ProductCatalogEntry[], structuredRules?: StructuredRule[], customerRequestText?: string, actionItems?: AIActionItem[]): Promise<RevisionOutput> {
     // Build a name-based lookup (case-insensitive) for catalog matching.
     // Skip empty/whitespace names; on duplicate keys keep the first entry.
     const catalogByName = new Map<string, ProductCatalogEntry>();
@@ -405,7 +426,21 @@ export class RevisionEngine {
     return {
       lineItems,
       unresolvedItems,
+      actionItems: actionItems && actionItems.length > 0 ? actionItems : undefined,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
     };
+  }
+
+  private validateAIActionItems(raw: unknown): AIActionItem[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (item): item is AIActionItem =>
+        item != null &&
+        typeof item === 'object' &&
+        typeof (item as AIActionItem).lineItemProductName === 'string' &&
+        (item as AIActionItem).lineItemProductName.trim() !== '' &&
+        typeof (item as AIActionItem).description === 'string' &&
+        (item as AIActionItem).description.trim() !== '',
+    );
   }
 }

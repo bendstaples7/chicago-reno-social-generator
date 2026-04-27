@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule, ProductCatalogEntry } from 'shared';
+import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule, ProductCatalogEntry, ActionItem } from 'shared';
 import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft, updateDraft, fetchCatalog, updateCatalogEntry, pushDraftToJobber } from '../api';
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
@@ -388,6 +388,24 @@ export default function QuoteDraftPage() {
       await loadDraft();
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Action item toggle handler ──
+
+  const handleToggleActionItem = async (actionItemId: string) => {
+    if (!draft || !id) return;
+    const prevDraft = draft;
+    const updatedActionItems = (draft.actionItems ?? []).map((item) =>
+      item.id === actionItemId ? { ...item, completed: !item.completed } : item,
+    );
+    // Optimistic update
+    setDraft({ ...draft, actionItems: updatedActionItems });
+    try {
+      await updateDraft(id, { actionItems: updatedActionItems });
+    } catch {
+      // Revert on failure — error toast is shown automatically by the API layer
+      setDraft(prevDraft);
     }
   };
 
@@ -895,6 +913,61 @@ export default function QuoteDraftPage() {
         </div>
       )}
 
+      {/* Action Items Panel — hidden when empty or undefined */}
+      {draft.actionItems && draft.actionItems.length > 0 && (() => {
+        const allLineItems = [...draft.lineItems, ...draft.unresolvedItems];
+        const incompleteCount = draft.actionItems.filter((ai) => !ai.completed).length;
+        return (
+          <div style={actionItemsSectionStyle}>
+            <h2 style={sectionTitleStyle}>
+              📋 Action Items ({incompleteCount} remaining)
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {draft.actionItems.map((actionItem) => {
+                const linkedLineItem = allLineItems.find((li) => li.id === actionItem.lineItemId);
+                const productName = linkedLineItem?.productName ?? 'Unknown item';
+                return (
+                  <label
+                    key={actionItem.id}
+                    style={{
+                      ...actionItemRowStyle,
+                      opacity: actionItem.completed ? 0.5 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={actionItem.completed}
+                      onChange={() => handleToggleActionItem(actionItem.id)}
+                      style={actionItemCheckboxStyle}
+                      aria-label={`Mark "${actionItem.description}" for ${productName} as ${actionItem.completed ? 'incomplete' : 'complete'}`}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{
+                        fontWeight: 600,
+                        fontSize: '0.9rem',
+                        color: '#333',
+                        textDecoration: actionItem.completed ? 'line-through' : 'none',
+                      }}>
+                        {productName}
+                      </span>
+                      <span style={{
+                        display: 'block',
+                        fontSize: '0.8rem',
+                        color: '#666',
+                        marginTop: '0.15rem',
+                        textDecoration: actionItem.completed ? 'line-through' : 'none',
+                      }}>
+                        {actionItem.description}
+                      </span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Feedback input */}
       <div style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Revise This Quote</h2>
@@ -1206,6 +1279,35 @@ const unresolvedSectionStyle: React.CSSProperties = {
   borderRadius: 8,
   padding: '1rem 1.25rem',
   marginBottom: '1rem',
+};
+
+const actionItemsSectionStyle: React.CSSProperties = {
+  background: '#e8f5e9',
+  border: '1px solid #a5d6a7',
+  borderRadius: 8,
+  padding: '1rem 1.25rem',
+  marginBottom: '1rem',
+};
+
+const actionItemRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: '0.6rem',
+  padding: '0.5rem 0.6rem',
+  background: '#fff',
+  borderRadius: 6,
+  border: '1px solid #e0e0e0',
+  cursor: 'pointer',
+  transition: 'opacity 0.2s',
+};
+
+const actionItemCheckboxStyle: React.CSSProperties = {
+  marginTop: '0.2rem',
+  width: 16,
+  height: 16,
+  flexShrink: 0,
+  cursor: 'pointer',
+  accentColor: '#00a89d',
 };
 
 const sectionTitleStyle: React.CSSProperties = {

@@ -1,5 +1,5 @@
 import { PlatformError } from '../errors/index.js';
-import type { QuoteDraft, QuoteDraftUpdate, QuoteLineItem } from 'shared';
+import type { ActionItem, QuoteDraft, QuoteDraftUpdate, QuoteLineItem } from 'shared';
 
 export class QuoteDraftService {
   private readonly db: D1Database;
@@ -61,6 +61,14 @@ export class QuoteDraftService {
         );
       }
 
+      for (const actionItem of draft.actionItems ?? []) {
+        statements.push(
+          this.db.prepare(
+            "INSERT INTO action_items (id, quote_draft_id, line_item_id, description, completed) VALUES (?, ?, ?, ?, ?)"
+          ).bind(actionItem.id, draft.id, actionItem.lineItemId, actionItem.description, actionItem.completed ? 1 : 0),
+        );
+      }
+
       try {
         await this.db.batch(statements);
         break; // Success — exit retry loop
@@ -82,7 +90,7 @@ export class QuoteDraftService {
       'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, status, jobber_request_id, draft_number, jobber_quote_id, jobber_quote_number, created_at, updated_at FROM quote_drafts WHERE id = ?'
     ).bind(draft.id).first() as any;
 
-    return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems);
+    return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems, draft.actionItems);
   }
 
   /**
@@ -104,7 +112,8 @@ export class QuoteDraftService {
     }
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
-    return this.mapDraftRow(row, lineItems, unresolvedItems);
+    const actionItems = await this.fetchActionItems(draftId);
+    return this.mapDraftRow(row, lineItems, unresolvedItems, actionItems);
   }
 
   /**
@@ -118,7 +127,8 @@ export class QuoteDraftService {
     const drafts: QuoteDraft[] = [];
     for (const row of result.results as any[]) {
       const { lineItems, unresolvedItems } = await this.fetchLineItems(row.id as string);
-      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems));
+      const actionItems = await this.fetchActionItems(row.id as string);
+      drafts.push(this.mapDraftRow(row, lineItems, unresolvedItems, actionItems));
     }
     return drafts;
   }
@@ -187,6 +197,23 @@ export class QuoteDraftService {
       }
     }
 
+    // Replace action items if provided; leave unchanged when not provided
+    if (updates.actionItems !== undefined) {
+      statements.push(
+        this.db.prepare('DELETE FROM action_items WHERE quote_draft_id = ?').bind(draftId),
+      );
+
+      for (const actionItem of updates.actionItems) {
+        if (actionItem.id && actionItem.lineItemId && actionItem.description != null && actionItem.completed != null) {
+          statements.push(
+            this.db.prepare(
+              "INSERT INTO action_items (id, quote_draft_id, line_item_id, description, completed) VALUES (?, ?, ?, ?, ?)"
+            ).bind(actionItem.id, draftId, actionItem.lineItemId, actionItem.description, actionItem.completed ? 1 : 0),
+          );
+        }
+      }
+    }
+
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
@@ -194,7 +221,8 @@ export class QuoteDraftService {
     ).bind(draftId).first() as any;
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
-    return this.mapDraftRow(row, lineItems, unresolvedItems);
+    const actionItems = await this.fetchActionItems(draftId);
+    return this.mapDraftRow(row, lineItems, unresolvedItems, actionItems);
   }
 
   /**
@@ -218,6 +246,7 @@ export class QuoteDraftService {
 
     // D1 doesn't support CASCADE reliably in all cases, so delete child rows first
     await this.db.batch([
+      this.db.prepare('DELETE FROM action_items WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM line_item_rules WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM quote_revision_history WHERE quote_draft_id = ?').bind(draftId),
       this.db.prepare('DELETE FROM quote_media WHERE quote_draft_id = ?').bind(draftId),
@@ -287,6 +316,20 @@ export class QuoteDraftService {
     return { lineItems, unresolvedItems };
   }
 
+  private async fetchActionItems(draftId: string): Promise<ActionItem[]> {
+    const result = await this.db.prepare(
+      'SELECT id, quote_draft_id, line_item_id, description, completed FROM action_items WHERE quote_draft_id = ? ORDER BY created_at ASC'
+    ).bind(draftId).all();
+
+    return (result.results as any[]).map((row) => ({
+      id: row.id as string,
+      quoteDraftId: row.quote_draft_id as string,
+      lineItemId: row.line_item_id as string,
+      description: row.description as string,
+      completed: row.completed === 1 || row.completed === true,
+    }));
+  }
+
   private mapLineItemRow(row: Record<string, unknown>): QuoteLineItem {
     return {
       id: row.id as string,
@@ -306,6 +349,7 @@ export class QuoteDraftService {
     row: Record<string, unknown>,
     lineItems: QuoteLineItem[],
     unresolvedItems: QuoteLineItem[],
+    actionItems?: ActionItem[],
   ): QuoteDraft {
     if (row.draft_number == null) {
       console.warn(`[QuoteDraftService] draft_number is NULL for draft id=${row.id}, created_at=${row.created_at} — falling back to 0`);
@@ -323,6 +367,7 @@ export class QuoteDraftService {
       jobberQuoteId: (row.jobber_quote_id as string) ?? null,
       jobberQuoteNumber: (row.jobber_quote_number as string) ?? null,
       status: row.status as QuoteDraft['status'],
+      actionItems,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };

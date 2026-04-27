@@ -990,7 +990,7 @@ export default function QuoteDraftPage() {
       {/* Push to Jobber section */}
       <div style={{ ...sectionStyle, marginTop: '1rem' }}>
         <h2 style={sectionTitleStyle}>Push to Jobber</h2>
-        {draft.jobberQuoteId ? (
+        {draft.jobberQuoteId && draft.jobberQuoteNumber ? (
           <div>
             <p style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: '#333' }}>
               ✅ Pushed as Jobber Quote <strong>{draft.jobberQuoteNumber}</strong>

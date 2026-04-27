@@ -42,6 +42,7 @@ interface ActionResult {
     separator?: string;
     matchingLineItemIds: string[];
   };
+  customerNoteValue?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,8 @@ const ACTION_TYPES = new Set([
   'set_description',
   'append_description',
   'extract_request_context',
+  'set_customer_note',
+  'append_customer_note',
 ]);
 
 export function validateCondition(condition: unknown): { valid: boolean; error?: string } {
@@ -264,6 +267,21 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
         return { valid: false, error: 'Action type "extract_request_context" optional "separator" must be a string' };
       }
       break;
+
+    case 'set_customer_note':
+      if (typeof act.text !== 'string' || act.text.trim() === '') {
+        return { valid: false, error: 'set_customer_note requires a non-empty string "text" field' };
+      }
+      break;
+
+    case 'append_customer_note':
+      if (typeof act.text !== 'string' || act.text.trim() === '') {
+        return { valid: false, error: 'append_customer_note requires a non-empty string "text" field' };
+      }
+      if (act.separator !== undefined && typeof act.separator !== 'string') {
+        return { valid: false, error: 'append_customer_note "separator" must be a string if provided' };
+      }
+      break;
   }
 
   return { valid: true };
@@ -402,6 +420,7 @@ function executeAction(
   lineItems: EngineLineItem[],
   catalog: ProductCatalogEntry[],
   ruleId: string,
+  customerNote: string | null,
 ): ActionResult {
   switch (action.type) {
     case 'add_line_item': {
@@ -778,6 +797,33 @@ function executeAction(
       };
     }
 
+    case 'set_customer_note': {
+      const previousValue = customerNote;
+      const newValue = action.text;
+      return {
+        modified: true,
+        lineItems,
+        customerNoteValue: newValue,
+        beforeSnapshot: [{ id: '__customer_note__', productName: 'Customer Note', description: previousValue ?? '', quantity: 0, unitPrice: 0 }],
+        afterSnapshot: [{ id: '__customer_note__', productName: 'Customer Note', description: newValue, quantity: 0, unitPrice: 0 }],
+      };
+    }
+
+    case 'append_customer_note': {
+      const separator = action.separator ?? '\n';
+      const previousValue = customerNote;
+      const newValue = (!previousValue || previousValue === '')
+        ? action.text
+        : previousValue + separator + action.text;
+      return {
+        modified: true,
+        lineItems,
+        customerNoteValue: newValue,
+        beforeSnapshot: [{ id: '__customer_note__', productName: 'Customer Note', description: previousValue ?? '', quantity: 0, unitPrice: 0 }],
+        afterSnapshot: [{ id: '__customer_note__', productName: 'Customer Note', description: newValue, quantity: 0, unitPrice: 0 }],
+      };
+    }
+
     default:
       return { modified: false, lineItems };
   }
@@ -800,10 +846,11 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
   const auditTrail: AuditEntry[] = [];
   const pendingEnrichments: PendingEnrichment[] = [];
+  let customerNote: string | null = null;
 
   // Early exit: no rules → return unmodified
   if (rules.length === 0) {
-    return { lineItems, auditTrail, iterationCount: 0, converged: true, pendingEnrichments: [] };
+    return { lineItems, auditTrail, iterationCount: 0, converged: true, pendingEnrichments: [], customerNote: null };
   }
 
   // Track which (ruleId, lineItemId) pairs have been applied to prevent
@@ -874,8 +921,13 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
       // Execute each action
       for (const action of rule.actions) {
-        const actionResult = executeAction(action, lineItems, catalog, rule.id);
+        const actionResult = executeAction(action, lineItems, catalog, rule.id, customerNote);
         lineItems = actionResult.lineItems;
+
+        // Update customer note state if the action produced a new value
+        if (actionResult.customerNoteValue !== undefined) {
+          customerNote = actionResult.customerNoteValue;
+        }
 
         if (actionResult.modified || actionResult.warning || actionResult.pendingEnrichment) {
           auditTrail.push({
@@ -926,7 +978,7 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
 
     // Convergence: no modifications this iteration
     if (!anyModified) {
-      return { lineItems, auditTrail, iterationCount, converged: true, pendingEnrichments };
+      return { lineItems, auditTrail, iterationCount, converged: true, pendingEnrichments, customerNote };
     }
   }
 
@@ -945,5 +997,5 @@ export function executeRules(input: RulesEngineInput): RulesEngineResult {
     warning: `Rules engine did not converge after ${maxIterations} iterations`,
   });
 
-  return { lineItems, auditTrail, iterationCount, converged: false, pendingEnrichments };
+  return { lineItems, auditTrail, iterationCount, converged: false, pendingEnrichments, customerNote };
 }

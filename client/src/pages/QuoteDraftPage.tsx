@@ -49,6 +49,10 @@ export default function QuoteDraftPage() {
   const [showCustomForm, setShowCustomForm] = useState(false);
   const [customName, setCustomName] = useState('');
 
+  // Customer note state
+  const [customerNoteValue, setCustomerNoteValue] = useState('');
+  const [customerNoteSaved, setCustomerNoteSaved] = useState('');
+
   // Push to Jobber state
   const [pushing, setPushing] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
@@ -90,6 +94,13 @@ export default function QuoteDraftPage() {
       .catch(() => { /* supplementary; ignore errors */ });
     return () => { cancelled = true; };
   }, [draft?.jobberRequestId]);
+
+  // Sync customer note state when draft loads or changes
+  useEffect(() => {
+    const note = draft?.customerNote ?? '';
+    setCustomerNoteValue(note);
+    setCustomerNoteSaved(note);
+  }, [draft?.customerNote]);
 
   const handleSubmitFeedback = async () => {
     if (!id || !feedbackText.trim()) {
@@ -181,6 +192,21 @@ export default function QuoteDraftPage() {
       setTemplateSaveError(true);
     } finally {
       setSavingTemplate(false);
+    }
+  };
+
+  // ── Customer note save-on-blur handler ──
+
+  const handleCustomerNoteBlur = async () => {
+    const trimmed = customerNoteValue.trim() || null;
+    const savedTrimmed = customerNoteSaved.trim() || null;
+    if (trimmed === savedTrimmed) return;
+
+    try {
+      await updateDraft(id!, { customerNote: trimmed });
+      setCustomerNoteSaved(customerNoteValue);
+    } catch {
+      // Error toast is shown automatically by the API layer
     }
   };
 
@@ -1063,6 +1089,24 @@ export default function QuoteDraftPage() {
       {/* Draft metadata */}
       <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '1.5rem' }}>
         Created: {new Date(draft.createdAt).toLocaleString()}
+      </div>
+
+      {/* Note to Customer */}
+      <div style={{ marginTop: '1.5rem' }}>
+        <label htmlFor="customer-note" style={{ fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>
+          Note to Customer
+        </label>
+        <textarea
+          id="customer-note"
+          rows={4}
+          placeholder="Optional note visible to the customer on the published quote..."
+          value={customerNoteValue}
+          onChange={(e) => setCustomerNoteValue(e.target.value)}
+          onBlur={handleCustomerNoteBlur}
+          disabled={draft.status === 'finalized'}
+          readOnly={draft.status === 'finalized'}
+          style={{ ...feedbackInputStyle, resize: 'vertical' }}
+        />
       </div>
 
       {/* Push to Jobber section */}

@@ -29,6 +29,8 @@ export interface RevisionOutput {
   revisionFailed?: boolean;
   /** Audit trail from the deterministic rules engine, if structured rules were applied. */
   rulesEngineAuditTrail?: AuditEntry[];
+  /** Customer note produced by the rules engine, if any customer note actions fired. */
+  customerNote?: string | null;
 }
 
 interface AILineItem {
@@ -343,6 +345,7 @@ export class RevisionEngine {
     // Convert validated AI line items to EngineLineItem format, run the
     // deterministic rules engine, then convert back for deduplication.
     let auditTrail: AuditEntry[] | undefined;
+    let rulesCustomerNote: string | null = null;
 
     // Capture original unmatchedReasons before the rules engine may rebuild allItems
     const unmatchedReasonById = new Map<string, string>();
@@ -373,6 +376,7 @@ export class RevisionEngine {
       });
 
       auditTrail = engineResult.auditTrail;
+      rulesCustomerNote = engineResult.customerNote;
 
       // Process AI enrichments synchronously (extract_request_context actions)
       if (engineResult.pendingEnrichments.length > 0 && customerRequestText?.trim()) {
@@ -428,6 +432,7 @@ export class RevisionEngine {
       unresolvedItems,
       actionItems: actionItems && actionItems.length > 0 ? actionItems : undefined,
       rulesEngineAuditTrail: auditTrail && auditTrail.length > 0 ? auditTrail : undefined,
+      customerNote: rulesCustomerNote,
     };
   }
 

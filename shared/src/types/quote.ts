@@ -70,6 +70,7 @@ export interface QuoteDraft {
   actionItems?: ActionItem[];
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];
+  customerNote: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -138,6 +139,7 @@ export interface QuoteDraftUpdate {
   actionItems?: ActionItem[];
   selectedTemplateId?: string | null;
   status?: 'draft' | 'finalized';
+  customerNote?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +179,9 @@ export type RuleActionType =
   | 'set_unit_price'
   | 'set_description'
   | 'append_description'
-  | 'extract_request_context';
+  | 'extract_request_context'
+  | 'set_customer_note'
+  | 'append_customer_note';
 
 /** A typed action for a structured rule */
 export type RuleAction =
@@ -189,7 +193,9 @@ export type RuleAction =
   | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }
   | { type: 'set_description'; productNamePattern: string; description: string }
   | { type: 'append_description'; productNamePattern: string; text: string; separator?: string }
-  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string };
+  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string }
+  | { type: 'set_customer_note'; text: string }
+  | { type: 'append_customer_note'; text: string; separator?: string };
 
 /** A structured rule with typed condition and actions */
 export interface StructuredRule {
@@ -234,6 +240,7 @@ export interface RulesEngineResult {
   iterationCount: number;
   converged: boolean;
   pendingEnrichments: PendingEnrichment[];
+  customerNote: string | null;
 }
 
 /** A pending AI enrichment for a line item description */

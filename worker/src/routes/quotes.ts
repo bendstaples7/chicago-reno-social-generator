@@ -702,6 +702,7 @@ app.post('/drafts/:id/revise', async (c) => {
     lineItems: revised.lineItems,
     unresolvedItems: revised.unresolvedItems,
     actionItems: mergedActionItems,
+    ...(revised.customerNote !== undefined && revised.customerNote !== null ? { customerNote: revised.customerNote } : {}),
   });
 
   // Persist the revision history entry (after successful update)

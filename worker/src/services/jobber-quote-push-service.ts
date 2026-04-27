@@ -182,12 +182,19 @@ export class JobberQuotePushService {
     const paddedNumber = String(draft.draftNumber ?? 0).padStart(3, '0');
     const title = `Draft D-${paddedNumber}`;
 
-    // Build message with unresolved items if any
-    let message: string | undefined;
+    // Build message: customerNote first, then unresolved items
+    const messageParts: string[] = [];
+
+    if (draft.customerNote?.trim()) {
+      messageParts.push(draft.customerNote.trim());
+    }
+
     if (draft.unresolvedItems && draft.unresolvedItems.length > 0) {
       const unresolvedTexts = draft.unresolvedItems.map((item) => `• ${item.originalText}`);
-      message = `Unresolved items from original request:\n${unresolvedTexts.join('\n')}`;
+      messageParts.push(`Unresolved items from original request:\n${unresolvedTexts.join('\n')}`);
     }
+
+    const message: string | undefined = messageParts.length > 0 ? messageParts.join('\n\n') : undefined;
 
     const input: Record<string, unknown> = {
       clientId,

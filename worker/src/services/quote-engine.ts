@@ -175,6 +175,7 @@ export class QuoteEngine {
       // Convert validated AI line items to EngineLineItem format, run the
       // deterministic rules engine, then convert back for deduplication.
       let auditTrail: AuditEntry[] | undefined;
+      let rulesCustomerNote: string | null = null;
 
       if (structuredRules && structuredRules.length > 0) {
         const engineLineItems: EngineLineItem[] = aiResult.lineItems.map((item) => ({
@@ -197,6 +198,7 @@ export class QuoteEngine {
         });
 
         auditTrail = engineResult.auditTrail;
+        rulesCustomerNote = engineResult.customerNote;
 
         // Process AI enrichments synchronously (extract_request_context actions)
         if (engineResult.pendingEnrichments.length > 0 && input.customerText?.trim()) {
@@ -239,7 +241,7 @@ export class QuoteEngine {
       // they are updated when rules are created via RulesService.
       aiResult.lineItems = sortLineItemsByCatalog(aiResult.lineItems, catalog);
 
-      return this.buildDraft(input, aiResult, auditTrail);
+      return this.buildDraft(input, aiResult, auditTrail, rulesCustomerNote);
     } catch (err) {
       if (err instanceof PlatformError) throw err;
 
@@ -454,6 +456,7 @@ export class QuoteEngine {
     input: QuoteEngineInput,
     aiResult: AIResponse,
     auditTrail?: AuditEntry[],
+    rulesCustomerNote?: string | null,
   ): QuoteEngineOutput {
     const now = new Date();
     const draftId = crypto.randomUUID();
@@ -509,6 +512,7 @@ export class QuoteEngine {
       unresolvedItems,
       jobberRequestId: null,
       status: 'draft',
+      customerNote: rulesCustomerNote ?? null,
       actionItems: actionItems.length > 0 ? actionItems : undefined,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: now,

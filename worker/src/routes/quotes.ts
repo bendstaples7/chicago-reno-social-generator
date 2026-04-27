@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../bindings.js';
-import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, SimilarQuote, StructuredRule, RuleCondition, RuleAction, TriggerMode } from 'shared';
+import type { User, ProductCatalogEntry, QuoteTemplate, JobberCustomerRequest, SimilarQuote, StructuredRule, RuleCondition, RuleAction, TriggerMode, ActionItem } from 'shared';
 import { sessionMiddleware } from '../middleware/session.js';
 import { PlatformError } from '../errors/index.js';
 import { JobberWebSession } from '../services/jobber-web-session.js';
@@ -27,6 +27,25 @@ function createRulesSync(env: Bindings): RulesSyncService {
     apiToken: env.CLOUDFLARE_API_TOKEN || '',
     databaseId: env.D1_DATABASE_ID || '',
     isLocal,
+  });
+}
+
+/**
+ * Merge new action items with old ones, preserving `completed: true` for items
+ * that match on `lineItemId` + `description`.
+ */
+function mergeActionItems(
+  oldItems: ActionItem[],
+  newItems: ActionItem[],
+): ActionItem[] {
+  return newItems.map(newItem => {
+    const match = oldItems.find(
+      old => old.lineItemId === newItem.lineItemId && old.description === newItem.description
+    );
+    return {
+      ...newItem,
+      completed: match?.completed ?? false,
+    };
   });
 }
 
@@ -427,13 +446,100 @@ app.put('/drafts/:id', async (c) => {
     unresolvedItems?: any[];
     selectedTemplateId?: string | null;
     status?: 'draft' | 'finalized';
+    actionItems?: any[];
   };
+
+  // Validate action items if provided
+  if (body.actionItems !== undefined) {
+    if (!Array.isArray(body.actionItems)) {
+      throw new PlatformError({
+        severity: 'error',
+        component: 'QuoteRoutes',
+        operation: 'updateDraft',
+        description: 'actionItems must be an array.',
+        recommendedActions: ['Provide actionItems as an array of action item objects'],
+      });
+    }
+    for (let i = 0; i < body.actionItems.length; i++) {
+      const item = body.actionItems[i];
+      if (item == null || typeof item !== 'object') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} must be a non-null object.`,
+          recommendedActions: ['Provide valid action item objects in the actionItems array'],
+        });
+      }
+      if (typeof item.id !== 'string' || item.id.trim() === '') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} has an invalid or missing "id". Each action item must have a non-empty string id.`,
+          recommendedActions: ['Provide a non-empty string id for each action item'],
+        });
+      }
+      if (typeof item.lineItemId !== 'string' || item.lineItemId.trim() === '') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} has an invalid or missing "lineItemId". Each action item must have a non-empty string lineItemId.`,
+          recommendedActions: ['Provide a non-empty string lineItemId for each action item'],
+        });
+      }
+      if (typeof item.description !== 'string' || item.description.trim() === '') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} has an invalid or missing "description". Each action item must have a non-empty string description.`,
+          recommendedActions: ['Provide a non-empty string description for each action item'],
+        });
+      }
+      if (typeof item.completed !== 'boolean') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} has an invalid or missing "completed" field. Each action item must have a boolean completed value.`,
+          recommendedActions: ['Provide a boolean completed value for each action item'],
+        });
+      }
+    }
+
+    // Validate lineItemIds reference actual line items in the draft
+    const quoteDraftServiceForValidation = new QuoteDraftService(c.env.DB);
+    const currentDraft = await quoteDraftServiceForValidation.getById(c.req.param('id'), c.get('user').id);
+    const validLineItemIds = new Set([
+      ...currentDraft.lineItems.map(li => li.id),
+      ...currentDraft.unresolvedItems.map(li => li.id),
+      // Also accept IDs from incoming lineItems if they're being updated simultaneously
+      ...(body.lineItems ?? []).map((li: any) => li.id).filter(Boolean),
+      ...(body.unresolvedItems ?? []).map((li: any) => li.id).filter(Boolean),
+    ]);
+    for (let i = 0; i < body.actionItems.length; i++) {
+      const item = body.actionItems[i];
+      if (!validLineItemIds.has(item.lineItemId)) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} references lineItemId "${item.lineItemId}" which does not exist in this draft's line items.`,
+          recommendedActions: ['Ensure each action item references a valid line item ID from this draft'],
+        });
+      }
+    }
+  }
+
   const quoteDraftService = new QuoteDraftService(c.env.DB);
   const draft = await quoteDraftService.update(c.req.param('id'), c.get('user').id, {
     lineItems: body.lineItems,
     unresolvedItems: body.unresolvedItems,
     selectedTemplateId: body.selectedTemplateId,
     status: body.status,
+    actionItems: body.actionItems,
   });
   return c.json(draft);
 });
@@ -567,10 +673,35 @@ app.post('/drafts/:id/revise', async (c) => {
     });
   }
 
-  // Update the draft with revised line items
+  // Build action items from AI output by matching product names to revised line items (case-insensitive)
+  const allRevisedItems = [...revised.lineItems, ...revised.unresolvedItems];
+  const newActionItems: ActionItem[] = [];
+  for (const aiAction of revised.actionItems ?? []) {
+    if (!aiAction.lineItemProductName) continue;
+    const normalizedName = aiAction.lineItemProductName.trim().toLowerCase().replace(/\s+/g, ' ');
+    const matchedLineItem = allRevisedItems.find(
+      (li) => li.productName.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedName,
+    );
+    if (matchedLineItem) {
+      newActionItems.push({
+        id: crypto.randomUUID(),
+        quoteDraftId: draftId,
+        lineItemId: matchedLineItem.id,
+        description: aiAction.description,
+        completed: false,
+      });
+    }
+  }
+
+  // Merge with old action items to preserve completion status
+  const oldActionItems = draft.actionItems ?? [];
+  const mergedActionItems = mergeActionItems(oldActionItems, newActionItems);
+
+  // Update the draft with revised line items and merged action items
   const updated = await quoteDraftService.update(draftId, userId, {
     lineItems: revised.lineItems,
     unresolvedItems: revised.unresolvedItems,
+    actionItems: mergedActionItems,
   });
 
   // Persist the revision history entry (after successful update)

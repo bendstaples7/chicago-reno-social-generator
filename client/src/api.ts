@@ -3,7 +3,7 @@ import type {
   ContentTypeTemplate, ContentSuggestion, Post, GeneratedContent,
   ChannelConnection, PublishResult, ContentType, UserSettings,
   ActivityLogEntry, AdvisorMode, ContentIdea, QuoteDraft,
-  ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate,
+  ProductCatalogEntry, QuoteTemplate, QuoteDraftUpdate, ActionItem,
   JobberCustomerRequest, SimilarQuote, JobberRequestFormData,
   Rule, RuleGroup, RuleGroupWithRules, SystemsStatusResponse,
   RuleCondition, RuleAction, TriggerMode,

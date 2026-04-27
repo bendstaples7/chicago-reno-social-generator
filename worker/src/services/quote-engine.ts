@@ -1,7 +1,7 @@
 import { PlatformError } from '../errors/index.js';
 import { deduplicateLineItems, sortLineItemsByCatalog } from './line-item-utils.js';
 import { executeRules } from './rules-engine.js';
-import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem } from 'shared';
+import type { ProductCatalogEntry, QuoteTemplate, QuoteDraft, QuoteLineItem, SimilarQuote, StructuredRule, AuditEntry, EngineLineItem, ActionItem } from 'shared';
 
 const GENERATION_TIMEOUT_MS = 120_000;
 const CONFIDENCE_THRESHOLD = 70;
@@ -34,10 +34,16 @@ interface AILineItem {
   ruleIdsApplied?: string[];
 }
 
+interface AIActionItem {
+  lineItemProductName: string;
+  description: string;
+}
+
 interface AIResponse {
   selectedTemplateId: string | null;
   selectedTemplateName: string | null;
   lineItems: AILineItem[];
+  actionItems?: AIActionItem[];
 }
 
 const SYSTEM_PROMPT = [
@@ -60,6 +66,13 @@ const SYSTEM_PROMPT = [
   '- CRITICAL: Do NOT include duplicate line items. Each product should appear at most once. If the same product applies to multiple areas, use a single line item with an appropriate quantity instead of separate entries.',
   '- If the customer request is vague, generate fewer items with lower confidence scores rather than guessing at work they might need.',
   '',
+  'ACTION ITEMS:',
+  '- For each line item, determine if the customer provided enough information to accurately price it.',
+  '- If a line item requires measurements (e.g., square footage, linear feet) not mentioned in the request, add an action item.',
+  '- If a line item requires a specific quantity (e.g., number of cabinets, fixtures, outlets) that the customer did not specify, add an action item.',
+  '- Do NOT add action items for line items where the customer provided sufficient detail.',
+  '- Action item descriptions should be concise and actionable (e.g., "Square footage needed for accurate pricing", "Number of cabinets to install needed").',
+  '',
   'RESPONSE FORMAT (strict JSON):',
   '{',
   '  "selectedTemplateId": "id or null",',
@@ -74,6 +87,12 @@ const SYSTEM_PROMPT = [
   '      "originalText": "original customer text for this item",',
   '      "unmatchedReason": "reason or omit if matched",',
   '      "ruleIdsApplied": ["rule-id-1", "rule-id-2"]',
+  '    }',
+  '  ],',
+  '  "actionItems": [',
+  '    {',
+  '      "lineItemProductName": "exact product name from lineItems",',
+  '      "description": "What information is needed"',
   '    }',
   '  ]',
   '}',
@@ -398,7 +417,26 @@ export class QuoteEngine {
       selectedTemplateId: parsed.selectedTemplateId ?? null,
       selectedTemplateName: parsed.selectedTemplateName ?? null,
       lineItems: validatedItems,
+      actionItems: this.validateAIActionItems(parsed.actionItems),
     };
+  }
+
+  private validateAIActionItems(raw: unknown): AIActionItem[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter(
+        (item): item is AIActionItem =>
+          item != null &&
+          typeof item === 'object' &&
+          typeof (item as AIActionItem).lineItemProductName === 'string' &&
+          (item as AIActionItem).lineItemProductName.trim() !== '' &&
+          typeof (item as AIActionItem).description === 'string' &&
+          (item as AIActionItem).description.trim() !== '',
+      )
+      .map(item => ({
+        lineItemProductName: item.lineItemProductName.trim(),
+        description: item.description.trim(),
+      }));
   }
 
   private fallbackResponse(): AIResponse {
@@ -406,6 +444,7 @@ export class QuoteEngine {
       selectedTemplateId: null,
       selectedTemplateName: null,
       lineItems: [],
+      actionItems: [],
     };
   }
 
@@ -440,6 +479,25 @@ export class QuoteEngine {
     const lineItems = allItems.filter((i) => i.resolved);
     const unresolvedItems = allItems.filter((i) => !i.resolved);
 
+    // Map AI action items to ActionItem objects by matching product names (case-insensitive)
+    const actionItems: ActionItem[] = [];
+    for (const aiAction of aiResult.actionItems ?? []) {
+      if (!aiAction.lineItemProductName) continue;
+      const normalizedName = aiAction.lineItemProductName.trim().toLowerCase().replace(/\s+/g, ' ');
+      const matchedLineItem = allItems.find(
+        (li) => li.productName.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedName,
+      );
+      if (matchedLineItem) {
+        actionItems.push({
+          id: crypto.randomUUID(),
+          quoteDraftId: draftId,
+          lineItemId: matchedLineItem.id,
+          description: aiAction.description,
+          completed: false,
+        });
+      }
+    }
+
     const draft: QuoteDraft = {
       id: draftId,
       draftNumber: 0, // Placeholder — assigned by QuoteDraftService.save()
@@ -451,6 +509,7 @@ export class QuoteEngine {
       unresolvedItems,
       jobberRequestId: null,
       status: 'draft',
+      actionItems: actionItems.length > 0 ? actionItems : undefined,
       similarQuotes: similarQuotes.length > 0 ? similarQuotes : undefined,
       createdAt: now,
       updatedAt: now,

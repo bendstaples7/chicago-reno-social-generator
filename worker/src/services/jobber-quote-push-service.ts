@@ -19,8 +19,8 @@ const FETCH_REQUEST_CLIENT_QUERY = `
 `;
 
 const QUOTE_CREATE_MUTATION = `
-  mutation CreateQuote($input: QuoteCreateInput!) {
-    quoteCreate(input: $input) {
+  mutation CreateQuote($attributes: QuoteCreateAttributes!) {
+    quoteCreate(attributes: $attributes) {
       quote {
         id
         quoteNumber
@@ -194,7 +194,7 @@ export class JobberQuotePushService {
 
     return {
       query: QUOTE_CREATE_MUTATION,
-      variables: { input },
+      variables: { attributes: input },
     };
   }
 

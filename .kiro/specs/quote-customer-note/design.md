@@ -340,7 +340,7 @@ No new functions needed. The existing `updateDraft` function sends a `PUT /api/q
 
 | Scenario | Handling |
 |----------|----------|
-| `customerNote` exceeds reasonable length | Accept it — D1 TEXT columns have no practical limit. No truncation needed for this internal tool. |
+| `customerNote` exceeds reasonable length | Accept it — D1 has a ~1 MB row size limit, but customer notes are short free-text messages (a few paragraphs at most). No truncation or length validation needed for this single-user internal tool. |
 | `set_customer_note` with empty `text` | Schema validation rejects the rule at save time. If somehow executed at runtime, skip with a warning in the audit trail. |
 | `append_customer_note` with empty `text` | Same as above — rejected by validation. |
 | Migration failure | Standard D1 migration error handling. `ALTER TABLE ADD COLUMN` is safe on existing data — all existing rows get NULL. |

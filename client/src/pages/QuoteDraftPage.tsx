@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule, ProductCatalogEntry } from 'shared';
-import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft, updateDraft, fetchCatalog, updateCatalogEntry } from '../api';
+import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, saveTemplateFromDraft, updateDraft, fetchCatalog, updateCatalogEntry, pushDraftToJobber } from '../api';
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
@@ -48,6 +48,10 @@ export default function QuoteDraftPage() {
   const [allCatalog, setAllCatalog] = useState<ProductCatalogEntry[] | null>(null);
   const [showCustomForm, setShowCustomForm] = useState(false);
   const [customName, setCustomName] = useState('');
+
+  // Push to Jobber state
+  const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
   const [customQty, setCustomQty] = useState('1');
   const [customPrice, setCustomPrice] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,6 +181,27 @@ export default function QuoteDraftPage() {
       setTemplateSaveError(true);
     } finally {
       setSavingTemplate(false);
+    }
+  };
+
+  // ── Push to Jobber handler ──
+
+  const handlePushToJobber = async () => {
+    if (pushing || !draft || !id) return;
+    setPushing(true);
+    setPushError(null);
+    try {
+      const result = await pushDraftToJobber(id);
+      setDraft({
+        ...draft,
+        jobberQuoteId: result.jobberQuoteId,
+        jobberQuoteNumber: result.jobberQuoteNumber,
+        status: 'finalized',
+      });
+    } catch (err) {
+      setPushError((err as any).message ?? 'Failed to push to Jobber.');
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -397,6 +422,11 @@ export default function QuoteDraftPage() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
         <h1 style={{ ...titleStyle, margin: 0 }}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
+        {draft.jobberQuoteNumber && (
+          <span style={{ fontSize: '0.9rem', color: '#00a89d', fontWeight: 600 }}>
+            (Jobber {draft.jobberQuoteNumber})
+          </span>
+        )}
         <button
           onClick={() => setShowSaveTemplate(!showSaveTemplate)}
           style={{ ...saveTemplateBtnStyle, background: showSaveTemplate ? '#e0e0e0' : '#f5f5f5' }}
@@ -955,6 +985,61 @@ export default function QuoteDraftPage() {
       {/* Draft metadata */}
       <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '1.5rem' }}>
         Created: {new Date(draft.createdAt).toLocaleString()}
+      </div>
+
+      {/* Push to Jobber section */}
+      <div style={{ ...sectionStyle, marginTop: '1rem' }}>
+        <h2 style={sectionTitleStyle}>Push to Jobber</h2>
+        {draft.jobberQuoteId ? (
+          <div>
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: '#333' }}>
+              ✅ Pushed as Jobber Quote <strong>{draft.jobberQuoteNumber}</strong>
+            </p>
+            <a
+              href={`https://app.getjobber.com/quotes`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#00a89d', fontSize: '0.9rem', fontWeight: 600 }}
+            >
+              View in Jobber →
+            </a>
+          </div>
+        ) : (
+          <div>
+            {!draft.jobberRequestId && (
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#888' }}>
+                This draft was not generated from a Jobber request. A linked Jobber request is required to push.
+              </p>
+            )}
+            <button
+              onClick={handlePushToJobber}
+              disabled={pushing || !draft.jobberRequestId}
+              style={{
+                padding: '0.6rem 1.5rem',
+                background: pushing || !draft.jobberRequestId ? '#ccc' : '#00a89d',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                cursor: pushing || !draft.jobberRequestId ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {pushing ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={smallSpinnerStyle} /> Pushing to Jobber…
+                </span>
+              ) : (
+                '🚀 Push to Jobber'
+              )}
+            </button>
+            {pushError && (
+              <div role="alert" style={{ ...revisionErrorStyle, marginTop: '0.5rem' }}>
+                {pushError}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       </div>{/* end main content column */}
 

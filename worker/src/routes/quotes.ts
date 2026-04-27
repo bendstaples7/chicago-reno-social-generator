@@ -14,6 +14,7 @@ import {
   EmbeddingService,
   SimilarityEngine,
   QuoteSyncService,
+  JobberQuotePushService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -445,6 +446,36 @@ app.delete('/drafts/:id', async (c) => {
   const quoteDraftService = new QuoteDraftService(c.env.DB);
   await quoteDraftService.delete(c.req.param('id'), c.get('user').id);
   return c.json({ success: true });
+});
+
+/**
+ * POST /drafts/:id/push
+ * Push a quote draft to Jobber as a real Jobber quote.
+ */
+app.post('/drafts/:id/push', async (c) => {
+  const userId = c.get('user').id;
+  const db = c.env.DB;
+  const draftId = c.req.param('id');
+
+  const quoteDraftService = new QuoteDraftService(db);
+  const draft = await quoteDraftService.getById(draftId, userId);
+
+  // Prevent duplicate pushes
+  if (draft.jobberQuoteId) {
+    throw new PlatformError({
+      severity: 'warning',
+      component: 'QuoteRoutes',
+      operation: 'pushToJobber',
+      description: `This draft has already been pushed to Jobber as quote ${draft.jobberQuoteNumber}.`,
+      recommendedActions: ['View the existing Jobber quote'],
+    });
+  }
+
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
+  const pushService = new JobberQuotePushService(db, jobberIntegration);
+  const result = await pushService.pushToJobber(draft);
+
+  return c.json(result);
 });
 
 /**

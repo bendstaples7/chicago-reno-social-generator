@@ -757,3 +757,13 @@ export async function autoCategorizeRules(): Promise<{ moved: number; total: num
   });
   return handleResponseWithToast(res);
 }
+
+// ── Push to Jobber ──
+
+export async function pushDraftToJobber(draftId: string): Promise<{ jobberQuoteId: string; jobberQuoteNumber: string }> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + draftId + '/push', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponseWithToast(res);
+}

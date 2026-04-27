@@ -30,3 +30,5 @@ export { deduplicateLineItems, sortLineItemsByCatalog, rulesModifiedLineItems } 
 export { executeRules, validateCondition, validateAction, validateActions } from './rules-engine.js';
 export type { RulesEngineInput } from './rules-engine.js';
 export { EnrichmentService } from './enrichment-service.js';
+export { JobberQuotePushService } from './jobber-quote-push-service.js';
+export type { PushResult } from './jobber-quote-push-service.js';

@@ -32,6 +32,7 @@ step('Syncing Jobber tokens', 'node scripts/sync-tokens.mjs');
 step('Syncing Jobber cookies', 'node scripts/sync-cookies.mjs --target local');
 step('Syncing rules from production', 'node scripts/sync-rules.mjs');
 step('Syncing product catalog from production', 'node scripts/sync-catalog.mjs');
+step('Applying catalog ordering', 'node scripts/apply-catalog-order.mjs --local');
 
 // ── Start dev servers (parallel) ─────────────────────────────
 

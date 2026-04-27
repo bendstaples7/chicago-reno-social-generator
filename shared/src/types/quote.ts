@@ -55,6 +55,8 @@ export interface QuoteDraft {
   unresolvedItems: QuoteLineItem[];
   jobberRequestId: string | null;
   clientName?: string | null;
+  jobberQuoteId?: string | null;
+  jobberQuoteNumber?: string | null;
   status: 'draft' | 'finalized';
   similarQuotes?: SimilarQuote[];
   revisionHistory?: RevisionHistoryEntry[];

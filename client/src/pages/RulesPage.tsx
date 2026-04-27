@@ -33,6 +33,10 @@ const emptyForm: RuleFormData = { name: '', description: '', ruleGroupId: '', is
 // Shared styles
 // ---------------------------------------------------------------------------
 
+// ── Auto-scroll constants (used by ProductOrderingTab drag-and-drop) ──
+const SCROLL_ZONE = 80; // px from viewport edge to start scrolling
+const MAX_SCROLL_SPEED = 12; // px per animation frame
+
 const TAB_STYLE_BASE: React.CSSProperties = {
   padding: '0.6rem 1.25rem',
   border: 'none',
@@ -728,11 +732,6 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
   const scrollRafRef = useRef<number | null>(null);
   const scrollSpeedRef = useRef(0);
 
-  // Auto-scroll during drag: when cursor is within SCROLL_ZONE px of viewport
-  // top/bottom, scroll the page at a speed proportional to how close to the edge.
-  const SCROLL_ZONE = 80; // px from edge to start scrolling
-  const MAX_SCROLL_SPEED = 12; // px per frame
-
   const startAutoScroll = useCallback(() => {
     const tick = () => {
       if (scrollSpeedRef.current !== 0) {
@@ -1005,7 +1004,10 @@ function ProductOrderingTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+      <div
+        style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}
+        onDragOver={(e) => { e.preventDefault(); updateAutoScroll(e.clientY); }}
+      >
         {catalog.map((entry, index) => (
           <div
             key={entry.id}

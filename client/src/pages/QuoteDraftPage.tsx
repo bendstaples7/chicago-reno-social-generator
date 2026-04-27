@@ -996,7 +996,7 @@ export default function QuoteDraftPage() {
               ✅ Pushed as Jobber Quote <strong>{draft.jobberQuoteNumber}</strong>
             </p>
             <a
-              href={`https://app.getjobber.com/quotes`}
+              href={`https://secure.getjobber.com/quotes/${draft.jobberQuoteNumber}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: '#00a89d', fontSize: '0.9rem', fontWeight: 600 }}

@@ -26,3 +26,5 @@ export { SimilarityEngine } from './similarity-engine.js';
 export type { SimilarQuoteResult } from './similarity-engine.js';
 export { QuoteSyncService } from './quote-sync-service.js';
 export type { SyncResult } from './quote-sync-service.js';
+export { JobberQuotePushService } from './jobber-quote-push-service.js';
+export type { PushResult } from './jobber-quote-push-service.js';

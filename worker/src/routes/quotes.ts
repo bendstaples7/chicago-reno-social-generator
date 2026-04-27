@@ -13,6 +13,7 @@ import {
   EmbeddingService,
   SimilarityEngine,
   QuoteSyncService,
+  JobberQuotePushService,
 } from '../services/index.js';
 import { JobberWebhookService } from '../services/jobber-webhook-service.js';
 import { JobberTokenStore } from '../services/jobber-token-store.js';
@@ -325,6 +326,54 @@ app.delete('/drafts/:id', async (c) => {
   const quoteDraftService = new QuoteDraftService(c.env.DB);
   await quoteDraftService.delete(c.req.param('id'), c.get('user').id);
   return c.json({ success: true });
+});
+
+/**
+ * POST /drafts/:id/push
+ * Push a quote draft to Jobber as a real Jobber quote.
+ */
+app.post('/drafts/:id/push', async (c) => {
+  const userId = c.get('user').id;
+  const db = c.env.DB;
+  const draftId = c.req.param('id');
+
+  const quoteDraftService = new QuoteDraftService(db);
+
+  // Load draft (verifies ownership)
+  const draft = await quoteDraftService.getById(draftId, userId);
+
+  // Validate draft status
+  if (draft.status !== 'draft') {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'pushToJobber',
+      description: 'This quote has already been pushed to Jobber.',
+      recommendedActions: ['View the existing Jobber quote using the link on the draft page'],
+      statusCode: 409,
+    });
+  }
+
+  // Validate draft has a linked Jobber request
+  if (!draft.jobberRequestId) {
+    throw new PlatformError({
+      severity: 'error',
+      component: 'QuoteRoutes',
+      operation: 'pushToJobber',
+      description: 'A Jobber request must be linked to this draft before pushing to Jobber.',
+      recommendedActions: ['Generate the quote from a Jobber customer request'],
+      statusCode: 400,
+    });
+  }
+
+  // Create push service and execute
+  const { jobberIntegration } = await createJobberIntegration(db, c.env);
+  const pushService = new JobberQuotePushService(db, jobberIntegration);
+  await pushService.pushToJobber(draft);
+
+  // Re-fetch the updated draft
+  const updatedDraft = await quoteDraftService.getById(draftId, userId);
+  return c.json(updatedDraft);
 });
 
 /**
@@ -668,6 +717,15 @@ app.get('/jobber/requests/:id', async (c) => {
     }
   }
 
+  // Extract jobberWebUri from stored request_body
+  let jobberWebUri = '';
+  if (row.request_body) {
+    try {
+      const detail = JSON.parse(row.request_body as string);
+      jobberWebUri = detail?.jobberWebUri ?? '';
+    } catch { /* ignore parse errors */ }
+  }
+
   return c.json({
     request: {
       id: row.jobber_request_id as string,
@@ -676,6 +734,7 @@ app.get('/jobber/requests/:id', async (c) => {
       description: (row.description as string) ?? '',
       imageUrls,
       notes,
+      jobberWebUri,
     },
   });
 });

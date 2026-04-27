@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { QuoteDraft, QuoteLineItem, ErrorResponse, RuleGroupWithRules, Rule } from 'shared';
-import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail } from '../api';
+import { fetchDraft, reviseDraft, fetchRules, fetchJobberRequestDetail, pushDraftToJobber } from '../api';
 import type { JobberRequestDetail } from '../api';
 import SimilarQuotesPanel from './SimilarQuotesPanel';
 
@@ -22,6 +22,8 @@ export default function QuoteDraftPage() {
   const [ruleCreatedMsg, setRuleCreatedMsg] = useState<string | null>(null);
   const [ruleCreationWarning, setRuleCreationWarning] = useState<string | null>(null);
   const [requestDetail, setRequestDetail] = useState<JobberRequestDetail | null>(null);
+  const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
 
   const loadDraft = useCallback(async () => {
     if (!id) return;
@@ -83,6 +85,20 @@ export default function QuoteDraftPage() {
       setRevisionError((err as ErrorResponse).message ?? 'Revision failed. Please try again.');
     } finally {
       setRevising(false);
+    }
+  };
+
+  const handlePushToJobber = async () => {
+    if (!id) return;
+    setPushError(null);
+    setPushing(true);
+    try {
+      const updated = await pushDraftToJobber(id);
+      setDraft(updated);
+    } catch (err) {
+      setPushError((err as ErrorResponse).message ?? 'Failed to push quote to Jobber. Please try again.');
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -158,7 +174,12 @@ export default function QuoteDraftPage() {
       <div style={{ flex: 1, minWidth: 0 }}>
       <button onClick={() => navigate('/quotes')} style={backBtnStyle}>← Back to New Quote</button>
 
-      <h1 style={titleStyle}>Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}</h1>
+      <h1 style={titleStyle}>
+        Quote Draft D-{String(draft.draftNumber).padStart(3, '0')}
+        {draft.jobberQuoteNumber && (
+          <span style={jobberQuoteNumberTitleStyle}> · Jobber {draft.jobberQuoteNumber}</span>
+        )}
+      </h1>
 
       {/* Selected template */}
       {draft.selectedTemplateName && (
@@ -370,6 +391,79 @@ export default function QuoteDraftPage() {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Push to Jobber */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitleStyle}>Push to Jobber</h2>
+        {draft.jobberQuoteId ? (
+          <>
+            <div style={jobberBadgeStyle}>
+              <span style={{ fontSize: '1rem' }}>✅</span>
+              <span>Pushed as Jobber {draft.jobberQuoteNumber}</span>
+            </div>
+            <button disabled style={pushBtnDisabledStyle}>
+              Already pushed
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={handlePushToJobber}
+              disabled={pushing || draft.status !== 'draft' || !draft.jobberRequestId}
+              style={{
+                ...pushBtnStyle,
+                opacity: (pushing || draft.status !== 'draft' || !draft.jobberRequestId) ? 0.5 : 1,
+                cursor: (pushing || draft.status !== 'draft' || !draft.jobberRequestId) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {pushing ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={smallSpinnerStyle} /> Pushing to Jobber…
+                </span>
+              ) : (
+                'Push to Jobber'
+              )}
+            </button>
+            {!draft.jobberRequestId && (
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: '#888' }}>
+                A Jobber request must be linked to this draft before pushing.
+              </p>
+            )}
+          </>
+        )}
+        {pushError && (
+          <div role="alert" style={pushErrorStyle}>{pushError}</div>
+        )}
+      </div>
+
+      {/* Jobber links */}
+      {(draft.jobberQuoteId || (draft.jobberRequestId && requestDetail?.jobberWebUri)) && (
+        <div style={sectionStyle}>
+          <h2 style={sectionTitleStyle}>Jobber Links</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {draft.jobberQuoteId && draft.jobberQuoteNumber && (
+              <a
+                href={`https://app.getjobber.com/quotes/${draft.jobberQuoteNumber}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={jobberLinkStyle}
+              >
+                📄 View Jobber Quote ({draft.jobberQuoteNumber})
+              </a>
+            )}
+            {draft.jobberRequestId && requestDetail?.jobberWebUri && (
+              <a
+                href={requestDetail.jobberWebUri}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={jobberLinkStyle}
+              >
+                📋 View Customer Request in Jobber
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -804,4 +898,64 @@ const sidePanelNoteStyle: React.CSSProperties = {
   background: '#fff',
   borderRadius: 6,
   border: '1px solid #eee',
+};
+
+// ── Push to Jobber Styles ──
+
+const jobberQuoteNumberTitleStyle: React.CSSProperties = {
+  fontSize: '1.1rem',
+  fontWeight: 400,
+  color: '#666',
+};
+
+const pushBtnStyle: React.CSSProperties = {
+  padding: '0.6rem 1.5rem',
+  background: '#1a73e8',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: '0.9rem',
+  fontWeight: 600,
+};
+
+const pushBtnDisabledStyle: React.CSSProperties = {
+  padding: '0.6rem 1.5rem',
+  background: '#e0e0e0',
+  color: '#888',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: '0.9rem',
+  fontWeight: 600,
+  cursor: 'not-allowed',
+};
+
+const pushErrorStyle: React.CSSProperties = {
+  background: '#fdecea',
+  color: '#611a15',
+  padding: '0.5rem 0.75rem',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  marginTop: '0.5rem',
+};
+
+const jobberBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.4rem',
+  background: '#e0f7f5',
+  color: '#00695c',
+  padding: '0.35rem 0.75rem',
+  borderRadius: 12,
+  fontSize: '0.85rem',
+  fontWeight: 600,
+  marginBottom: '0.75rem',
+};
+
+const jobberLinkStyle: React.CSSProperties = {
+  color: '#1a73e8',
+  fontSize: '0.9rem',
+  textDecoration: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '0.3rem',
 };

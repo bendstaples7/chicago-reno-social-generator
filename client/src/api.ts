@@ -564,6 +564,7 @@ export interface JobberRequestDetail {
   description: string;
   imageUrls: string[];
   notes: Array<{ message: string; createdBy: string; createdAt: string }>;
+  jobberWebUri?: string;
 }
 
 export async function fetchJobberRequestDetail(requestId: string): Promise<{ request: JobberRequestDetail | null }> {
@@ -598,6 +599,14 @@ export async function fetchCorpusStatus(): Promise<{ totalQuotes: number; lastSy
     headers: { ...authHeaders() },
   });
   return handleResponse(res);
+}
+
+export async function pushDraftToJobber(draftId: string): Promise<QuoteDraft> {
+  const res = await fetch(API_BASE + '/api/quotes/drafts/' + draftId + '/push', {
+    method: 'POST',
+    headers: { ...authHeaders() },
+  });
+  return handleResponseWithToast(res);
 }
 
 

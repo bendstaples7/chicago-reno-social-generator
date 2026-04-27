@@ -14,7 +14,7 @@ export class QuoteDraftService {
   async save(draft: QuoteDraft): Promise<QuoteDraft> {
     const statements: D1PreparedStatement[] = [
       this.db.prepare(
-        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO quote_drafts (id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, jobber_quote_id, jobber_quote_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         draft.id,
         draft.userId,
@@ -24,6 +24,8 @@ export class QuoteDraftService {
         draft.catalogSource,
         draft.status,
         draft.jobberRequestId ?? null,
+        draft.jobberQuoteId ?? null,
+        draft.jobberQuoteNumber ?? null,
       ),
     ];
 
@@ -55,7 +57,8 @@ export class QuoteDraftService {
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      `SELECT d.*, (SELECT COUNT(*) FROM quote_drafts d2 WHERE d2.user_id = d.user_id AND d2.created_at <= d.created_at) AS draft_number
+       FROM quote_drafts d WHERE d.id = ?`
     ).bind(draft.id).first() as any;
 
     return this.mapDraftRow(row, draft.lineItems, draft.unresolvedItems);
@@ -66,7 +69,8 @@ export class QuoteDraftService {
    */
   async getById(draftId: string, userId: string): Promise<QuoteDraft> {
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ? AND user_id = ?'
+      `SELECT d.*, (SELECT COUNT(*) FROM quote_drafts d2 WHERE d2.user_id = d.user_id AND d2.created_at <= d.created_at) AS draft_number
+       FROM quote_drafts d WHERE d.id = ? AND d.user_id = ?`
     ).bind(draftId, userId).first() as any;
 
     if (!row) {
@@ -88,7 +92,8 @@ export class QuoteDraftService {
    */
   async list(userId: string): Promise<QuoteDraft[]> {
     const result = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE user_id = ? ORDER BY created_at DESC'
+      `SELECT d.*, (SELECT COUNT(*) FROM quote_drafts d2 WHERE d2.user_id = d.user_id AND d2.created_at <= d.created_at) AS draft_number
+       FROM quote_drafts d WHERE d.user_id = ? ORDER BY d.created_at DESC`
     ).bind(userId).all();
 
     const drafts: QuoteDraft[] = [];
@@ -165,7 +170,8 @@ export class QuoteDraftService {
     await this.db.batch(statements);
 
     const row = await this.db.prepare(
-      'SELECT id, user_id, customer_request_text, selected_template_id, selected_template_name, catalog_source, status, jobber_request_id, created_at, updated_at FROM quote_drafts WHERE id = ?'
+      `SELECT d.*, (SELECT COUNT(*) FROM quote_drafts d2 WHERE d2.user_id = d.user_id AND d2.created_at <= d.created_at) AS draft_number
+       FROM quote_drafts d WHERE d.id = ?`
     ).bind(draftId).first() as any;
 
     const { lineItems, unresolvedItems } = await this.fetchLineItems(draftId);
@@ -283,6 +289,7 @@ export class QuoteDraftService {
   ): QuoteDraft {
     return {
       id: row.id as string,
+      draftNumber: Number(row.draft_number ?? 0),
       userId: row.user_id as string,
       customerRequestText: row.customer_request_text as string,
       selectedTemplateId: (row.selected_template_id as string) ?? null,
@@ -291,6 +298,8 @@ export class QuoteDraftService {
       unresolvedItems,
       catalogSource: row.catalog_source as QuoteDraft['catalogSource'],
       jobberRequestId: (row.jobber_request_id as string) ?? null,
+      jobberQuoteId: (row.jobber_quote_id as string) ?? null,
+      jobberQuoteNumber: (row.jobber_quote_number as string) ?? null,
       status: row.status as QuoteDraft['status'],
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),

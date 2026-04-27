@@ -43,6 +43,8 @@ export interface QuoteDraft {
   unresolvedItems: QuoteLineItem[];
   catalogSource: 'jobber' | 'manual';
   jobberRequestId: string | null;
+  jobberQuoteId?: string | null;
+  jobberQuoteNumber?: string | null;
   clientName?: string | null;
   status: 'draft' | 'finalized';
   similarQuotes?: SimilarQuote[];

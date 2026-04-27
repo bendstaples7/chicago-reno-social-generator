@@ -395,7 +395,7 @@ export default function QuoteDraftPage() {
 
   const handleToggleActionItem = async (actionItemId: string) => {
     if (!draft || !id) return;
-    const prevDraft = draft;
+    const prevCompleted = (draft.actionItems ?? []).find(i => i.id === actionItemId)?.completed;
     const updatedActionItems = (draft.actionItems ?? []).map((item) =>
       item.id === actionItemId ? { ...item, completed: !item.completed } : item,
     );
@@ -404,8 +404,13 @@ export default function QuoteDraftPage() {
     try {
       await updateDraft(id, { actionItems: updatedActionItems });
     } catch {
-      // Revert on failure — error toast is shown automatically by the API layer
-      setDraft(prevDraft);
+      // Revert only the specific item — error toast is shown automatically by the API layer
+      setDraft(prev => prev ? {
+        ...prev,
+        actionItems: (prev.actionItems ?? []).map(i =>
+          i.id === actionItemId ? { ...i, completed: prevCompleted ?? false } : i,
+        ),
+      } : prev);
     }
   };
 

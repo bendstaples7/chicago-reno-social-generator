@@ -77,7 +77,12 @@ export class QuoteDraftService {
         const isConstraintViolation = msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT');
         if (isConstraintViolation && attempt < MAX_RETRIES - 1) {
           // Regenerate ID to avoid PK collision on retry
-          draft = { ...draft, id: crypto.randomUUID() };
+          const newId = crypto.randomUUID();
+          draft = {
+            ...draft,
+            id: newId,
+            actionItems: draft.actionItems?.map(ai => ({ ...ai, quoteDraftId: newId })),
+          };
           continue;
         }
         throw err;

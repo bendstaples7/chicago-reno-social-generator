@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS action_items (
     quote_draft_id TEXT NOT NULL REFERENCES quote_drafts(id) ON DELETE CASCADE,
     line_item_id TEXT NOT NULL,
     description TEXT NOT NULL,
-    completed INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

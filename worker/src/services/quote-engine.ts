@@ -423,15 +423,20 @@ export class QuoteEngine {
 
   private validateAIActionItems(raw: unknown): AIActionItem[] {
     if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (item): item is AIActionItem =>
-        item != null &&
-        typeof item === 'object' &&
-        typeof (item as AIActionItem).lineItemProductName === 'string' &&
-        (item as AIActionItem).lineItemProductName.trim() !== '' &&
-        typeof (item as AIActionItem).description === 'string' &&
-        (item as AIActionItem).description.trim() !== '',
-    );
+    return raw
+      .filter(
+        (item): item is AIActionItem =>
+          item != null &&
+          typeof item === 'object' &&
+          typeof (item as AIActionItem).lineItemProductName === 'string' &&
+          (item as AIActionItem).lineItemProductName.trim() !== '' &&
+          typeof (item as AIActionItem).description === 'string' &&
+          (item as AIActionItem).description.trim() !== '',
+      )
+      .map(item => ({
+        lineItemProductName: item.lineItemProductName.trim(),
+        description: item.description.trim(),
+      }));
   }
 
   private fallbackResponse(): AIResponse {
@@ -474,11 +479,13 @@ export class QuoteEngine {
     const lineItems = allItems.filter((i) => i.resolved);
     const unresolvedItems = allItems.filter((i) => !i.resolved);
 
-    // Map AI action items to ActionItem objects by matching product names
+    // Map AI action items to ActionItem objects by matching product names (case-insensitive)
     const actionItems: ActionItem[] = [];
     for (const aiAction of aiResult.actionItems ?? []) {
+      if (!aiAction.lineItemProductName) continue;
+      const normalizedName = aiAction.lineItemProductName.trim().toLowerCase().replace(/\s+/g, ' ');
       const matchedLineItem = allItems.find(
-        (li) => li.productName === aiAction.lineItemProductName,
+        (li) => li.productName.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedName,
       );
       if (matchedLineItem) {
         actionItems.push({

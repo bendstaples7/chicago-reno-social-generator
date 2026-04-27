@@ -433,14 +433,19 @@ export class RevisionEngine {
 
   private validateAIActionItems(raw: unknown): AIActionItem[] {
     if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (item): item is AIActionItem =>
-        item != null &&
-        typeof item === 'object' &&
-        typeof (item as AIActionItem).lineItemProductName === 'string' &&
-        (item as AIActionItem).lineItemProductName.trim() !== '' &&
-        typeof (item as AIActionItem).description === 'string' &&
-        (item as AIActionItem).description.trim() !== '',
-    );
+    return raw
+      .filter(
+        (item): item is AIActionItem =>
+          item != null &&
+          typeof item === 'object' &&
+          typeof (item as AIActionItem).lineItemProductName === 'string' &&
+          (item as AIActionItem).lineItemProductName.trim() !== '' &&
+          typeof (item as AIActionItem).description === 'string' &&
+          (item as AIActionItem).description.trim() !== '',
+      )
+      .map(item => ({
+        lineItemProductName: item.lineItemProductName.trim(),
+        description: item.description.trim(),
+      }));
   }
 }

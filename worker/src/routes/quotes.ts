@@ -462,6 +462,15 @@ app.put('/drafts/:id', async (c) => {
     }
     for (let i = 0; i < body.actionItems.length; i++) {
       const item = body.actionItems[i];
+      if (item == null || typeof item !== 'object') {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} must be a non-null object.`,
+          recommendedActions: ['Provide valid action item objects in the actionItems array'],
+        });
+      }
       if (typeof item.id !== 'string' || item.id.trim() === '') {
         throw new PlatformError({
           severity: 'error',
@@ -496,6 +505,29 @@ app.put('/drafts/:id', async (c) => {
           operation: 'updateDraft',
           description: `Action item at index ${i} has an invalid or missing "completed" field. Each action item must have a boolean completed value.`,
           recommendedActions: ['Provide a boolean completed value for each action item'],
+        });
+      }
+    }
+
+    // Validate lineItemIds reference actual line items in the draft
+    const quoteDraftServiceForValidation = new QuoteDraftService(c.env.DB);
+    const currentDraft = await quoteDraftServiceForValidation.getById(c.req.param('id'), c.get('user').id);
+    const validLineItemIds = new Set([
+      ...currentDraft.lineItems.map(li => li.id),
+      ...currentDraft.unresolvedItems.map(li => li.id),
+      // Also accept IDs from incoming lineItems if they're being updated simultaneously
+      ...(body.lineItems ?? []).map((li: any) => li.id).filter(Boolean),
+      ...(body.unresolvedItems ?? []).map((li: any) => li.id).filter(Boolean),
+    ]);
+    for (let i = 0; i < body.actionItems.length; i++) {
+      const item = body.actionItems[i];
+      if (!validLineItemIds.has(item.lineItemId)) {
+        throw new PlatformError({
+          severity: 'error',
+          component: 'QuoteRoutes',
+          operation: 'updateDraft',
+          description: `Action item at index ${i} references lineItemId "${item.lineItemId}" which does not exist in this draft's line items.`,
+          recommendedActions: ['Ensure each action item references a valid line item ID from this draft'],
         });
       }
     }
@@ -641,12 +673,14 @@ app.post('/drafts/:id/revise', async (c) => {
     });
   }
 
-  // Build action items from AI output by matching product names to revised line items
+  // Build action items from AI output by matching product names to revised line items (case-insensitive)
   const allRevisedItems = [...revised.lineItems, ...revised.unresolvedItems];
   const newActionItems: ActionItem[] = [];
   for (const aiAction of revised.actionItems ?? []) {
+    if (!aiAction.lineItemProductName) continue;
+    const normalizedName = aiAction.lineItemProductName.trim().toLowerCase().replace(/\s+/g, ' ');
     const matchedLineItem = allRevisedItems.find(
-      (li) => li.productName === aiAction.lineItemProductName,
+      (li) => li.productName.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedName,
     );
     if (matchedLineItem) {
       newActionItems.push({

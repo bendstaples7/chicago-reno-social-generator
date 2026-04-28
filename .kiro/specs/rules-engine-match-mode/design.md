@@ -20,7 +20,7 @@ The rules engine in `worker/src/services/rules-engine.ts` uses strict exact equa
 The bug manifests when a user creates a rule with a `productNamePattern` that is a category prefix of actual line item product names. The `evaluateCondition` and `executeAction` functions use strict equality (`li.productName.toLowerCase() === pattern`) which fails for prefix-style patterns like `"Framing"` when the actual product name is `"Framing: Install new wall"`.
 
 **Formal Specification:**
-```
+```text
 FUNCTION isBugCondition(input)
   INPUT: input of type { productNamePattern: string, lineItemProductName: string }
   OUTPUT: boolean
@@ -210,7 +210,7 @@ The testing strategy follows a two-phase approach: first, surface counterexample
 **Goal**: Verify that for all inputs where the bug condition holds, the fixed function produces the expected behavior.
 
 **Pseudocode:**
-```
+```text
 FOR ALL input WHERE isBugCondition(input) DO
   // Default matchMode is "starts_with"
   conditionResult := evaluateCondition'(
@@ -227,7 +227,7 @@ END FOR
 **Goal**: Verify that for all inputs where the bug condition does NOT hold, the fixed function produces the same result as the original function.
 
 **Pseudocode:**
-```
+```text
 FOR ALL input WHERE NOT isBugCondition(input) DO
   ASSERT evaluateCondition(input) = evaluateCondition'(input)
   ASSERT executeAction(input) = executeAction'(input)

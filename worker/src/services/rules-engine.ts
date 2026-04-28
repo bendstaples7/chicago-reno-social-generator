@@ -114,8 +114,8 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
   switch (cond.type) {
     case 'line_item_exists':
     case 'line_item_not_exists':
-      if (typeof cond.productNamePattern !== 'string') {
-        return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      if (typeof cond.productNamePattern !== 'string' || cond.productNamePattern.trim().length === 0) {
+        return { valid: false, error: `Condition type "${cond.type}" requires a non-empty string "productNamePattern" field` };
       }
       if (cond.matchMode !== undefined) {
         if (cond.matchMode !== 'exact' && cond.matchMode !== 'starts_with' && cond.matchMode !== 'contains') {
@@ -138,8 +138,8 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
 
     case 'line_item_quantity_gte':
     case 'line_item_quantity_lte':
-      if (typeof cond.productNamePattern !== 'string') {
-        return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      if (typeof cond.productNamePattern !== 'string' || cond.productNamePattern.trim().length === 0) {
+        return { valid: false, error: `Condition type "${cond.type}" requires a non-empty string "productNamePattern" field` };
       }
       if (typeof cond.threshold !== 'number') {
         return { valid: false, error: `Condition type "${cond.type}" requires a number "threshold" field` };
@@ -206,8 +206,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'remove_line_item':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "remove_line_item" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "remove_line_item" requires a non-empty string "productNamePattern" field' };
       }
       if (act.matchMode !== undefined) {
         if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
@@ -217,8 +217,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'move_line_item':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "move_line_item" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "move_line_item" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.position !== 'string') {
         return { valid: false, error: 'Action type "move_line_item" requires a string "position" field ("start", "end", "before:ProductName", or "after:ProductName")' };
@@ -243,8 +243,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'set_quantity':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_quantity" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_quantity" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.quantity !== 'number') {
         return { valid: false, error: 'Action type "set_quantity" requires a number "quantity" field' };
@@ -260,8 +260,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'adjust_quantity':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "adjust_quantity" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "adjust_quantity" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.delta !== 'number') {
         return { valid: false, error: 'Action type "adjust_quantity" requires a number "delta" field' };
@@ -277,8 +277,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'set_unit_price':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_unit_price" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_unit_price" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.unitPrice !== 'number') {
         return { valid: false, error: 'Action type "set_unit_price" requires a number "unitPrice" field' };
@@ -294,8 +294,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'set_description':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_description" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_description" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.description !== 'string') {
         return { valid: false, error: 'Action type "set_description" requires a string "description" field' };
@@ -308,8 +308,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'append_description':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "append_description" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "append_description" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.text !== 'string') {
         return { valid: false, error: 'Action type "append_description" requires a string "text" field' };
@@ -325,8 +325,8 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'extract_request_context':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "extract_request_context" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "extract_request_context" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.extractionPrompt !== 'string') {
         return { valid: false, error: 'Action type "extract_request_context" requires a string "extractionPrompt" field' };

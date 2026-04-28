@@ -149,6 +149,9 @@ export interface QuoteDraftUpdate {
 /** Trigger mode for structured rules */
 export type TriggerMode = 'on_create' | 'chained';
 
+/** Match mode for productNamePattern comparisons */
+export type MatchMode = 'exact' | 'starts_with' | 'contains';
+
 /** Condition types supported by the rules engine */
 export type RuleConditionType =
   | 'line_item_exists'
@@ -161,11 +164,11 @@ export type RuleConditionType =
 
 /** A typed condition for a structured rule */
 export type RuleCondition =
-  | { type: 'line_item_exists'; productNamePattern: string }
-  | { type: 'line_item_not_exists'; productNamePattern: string }
+  | { type: 'line_item_exists'; productNamePattern: string; matchMode?: MatchMode }
+  | { type: 'line_item_not_exists'; productNamePattern: string; matchMode?: MatchMode }
   | { type: 'line_item_name_contains'; substring: string }
-  | { type: 'line_item_quantity_gte'; productNamePattern: string; threshold: number }
-  | { type: 'line_item_quantity_lte'; productNamePattern: string; threshold: number }
+  | { type: 'line_item_quantity_gte'; productNamePattern: string; threshold: number; matchMode?: MatchMode }
+  | { type: 'line_item_quantity_lte'; productNamePattern: string; threshold: number; matchMode?: MatchMode }
   | { type: 'request_text_contains'; substring: string }
   | { type: 'always' };
 
@@ -186,14 +189,14 @@ export type RuleActionType =
 /** A typed action for a structured rule */
 export type RuleAction =
   | { type: 'add_line_item'; productName: string; quantity: number; unitPrice: number; description?: string; placeAfter?: string; placeBefore?: string }
-  | { type: 'remove_line_item'; productNamePattern: string }
-  | { type: 'move_line_item'; productNamePattern: string; position: 'start' | 'end' | `before:${string}` | `after:${string}` }
-  | { type: 'set_quantity'; productNamePattern: string; quantity: number }
-  | { type: 'adjust_quantity'; productNamePattern: string; delta: number }
-  | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number }
-  | { type: 'set_description'; productNamePattern: string; description: string }
-  | { type: 'append_description'; productNamePattern: string; text: string; separator?: string }
-  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string }
+  | { type: 'remove_line_item'; productNamePattern: string; matchMode?: MatchMode }
+  | { type: 'move_line_item'; productNamePattern: string; position: 'start' | 'end' | `before:${string}` | `after:${string}`; matchMode?: MatchMode }
+  | { type: 'set_quantity'; productNamePattern: string; quantity: number; matchMode?: MatchMode }
+  | { type: 'adjust_quantity'; productNamePattern: string; delta: number; matchMode?: MatchMode }
+  | { type: 'set_unit_price'; productNamePattern: string; unitPrice: number; matchMode?: MatchMode }
+  | { type: 'set_description'; productNamePattern: string; description: string; matchMode?: MatchMode }
+  | { type: 'append_description'; productNamePattern: string; text: string; separator?: string; matchMode?: MatchMode }
+  | { type: 'extract_request_context'; productNamePattern: string; extractionPrompt: string; separator?: string; matchMode?: MatchMode }
   | { type: 'set_customer_note'; text: string }
   | { type: 'append_customer_note'; text: string; separator?: string };
 

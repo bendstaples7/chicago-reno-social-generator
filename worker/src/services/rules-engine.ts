@@ -10,6 +10,29 @@ import type {
 } from 'shared';
 
 // ---------------------------------------------------------------------------
+// Pattern matching helper
+// ---------------------------------------------------------------------------
+
+function matchesProductName(
+  productName: string,
+  pattern: string,
+  matchMode: 'exact' | 'starts_with' | 'contains' = 'starts_with',
+): boolean {
+  const normalizedName = productName.toLowerCase();
+  const normalizedPattern = pattern.toLowerCase();
+  switch (matchMode) {
+    case 'exact':
+      return normalizedName === normalizedPattern;
+    case 'starts_with':
+      return normalizedName.startsWith(normalizedPattern);
+    case 'contains':
+      return normalizedName.includes(normalizedPattern);
+    default:
+      return normalizedName.startsWith(normalizedPattern);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
 
@@ -91,8 +114,13 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
   switch (cond.type) {
     case 'line_item_exists':
     case 'line_item_not_exists':
-      if (typeof cond.productNamePattern !== 'string') {
-        return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      if (typeof cond.productNamePattern !== 'string' || cond.productNamePattern.trim().length === 0) {
+        return { valid: false, error: `Condition type "${cond.type}" requires a non-empty string "productNamePattern" field` };
+      }
+      if (cond.matchMode !== undefined) {
+        if (cond.matchMode !== 'exact' && cond.matchMode !== 'starts_with' && cond.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
       }
       break;
 
@@ -110,14 +138,19 @@ export function validateCondition(condition: unknown): { valid: boolean; error?:
 
     case 'line_item_quantity_gte':
     case 'line_item_quantity_lte':
-      if (typeof cond.productNamePattern !== 'string') {
-        return { valid: false, error: `Condition type "${cond.type}" requires a string "productNamePattern" field` };
+      if (typeof cond.productNamePattern !== 'string' || cond.productNamePattern.trim().length === 0) {
+        return { valid: false, error: `Condition type "${cond.type}" requires a non-empty string "productNamePattern" field` };
       }
       if (typeof cond.threshold !== 'number') {
         return { valid: false, error: `Condition type "${cond.type}" requires a number "threshold" field` };
       }
       if (!Number.isFinite(cond.threshold) || cond.threshold < 0) {
         return { valid: false, error: `Condition type "${cond.type}" threshold must be a finite non-negative number` };
+      }
+      if (cond.matchMode !== undefined) {
+        if (cond.matchMode !== 'exact' && cond.matchMode !== 'starts_with' && cond.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
       }
       break;
 
@@ -173,14 +206,19 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       break;
 
     case 'remove_line_item':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "remove_line_item" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "remove_line_item" requires a non-empty string "productNamePattern" field' };
+      }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
       }
       break;
 
     case 'move_line_item':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "move_line_item" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "move_line_item" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.position !== 'string') {
         return { valid: false, error: 'Action type "move_line_item" requires a string "position" field ("start", "end", "before:ProductName", or "after:ProductName")' };
@@ -197,11 +235,16 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
           }
         }
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'set_quantity':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_quantity" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_quantity" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.quantity !== 'number') {
         return { valid: false, error: 'Action type "set_quantity" requires a number "quantity" field' };
@@ -209,11 +252,16 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (!Number.isFinite(act.quantity) || act.quantity < 0) {
         return { valid: false, error: 'Action type "set_quantity" quantity must be a finite non-negative number' };
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'adjust_quantity':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "adjust_quantity" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "adjust_quantity" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.delta !== 'number') {
         return { valid: false, error: 'Action type "adjust_quantity" requires a number "delta" field' };
@@ -221,11 +269,16 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (!Number.isFinite(act.delta)) {
         return { valid: false, error: 'Action type "adjust_quantity" delta must be a finite number' };
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'set_unit_price':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_unit_price" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_unit_price" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.unitPrice !== 'number') {
         return { valid: false, error: 'Action type "set_unit_price" requires a number "unitPrice" field' };
@@ -233,20 +286,30 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (!Number.isFinite(act.unitPrice) || act.unitPrice < 0) {
         return { valid: false, error: 'Action type "set_unit_price" unitPrice must be a finite non-negative number' };
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'set_description':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "set_description" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "set_description" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.description !== 'string') {
         return { valid: false, error: 'Action type "set_description" requires a string "description" field' };
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'append_description':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "append_description" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "append_description" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.text !== 'string') {
         return { valid: false, error: 'Action type "append_description" requires a string "text" field' };
@@ -254,17 +317,27 @@ export function validateAction(action: unknown): { valid: boolean; error?: strin
       if (act.separator !== undefined && typeof act.separator !== 'string') {
         return { valid: false, error: 'Action type "append_description" optional "separator" must be a string' };
       }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
+      }
       break;
 
     case 'extract_request_context':
-      if (typeof act.productNamePattern !== 'string') {
-        return { valid: false, error: 'Action type "extract_request_context" requires a string "productNamePattern" field' };
+      if (typeof act.productNamePattern !== 'string' || act.productNamePattern.trim().length === 0) {
+        return { valid: false, error: 'Action type "extract_request_context" requires a non-empty string "productNamePattern" field' };
       }
       if (typeof act.extractionPrompt !== 'string') {
         return { valid: false, error: 'Action type "extract_request_context" requires a string "extractionPrompt" field' };
       }
       if (act.separator !== undefined && typeof act.separator !== 'string') {
         return { valid: false, error: 'Action type "extract_request_context" optional "separator" must be a string' };
+      }
+      if (act.matchMode !== undefined) {
+        if (act.matchMode !== 'exact' && act.matchMode !== 'starts_with' && act.matchMode !== 'contains') {
+          return { valid: false, error: 'matchMode must be "exact", "starts_with", or "contains"' };
+        }
       }
       break;
 
@@ -311,16 +384,15 @@ export function validateActions(actions: unknown): { valid: boolean; errors?: st
 // Condition evaluator
 // ---------------------------------------------------------------------------
 
-function evaluateCondition(
+export function evaluateCondition(
   condition: RuleCondition,
   lineItems: EngineLineItem[],
   customerRequestText?: string,
 ): ConditionResult {
   switch (condition.type) {
     case 'line_item_exists': {
-      const pattern = condition.productNamePattern.toLowerCase();
       const matching = lineItems.filter(
-        (li) => li.productName.toLowerCase() === pattern,
+        (li) => matchesProductName(li.productName, condition.productNamePattern, condition.matchMode),
       );
       return {
         matched: matching.length > 0,
@@ -329,9 +401,8 @@ function evaluateCondition(
     }
 
     case 'line_item_not_exists': {
-      const pattern = condition.productNamePattern.toLowerCase();
       const anyMatch = lineItems.some(
-        (li) => li.productName.toLowerCase() === pattern,
+        (li) => matchesProductName(li.productName, condition.productNamePattern, condition.matchMode),
       );
       // When no item matches the pattern, the condition is satisfied.
       // There are no specific "matching" line items to return.
@@ -350,10 +421,9 @@ function evaluateCondition(
     }
 
     case 'line_item_quantity_gte': {
-      const pattern = condition.productNamePattern.toLowerCase();
       const matching = lineItems.filter(
         (li) =>
-          li.productName.toLowerCase() === pattern &&
+          matchesProductName(li.productName, condition.productNamePattern, condition.matchMode) &&
           li.quantity >= condition.threshold,
       );
       return {
@@ -363,10 +433,9 @@ function evaluateCondition(
     }
 
     case 'line_item_quantity_lte': {
-      const pattern = condition.productNamePattern.toLowerCase();
       const matching = lineItems.filter(
         (li) =>
-          li.productName.toLowerCase() === pattern &&
+          matchesProductName(li.productName, condition.productNamePattern, condition.matchMode) &&
           li.quantity <= condition.threshold,
       );
       return {
@@ -415,7 +484,7 @@ function generateId(): string {
   return `engine-${crypto.randomUUID()}`;
 }
 
-function executeAction(
+export function executeAction(
   action: RuleAction,
   lineItems: EngineLineItem[],
   catalog: ProductCatalogEntry[],
@@ -507,9 +576,8 @@ function executeAction(
     }
 
     case 'remove_line_item': {
-      const pattern = action.productNamePattern.toLowerCase();
       const toRemove = lineItems.filter(
-        (li) => li.productName.toLowerCase() === pattern,
+        (li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode),
       );
 
       if (toRemove.length === 0) {
@@ -518,7 +586,7 @@ function executeAction(
 
       const before = snapshot(toRemove);
       const updated = lineItems.filter(
-        (li) => li.productName.toLowerCase() !== pattern,
+        (li) => !matchesProductName(li.productName, action.productNamePattern, action.matchMode),
       );
       return {
         modified: true,
@@ -529,9 +597,8 @@ function executeAction(
     }
 
     case 'move_line_item': {
-      const pattern = action.productNamePattern.toLowerCase();
       const toMove = lineItems.filter(
-        (li) => li.productName.toLowerCase() === pattern,
+        (li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode),
       );
 
       if (toMove.length === 0) {
@@ -541,7 +608,7 @@ function executeAction(
       const before = snapshot(toMove);
       // Remove the items from their current position
       const remaining = lineItems.filter(
-        (li) => li.productName.toLowerCase() !== pattern,
+        (li) => !matchesProductName(li.productName, action.productNamePattern, action.matchMode),
       );
 
       // Mark items as rule-applied
@@ -605,12 +672,11 @@ function executeAction(
     }
 
     case 'set_quantity': {
-      const pattern = action.productNamePattern.toLowerCase();
       let modified = false;
       const affected: EngineLineItem[] = [];
 
       const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
+        if (matchesProductName(li.productName, action.productNamePattern, action.matchMode)) {
           affected.push(li);
           modified = true;
           return {
@@ -631,18 +697,17 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: snapshot(affected),
         afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
+          updated.filter((li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode)),
         ),
       };
     }
 
     case 'adjust_quantity': {
-      const pattern = action.productNamePattern.toLowerCase();
       let modified = false;
       const affected: EngineLineItem[] = [];
 
       const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
+        if (matchesProductName(li.productName, action.productNamePattern, action.matchMode)) {
           affected.push(li);
           modified = true;
           return {
@@ -663,18 +728,17 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: snapshot(affected),
         afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
+          updated.filter((li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode)),
         ),
       };
     }
 
     case 'set_unit_price': {
-      const pattern = action.productNamePattern.toLowerCase();
       let modified = false;
       const affected: EngineLineItem[] = [];
 
       const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
+        if (matchesProductName(li.productName, action.productNamePattern, action.matchMode)) {
           affected.push(li);
           modified = true;
           return {
@@ -695,18 +759,17 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: snapshot(affected),
         afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
+          updated.filter((li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode)),
         ),
       };
     }
 
     case 'set_description': {
-      const pattern = action.productNamePattern.toLowerCase();
       let modified = false;
       const affected: EngineLineItem[] = [];
 
       const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
+        if (matchesProductName(li.productName, action.productNamePattern, action.matchMode)) {
           affected.push(li);
           modified = true;
           return {
@@ -727,19 +790,18 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: snapshot(affected),
         afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
+          updated.filter((li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode)),
         ),
       };
     }
 
     case 'append_description': {
-      const pattern = action.productNamePattern.toLowerCase();
       const separator = action.separator ?? ' ';
       let modified = false;
       const affected: EngineLineItem[] = [];
 
       const updated = lineItems.map((li) => {
-        if (li.productName.toLowerCase() === pattern) {
+        if (matchesProductName(li.productName, action.productNamePattern, action.matchMode)) {
           affected.push(li);
           modified = true;
           const existing = li.description.trim();
@@ -764,7 +826,7 @@ function executeAction(
         lineItems: updated,
         beforeSnapshot: snapshot(affected),
         afterSnapshot: snapshot(
-          updated.filter((li) => li.productName.toLowerCase() === pattern),
+          updated.filter((li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode)),
         ),
       };
     }
@@ -773,9 +835,8 @@ function executeAction(
       // This action is handled asynchronously after the engine completes.
       // We just record that it matched and return unmodified line items.
       // The caller collects these as pending enrichments.
-      const pattern = action.productNamePattern.toLowerCase();
       const matching = lineItems.filter(
-        (li) => li.productName.toLowerCase() === pattern,
+        (li) => matchesProductName(li.productName, action.productNamePattern, action.matchMode),
       );
 
       if (matching.length === 0) {

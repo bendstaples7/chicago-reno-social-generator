@@ -760,7 +760,7 @@ export async function autoCategorizeRules(): Promise<{ moved: number; total: num
 
 // ── Push to Jobber ──
 
-export async function pushDraftToJobber(draftId: string): Promise<{ jobberQuoteId: string; jobberQuoteNumber: string }> {
+export async function pushDraftToJobber(draftId: string): Promise<{ jobberQuoteId: string; jobberQuoteNumber: string; jobberQuoteWebUri: string }> {
   const res = await fetch(API_BASE + '/api/quotes/drafts/' + draftId + '/push', {
     method: 'POST',
     headers: { ...authHeaders() },

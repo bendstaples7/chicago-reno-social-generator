@@ -1,5 +1,6 @@
 -- Add sort_order to manual_catalog_entries for renovation workflow ordering.
 -- Lower numbers appear first on quotes.
+-- IDEMPOTENCY: column may already exist; deploy will apply manually if needed
 ALTER TABLE manual_catalog_entries ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 500;
 
 -- Seed sort orders by trade prefix (renovation workflow sequence):

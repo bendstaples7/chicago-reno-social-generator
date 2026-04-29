@@ -5,6 +5,7 @@ import type { JobberIntegration } from './jobber-integration.js';
 export interface PushResult {
   jobberQuoteId: string;
   jobberQuoteNumber: string;
+  jobberQuoteWebUri: string;
 }
 
 const FETCH_REQUEST_CLIENT_QUERY = `
@@ -30,6 +31,7 @@ const QUOTE_CREATE_MUTATION = `
         id
         quoteNumber
         quoteStatus
+        jobberWebUri
       }
       userErrors {
         message
@@ -74,7 +76,7 @@ export class JobberQuotePushService {
     // Step 3: Execute the mutation
     const response = await this.jobberIntegration.graphqlRequest<{
       quoteCreate: {
-        quote: { id: string; quoteNumber: string; quoteStatus: string } | null;
+        quote: { id: string; quoteNumber: string; quoteStatus: string; jobberWebUri: string } | null;
         userErrors: Array<{ message: string; path: string[] }>;
       };
     }>(query, variables);
@@ -106,10 +108,11 @@ export class JobberQuotePushService {
     const result: PushResult = {
       jobberQuoteId: quote.id,
       jobberQuoteNumber: quote.quoteNumber,
+      jobberQuoteWebUri: quote.jobberWebUri,
     };
 
     // Step 5: Persist the result back to D1
-    await this.persistPushResult(draft.id, result.jobberQuoteId, result.jobberQuoteNumber);
+    await this.persistPushResult(draft.id, result.jobberQuoteId, result.jobberQuoteNumber, result.jobberQuoteWebUri);
 
     return result;
   }
@@ -225,9 +228,10 @@ export class JobberQuotePushService {
     draftId: string,
     jobberQuoteId: string,
     jobberQuoteNumber: string,
+    jobberQuoteWebUri: string,
   ): Promise<void> {
     await this.db.prepare(
-      `UPDATE quote_drafts SET jobber_quote_id = ?, jobber_quote_number = ?, status = 'finalized', updated_at = datetime('now') WHERE id = ?`
-    ).bind(jobberQuoteId, jobberQuoteNumber, draftId).run();
+      `UPDATE quote_drafts SET jobber_quote_id = ?, jobber_quote_number = ?, jobber_quote_web_uri = ?, status = 'finalized', updated_at = datetime('now') WHERE id = ?`
+    ).bind(jobberQuoteId, jobberQuoteNumber, jobberQuoteWebUri, draftId).run();
   }
 }

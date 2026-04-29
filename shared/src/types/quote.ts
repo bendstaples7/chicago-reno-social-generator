@@ -66,6 +66,7 @@ export interface QuoteDraft {
   clientName?: string | null;
   jobberQuoteId?: string | null;
   jobberQuoteNumber?: string | null;
+  jobberQuoteWebUri?: string | null;
   status: 'draft' | 'finalized';
   actionItems?: ActionItem[];
   similarQuotes?: SimilarQuote[];

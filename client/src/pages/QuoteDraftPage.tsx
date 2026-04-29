@@ -222,6 +222,7 @@ export default function QuoteDraftPage() {
         ...draft,
         jobberQuoteId: result.jobberQuoteId,
         jobberQuoteNumber: result.jobberQuoteNumber,
+        jobberQuoteWebUri: result.jobberQuoteWebUri,
         status: 'finalized',
       });
     } catch (err) {
@@ -1118,7 +1119,7 @@ export default function QuoteDraftPage() {
               ✅ Pushed as Jobber Quote <strong>{draft.jobberQuoteNumber}</strong>
             </p>
             <a
-              href={`https://secure.getjobber.com/quotes/${draft.jobberQuoteNumber}`}
+              href={draft.jobberQuoteWebUri || `https://secure.getjobber.com/quotes/${draft.jobberQuoteNumber}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: '#00a89d', fontSize: '0.9rem', fontWeight: 600 }}

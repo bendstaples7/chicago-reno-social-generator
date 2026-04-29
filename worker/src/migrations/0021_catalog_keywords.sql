@@ -2,6 +2,8 @@
 -- Stores comma-separated terms that help the AI select the correct product
 -- when the customer request uses different terminology than the product name.
 -- Example: "Flooring: Install New Hardwood" → keywords "wood floor, hardwood, wood flooring"
+
+-- IDEMPOTENCY: column may already exist; deploy will apply manually if needed
 ALTER TABLE manual_catalog_entries ADD COLUMN keywords TEXT;
 
 -- Separate keywords table for Jobber-sourced products (keyed by product name).

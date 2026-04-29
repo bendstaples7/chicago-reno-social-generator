@@ -21,7 +21,10 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Validate D1 migrations
+      - name: Validate migration patterns
+        run: bash worker/scripts/validate-migrations.sh
+
+      - name: Validate D1 migrations apply cleanly
         working-directory: worker
         run: |
           echo "Applying all migrations to a fresh local D1 database..."

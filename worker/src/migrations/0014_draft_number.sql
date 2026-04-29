@@ -1,6 +1,7 @@
 -- Add sequential draft_number column to quote_drafts.
 -- Each user gets their own sequence (per-user auto-increment).
 
+-- IDEMPOTENCY: column may already exist; deploy will apply manually if needed
 ALTER TABLE quote_drafts ADD COLUMN draft_number INTEGER;
 
 -- Backfill existing drafts with sequential numbers per user, ordered by creation date.
@@ -15,4 +16,4 @@ SET draft_number = (
 );
 
 -- Enforce per-user uniqueness so concurrent inserts fail rather than silently duplicate.
-CREATE UNIQUE INDEX unique_user_draft_number ON quote_drafts(user_id, draft_number);
+CREATE UNIQUE INDEX IF NOT EXISTS unique_user_draft_number ON quote_drafts(user_id, draft_number);
